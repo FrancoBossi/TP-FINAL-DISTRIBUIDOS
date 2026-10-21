@@ -1,0 +1,3 @@
+pyarrow
+nltk
+pika
