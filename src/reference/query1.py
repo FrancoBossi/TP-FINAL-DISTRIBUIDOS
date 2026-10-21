@@ -1,6 +1,8 @@
 from typing import Optional
+
 from common.article import Article
 from common.query_results import Q1Result
+
 
 def process_query1(article: Article) -> Optional[Q1Result]:
 

@@ -7,16 +7,19 @@ class Q1Result:
     url: str
     modification_date: datetime
 
+
 @dataclass(frozen=True)
 class Q2Result:
     name: str
     url: str
     image: bytes
 
+
 @dataclass(frozen=True)
 class Q4Result:
     word: str
     count: int
+
 
 @dataclass(frozen=True)
 class Q5Result:

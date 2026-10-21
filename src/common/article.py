@@ -12,4 +12,3 @@ class Article:
     abstract: Optional[str]
     sections: Tuple[str, ...]
     image_url: Optional[str]
-    

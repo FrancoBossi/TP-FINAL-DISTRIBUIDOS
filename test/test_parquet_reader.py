@@ -3,13 +3,15 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
 import pyarrow as pa
 import pyarrow.parquet as parquet
+
 from common.article import Article
 from dataset.parquet_reader import iter_articles
 
-class TestParquetReader(unittest.TestCase):
 
+class TestParquetReader(unittest.TestCase):
     def test_iter_articles(self):
 
         rows = [
@@ -64,6 +66,6 @@ class TestParquetReader(unittest.TestCase):
 
             self.assertEqual(expected_articles, articles)
 
+
 if __name__ == "__main__":
     unittest.main()
-    

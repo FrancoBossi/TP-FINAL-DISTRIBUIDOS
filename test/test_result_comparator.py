@@ -1,11 +1,11 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
 from reference.compare import compare_results
 
 
 class TestResultComparator(unittest.TestCase):
-
     def _write_lines(self, path: Path, lines: tuple[str, ...]) -> None:
 
         content = "\n".join(lines) + "\n"
@@ -14,7 +14,6 @@ class TestResultComparator(unittest.TestCase):
     def test_ignores_record_and_key_order(self):
 
         with TemporaryDirectory() as temp_dir:
-
             temp_path = Path(temp_dir)
 
             expected_file = temp_path / "expected.jsonl"
@@ -44,7 +43,6 @@ class TestResultComparator(unittest.TestCase):
     def test_detects_missing_extra_and_duplicate_records(self):
 
         with TemporaryDirectory() as temp_dir:
-
             temp_path = Path(temp_dir)
 
             expected_file = temp_path / "expected.jsonl"

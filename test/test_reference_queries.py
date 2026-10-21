@@ -1,16 +1,16 @@
 import unittest
 from datetime import datetime
+
 from common.article import Article
-from common.query_results import (Q1Result,Q2Result,Q4Result,Q5Result)
+from common.query_results import Q1Result, Q2Result, Q4Result, Q5Result
 from reference.query1 import process_query1
 from reference.query2 import process_query2
 from reference.query3 import process_query3
 from reference.query4 import process_query4
-from reference.query5 import (calculate_query5_average,process_query5)
+from reference.query5 import calculate_query5_average, process_query5
 
 
 class TestReferenceQueries(unittest.TestCase):
-
     def setUp(self):
 
         self.articles = (
@@ -21,10 +21,7 @@ class TestReferenceQueries(unittest.TestCase):
                 modification_date=datetime(2020, 1, 1),
                 abstract="Network system system and",
                 sections=("Biography",),
-                image_url=(
-                    "data:application/octet-stream;base64,"
-                    "AQID"
-                ),
+                image_url=("data:application/octet-stream;base64,AQID"),
             ),
             Article(
                 name="Old French",
@@ -65,7 +62,15 @@ class TestReferenceQueries(unittest.TestCase):
             if result is not None:
                 query1_results.append(result)
 
-        self.assertEqual([Q1Result(url="https://example.com/old-en",modification_date=datetime(2020, 1, 1),)], query1_results)
+        self.assertEqual(
+            [
+                Q1Result(
+                    url="https://example.com/old-en",
+                    modification_date=datetime(2020, 1, 1),
+                )
+            ],
+            query1_results,
+        )
 
         query2_results = []
 
@@ -75,11 +80,20 @@ class TestReferenceQueries(unittest.TestCase):
             if result is not None:
                 query2_results.append(result)
 
-        self.assertEqual([Q2Result(name="Old English",url="https://example.com/old-en",image=b"\x01\x02\x03",)], query2_results)
+        self.assertEqual(
+            [
+                Q2Result(
+                    name="Old English",
+                    url="https://example.com/old-en",
+                    image=b"\x01\x02\x03",
+                )
+            ],
+            query2_results,
+        )
 
         query3_result = process_query3(self.articles)
 
-        self.assertEqual({"network"},query3_result)
+        self.assertEqual({"network"}, query3_result)
 
         query4_result = process_query4(self.articles)
 
@@ -97,11 +111,13 @@ class TestReferenceQueries(unittest.TestCase):
 
         query5_average = calculate_query5_average(self.articles)
 
-        self.assertEqual(2.0,query5_average)
+        self.assertEqual(2.0, query5_average)
 
-        query5_result = process_query5(self.articles,query5_average)
+        query5_result = process_query5(self.articles, query5_average)
 
-        self.assertEqual((Q5Result(url="https://example.com/new-en", word_count=3),), query5_result)
+        self.assertEqual(
+            (Q5Result(url="https://example.com/new-en", word_count=3),), query5_result
+        )
 
 
 if __name__ == "__main__":

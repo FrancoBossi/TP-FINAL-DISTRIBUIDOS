@@ -1,9 +1,11 @@
 from typing import Optional
+
 from common.article import Article
 from common.query_results import Q2Result
 from infra.wikimedia import download_image_bytes
 
 SECTION_NAMES = ("biography", "biographie")
+
 
 def is_query2_candidate(article: Article) -> bool:
 
@@ -15,6 +17,7 @@ def is_query2_candidate(article: Article) -> bool:
             return True
 
     return False
+
 
 def process_query2(article: Article) -> Optional[Q2Result]:
 

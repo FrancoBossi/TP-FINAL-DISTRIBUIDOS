@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 from typing import Iterator, Optional, Tuple, Union
+
 import pyarrow.parquet as parquet
+
 from common.article import Article
 
 PARQUET_COLUMNS = (
@@ -15,6 +17,7 @@ PARQUET_COLUMNS = (
 )
 
 DEFAULT_READ_BATCH_SIZE = 1024
+
 
 def _parse_sections(sections: Optional[str]) -> Tuple[str, ...]:
 
@@ -31,12 +34,14 @@ def _parse_sections(sections: Optional[str]) -> Tuple[str, ...]:
 
     return tuple(names)
 
+
 def _parse_image_url(image: Optional[dict]) -> Optional[str]:
 
     if image is None:
         return None
 
     return image.get("content_url")
+
 
 def _parse_article(row: dict) -> Article:
     return Article(
@@ -49,10 +54,15 @@ def _parse_article(row: dict) -> Article:
         image_url=_parse_image_url(row.get("image")),
     )
 
-def iter_articles(path: Union[str, Path], batch_size: int = DEFAULT_READ_BATCH_SIZE) -> Iterator[Article]:
+
+def iter_articles(
+    path: Union[str, Path], batch_size: int = DEFAULT_READ_BATCH_SIZE
+) -> Iterator[Article]:
 
     parquet_file = parquet.ParquetFile(path)
 
-    for batch in parquet_file.iter_batches(batch_size=batch_size, columns=PARQUET_COLUMNS):
+    for batch in parquet_file.iter_batches(
+        batch_size=batch_size, columns=PARQUET_COLUMNS
+    ):
         for row in batch.to_pylist():
             yield _parse_article(row)

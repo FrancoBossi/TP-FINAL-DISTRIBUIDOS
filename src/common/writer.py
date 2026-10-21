@@ -2,6 +2,7 @@ import base64
 import json
 from pathlib import Path
 from typing import Dict, Iterable, Union
+
 from common.query_results import (
     Q1Result,
     Q2Result,
@@ -9,15 +10,16 @@ from common.query_results import (
     Q5Result,
 )
 
-def _write_json_file(path: Union[str, Path], records: Iterable[Dict[str, object]]) -> None:
+
+def _write_json_file(
+    path: Union[str, Path], records: Iterable[Dict[str, object]]
+) -> None:
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(path, "wb") as f:
-
         for record in records:
-
             line = json.dumps(record, ensure_ascii=False)
 
             encoded_line = (line + "\n").encode("utf-8")
@@ -26,8 +28,9 @@ def _write_json_file(path: Union[str, Path], records: Iterable[Dict[str, object]
             if written_bytes != len(encoded_line):
                 raise IOError(f"Failed to write the entire line to {path}")
 
+
 def write_query1_results(path: Union[str, Path], results: Iterable[Q1Result]) -> None:
-    
+
     records = (
         {
             "url": result.url,
@@ -37,6 +40,7 @@ def write_query1_results(path: Union[str, Path], results: Iterable[Q1Result]) ->
     )
 
     _write_json_file(path, records)
+
 
 def write_query2_results(path: Union[str, Path], results: Iterable[Q2Result]) -> None:
 
@@ -51,11 +55,13 @@ def write_query2_results(path: Union[str, Path], results: Iterable[Q2Result]) ->
 
     _write_json_file(path, records)
 
+
 def write_query3_results(path: Union[str, Path], words: Iterable[str]) -> None:
 
     records = ({"word": word} for word in sorted(words))
 
     _write_json_file(path, records)
+
 
 def write_query4_results(path: Union[str, Path], results: Iterable[Q4Result]) -> None:
 
@@ -68,6 +74,7 @@ def write_query4_results(path: Union[str, Path], results: Iterable[Q4Result]) ->
     )
 
     _write_json_file(path, records)
+
 
 def write_query5_results(path: Union[str, Path], results: Iterable[Q5Result]) -> None:
 

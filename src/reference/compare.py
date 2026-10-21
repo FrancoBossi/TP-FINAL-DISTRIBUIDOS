@@ -3,7 +3,8 @@ import hashlib
 import json
 from collections import Counter
 from pathlib import Path
-from typing import Counter as CounterType, Tuple
+from typing import Counter as CounterType
+from typing import Tuple
 
 QUERY_FILES = (
     "query1.jsonl",
@@ -13,22 +14,24 @@ QUERY_FILES = (
     "query5.jsonl",
 )
 
+
 def _calculate_record_hash(record: dict) -> str:
 
-    normalized_record = json.dumps(record, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    normalized_record = json.dumps(
+        record, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    )
 
     record_hash = hashlib.sha256(normalized_record.encode("utf-8")).hexdigest()
 
     return record_hash
+
 
 def _read_records_hash(path: Path) -> CounterType[str]:
 
     hashes = Counter()
 
     with path.open("r", encoding="utf-8") as f:
-
         for line_number, line in enumerate(f, start=1):
-
             if not line.strip():
                 raise ValueError(f"Empty line found in {path} at line {line_number}")
 
@@ -39,13 +42,16 @@ def _read_records_hash(path: Path) -> CounterType[str]:
                 raise ValueError(f"Invalid JSON in {path} at line {line_number}: {e}")
 
             if not isinstance(record, dict):
-                raise ValueError(f"Expected a JSON object in {path} at line {line_number}, got {type(record).__name__}")
+                raise ValueError(
+                    f"Expected a JSON object in {path} at line {line_number}, got {type(record).__name__}"
+                )
 
             record_hash = _calculate_record_hash(record)
 
             hashes[record_hash] += 1
 
     return hashes
+
 
 def compare_results(expected_dir: Path, actual_dir: Path) -> Tuple[int, int]:
 
@@ -60,12 +66,12 @@ def compare_results(expected_dir: Path, actual_dir: Path) -> Tuple[int, int]:
 
     return missing_count, extra_count
 
+
 def compare_result_directories(expected_dir: Path, actual_dir: Path) -> bool:
 
     all_files_match = True
 
     for query_file in QUERY_FILES:
-
         expected_file = expected_dir / query_file
         actual_file = actual_dir / query_file
 
@@ -80,14 +86,19 @@ def compare_result_directories(expected_dir: Path, actual_dir: Path) -> bool:
         if missing_count == 0 and extra_count == 0:
             print(f"{query_file}: Match")
         else:
-            print(f"{query_file}: Mismatch - Missing: {missing_count}, Extra: {extra_count}")
+            print(
+                f"{query_file}: Mismatch - Missing: {missing_count}, Extra: {extra_count}"
+            )
             all_files_match = False
 
     return all_files_match
 
+
 def parser() -> argparse.Namespace:
 
-    parser = argparse.ArgumentParser(description="Compare query results between two directories.")
+    parser = argparse.ArgumentParser(
+        description="Compare query results between two directories."
+    )
     parser.add_argument(
         "expected_dir",
         type=Path,
@@ -99,6 +110,7 @@ def parser() -> argparse.Namespace:
         help="Path to the directory containing the actual query results.",
     )
     return parser.parse_args()
+
 
 def main() -> None:
 
@@ -120,6 +132,7 @@ def main() -> None:
         print("Some query result files do not match.")
 
     raise SystemExit(0 if all_files_match else 1)
+
 
 if __name__ == "__main__":
     main()

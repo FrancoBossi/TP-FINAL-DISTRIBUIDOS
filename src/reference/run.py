@@ -1,6 +1,7 @@
 import argparse
 from pathlib import Path
 from typing import Iterator
+
 from common.query_results import Q1Result, Q2Result
 from common.writer import (
     write_query1_results,
@@ -19,6 +20,7 @@ from reference.query5 import (
     process_query5,
 )
 
+
 def iter_query1_results(dataset_path: Path) -> Iterator[Q1Result]:
 
     for article in iter_articles(dataset_path):
@@ -27,6 +29,7 @@ def iter_query1_results(dataset_path: Path) -> Iterator[Q1Result]:
         if result is not None:
             yield result
 
+
 def iter_query2_results(dataset_path: Path) -> Iterator[Q2Result]:
 
     for article in iter_articles(dataset_path):
@@ -34,6 +37,7 @@ def iter_query2_results(dataset_path: Path) -> Iterator[Q2Result]:
 
         if result is not None:
             yield result
+
 
 def serial_run(dataset_path: Path, output_dir: Path) -> None:
 
@@ -65,9 +69,12 @@ def serial_run(dataset_path: Path, output_dir: Path) -> None:
 
     print("Serial run completed. Results written to:", output_dir)
 
+
 def parser() -> argparse.Namespace:
 
-    parser = argparse.ArgumentParser(description="Run reference queries on the dataset.")
+    parser = argparse.ArgumentParser(
+        description="Run reference queries on the dataset."
+    )
     parser.add_argument(
         "dataset_path",
         type=Path,
@@ -79,6 +86,7 @@ def parser() -> argparse.Namespace:
         help="Directory where the query results will be written.",
     )
     return parser.parse_args()
+
 
 def main() -> None:
 
@@ -92,6 +100,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     serial_run(dataset_path, output_dir)
+
 
 if __name__ == "__main__":
     main()

@@ -1,6 +1,8 @@
 from typing import Iterable, Set
+
 from common.article import Article
 from common.text import extract_words
+
 
 def process_query3(articles: Iterable[Article]) -> Set[str]:
 
@@ -8,7 +10,6 @@ def process_query3(articles: Iterable[Article]) -> Set[str]:
     french_words = set()
 
     for article in articles:
-
         words = extract_words(article.abstract)
 
         if article.language == "en":

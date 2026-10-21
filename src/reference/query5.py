@@ -1,7 +1,9 @@
 from typing import Iterable, Tuple
+
 from common.article import Article
 from common.query_results import Q5Result
 from common.stop_words import extract_unique_non_stopwords
+
 
 def calculate_query5_average(articles: Iterable[Article]) -> float:
 
@@ -9,7 +11,6 @@ def calculate_query5_average(articles: Iterable[Article]) -> float:
     abstract_count = 0
 
     for article in articles:
-
         if article.modification_date.year > 2020:
             continue
 
@@ -23,12 +24,12 @@ def calculate_query5_average(articles: Iterable[Article]) -> float:
 
     return total_word_count / abstract_count
 
+
 def process_query5(articles: Iterable[Article], average: float) -> Tuple[Q5Result, ...]:
 
     results = []
 
     for article in articles:
-
         if article.modification_date.year <= 2020:
             continue
 
