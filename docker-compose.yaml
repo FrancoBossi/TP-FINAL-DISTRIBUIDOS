@@ -1,0 +1,45 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  gateway:
+    build:
+      context: .
+      dockerfile: src/gateway/Dockerfile
+    environment:
+      SERVER_PORT: "5000"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      MOM_USER: guest
+      MOM_PASSWORD: guest
+    ports:
+      - "5000:5000"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  client:
+    build:
+      context: .
+      dockerfile: src/client/Dockerfile
+    profiles: ["client"]
+    environment:
+      SERVER_HOST: gateway
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      INPUT_FILE: /datasets/wikipedia_small_sample.parquet
+      OUTPUT_DIR: /output
+    volumes:
+      - ./datasets:/datasets:ro
+      - ./output/distributed:/output
