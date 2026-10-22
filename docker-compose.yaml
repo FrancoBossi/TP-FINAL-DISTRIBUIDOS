@@ -38,7 +38,7 @@ services:
     environment:
       SERVER_HOST: gateway
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      INPUT_FILE: /datasets/wikipedia_small_sample.parquet
+      INPUT_FILE: /datasets/wikipedia_sample.parquet
       OUTPUT_DIR: /output
     volumes:
       - ./datasets:/datasets:ro
