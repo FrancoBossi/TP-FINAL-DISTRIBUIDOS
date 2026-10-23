@@ -15,12 +15,16 @@ class Message:
     @staticmethod
     def deserialize(body: bytes) -> "Message":
         fields = json.loads(body)
+
         if not isinstance(fields, dict) or not isinstance(fields.get("type"), str):
             raise ValueError("Expected a message object with a string type")
+
         kind = MessageType(fields.pop("type"))
         message_class = MESSAGE_CLASSES[kind]
-        if "run_id" in fields:
+
+        if "execution_id" in fields:
             message_class = ROUTED_CLASSES.get(kind, message_class)
+
         try:
             return message_class(**fields)
         except TypeError as error:
@@ -35,7 +39,7 @@ class ArticleMessage(Message):
 
 @dataclass(frozen=True)
 class RoutedArticleMessage(ArticleMessage):
-    run_id: str
+    execution_id: str
     reply_queue: str
 
 
@@ -46,7 +50,7 @@ class InputEndMessage(Message):
 
 @dataclass(frozen=True)
 class RoutedInputEndMessage(InputEndMessage):
-    run_id: str
+    execution_id: str
     reply_queue: str
 
 
@@ -65,14 +69,14 @@ class ErrorMessage(Message):
 class ResultMessage(Message):
     query_id: int
     record: dict[str, Any]
-    run_id: str
+    execution_id: str
     type: ClassVar[MessageType] = MessageType.RESULT
 
 
 @dataclass(frozen=True)
 class QueryEndMessage(Message):
     query_id: int
-    run_id: str
+    execution_id: str
     type: ClassVar[MessageType] = MessageType.QUERY_END
 
 
@@ -84,6 +88,7 @@ MESSAGE_CLASSES: dict[MessageType, type[Message]] = {
     MessageType.RESULT: ResultMessage,
     MessageType.QUERY_END: QueryEndMessage,
 }
+
 ROUTED_CLASSES: dict[MessageType, type[Message]] = {
     MessageType.ARTICLE: RoutedArticleMessage,
     MessageType.INPUT_END: RoutedInputEndMessage,

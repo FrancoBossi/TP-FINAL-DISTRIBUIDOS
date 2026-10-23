@@ -17,28 +17,58 @@ from common.message_protocol.message_type import MessageType
 
 class TestMessage(unittest.TestCase):
     def test_roundtrip_all_message_classes(self):
-        article = {"name": "École", "abstract": None, "sections": ["Biographie"]}
+        article = {
+            "name": "École",
+            "abstract": None,
+            "sections": ["Biographie"],
+        }
+        execution_id = "execution-123"
+
         messages = [
-            ArticleMessage(article),
-            RoutedArticleMessage(article, "run", "results.run"),
+            ArticleMessage(article=article),
+            RoutedArticleMessage(
+                article=article,
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
             InputEndMessage(),
-            RoutedInputEndMessage("run", "results.run"),
+            RoutedInputEndMessage(
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
             AckMessage(),
-            ErrorMessage("failed"),
-            ResultMessage(3, {"word": "network"}, "run"),
-            QueryEndMessage(3, "run"),
+            ErrorMessage(message="failed"),
+            ResultMessage(
+                query_id=3,
+                record={"word": "network"},
+                execution_id=execution_id,
+            ),
+            QueryEndMessage(
+                query_id=3,
+                execution_id=execution_id,
+            ),
         ]
+
         for message in messages:
             with self.subTest(message=message):
                 decoded = Message.deserialize(message.serialize())
+
                 self.assertIs(type(decoded), type(message))
                 self.assertEqual(decoded, message)
                 self.assertIsInstance(decoded.type, MessageType)
                 self.assertEqual(
-                    json.loads(message.serialize())["type"], message.type.value
+                    json.loads(message.serialize())["type"],
+                    message.type.value,
                 )
+
         self.assertEqual(messages[0].article, article)
         self.assertIn("École".encode(), messages[0].serialize())
+
+        routed_fields = json.loads(messages[1].serialize())
+        self.assertEqual(
+            routed_fields["execution_id"],
+            execution_id,
+        )
 
     def test_rejects_invalid_envelopes_and_missing_or_extra_fields(self):
         for fields in (
@@ -46,10 +76,17 @@ class TestMessage(unittest.TestCase):
             {},
             {"type": 1},
             {"type": "UNKNOWN"},
-            {"type": "RESULT", "query_id": 1, "run_id": "run"},
+            {
+                "type": "RESULT",
+                "query_id": 1,
+                "execution_id": "execution-123",
+            },
             {"type": "ARTICLE"},
             {"type": "ACK", "record": {}},
-            {"type": "INPUT_END", "run_id": "run"},
+            {
+                "type": "INPUT_END",
+                "execution_id": "execution-123",
+            },
         ):
             with self.subTest(fields=fields), self.assertRaises(ValueError):
                 Message.deserialize(json.dumps(fields).encode())
@@ -66,3 +103,7 @@ class TestMessage(unittest.TestCase):
         for value in (b"raw image", float("nan")):
             with self.subTest(value=value), self.assertRaises((TypeError, ValueError)):
                 ArticleMessage({"value": value}).serialize()
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -9,22 +9,28 @@ class TestGatewayMessaging(unittest.TestCase):
     def setUp(self):
         self.input_queue = Mock()
         self.result_queue = Mock()
+        self.execution_id = "execution-123"
+        self.result_queue_name = f"results.{self.execution_id}"
+
         self.messaging = GatewayMessaging(
             input_queue=self.input_queue,
             result_queue=self.result_queue,
-            result_queue_name="results.run-123",
+            result_queue_name=self.result_queue_name,
         )
 
     def test_publishes_serialized_message_to_input_queue(self):
         message = RoutedInputEndMessage(
-            run_id="run-123",
-            reply_queue="results.run-123",
+            execution_id=self.execution_id,
+            reply_queue=self.result_queue_name,
         )
 
         self.messaging.publish(message)
 
         self.input_queue.send.assert_called_once_with(message.serialize())
-        self.assertEqual(self.messaging.result_queue_name, "results.run-123")
+        self.assertEqual(
+            self.messaging.result_queue_name,
+            self.result_queue_name,
+        )
 
     def test_deserializes_result_and_preserves_acknowledgements(self):
         on_result = Mock()
@@ -38,7 +44,7 @@ class TestGatewayMessaging(unittest.TestCase):
 
         message = QueryEndMessage(
             query_id=1,
-            run_id="run-123",
+            execution_id=self.execution_id,
         )
         middleware_callback(message.serialize(), ack, nack)
 

@@ -8,39 +8,50 @@ from gateway.handler import forward_results
 
 
 class TestResults(unittest.TestCase):
-    def test_gateway_rejects_wrong_run_with_nack(self):
+    def test_gateway_rejects_wrong_execution_with_nack(self):
+        execution_id = "execution-123"
+
         messaging = Mock()
-        messaging.result_queue_name = "results.run"
+        messaging.result_queue_name = f"results.{execution_id}"
 
         ack = Mock()
         nack = Mock()
 
         def consume(on_result):
             on_result(
-                QueryEndMessage(1, "other"),
+                QueryEndMessage(
+                    query_id=1,
+                    execution_id="other-execution",
+                ),
                 ack,
                 nack,
             )
 
         messaging.start_consuming_results.side_effect = consume
 
-        with self.assertRaisesRegex(ValueError, "different run"):
-            forward_results(Mock(), messaging, "run")
+        with self.assertRaisesRegex(ValueError, "different execution"):
+            forward_results(Mock(), messaging, execution_id)
 
         ack.assert_not_called()
         nack.assert_called_once()
         messaging.stop_consuming_results.assert_called_once()
 
     def test_gateway_does_not_ack_middleware_until_client_acks(self):
+        execution_id = "execution-123"
+
         messaging = Mock()
-        messaging.result_queue_name = "results.run"
+        messaging.result_queue_name = f"results.{execution_id}"
 
         ack = Mock()
         nack = Mock()
 
         def consume(on_result):
             on_result(
-                ResultMessage(3, {"word": "test"}, "run"),
+                ResultMessage(
+                    query_id=3,
+                    record={"word": "test"},
+                    execution_id=execution_id,
+                ),
                 ack,
                 nack,
             )
@@ -52,15 +63,17 @@ class TestResults(unittest.TestCase):
             patch("gateway.handler.recv_msg", side_effect=EOFError),
         ):
             with self.assertRaises(EOFError):
-                forward_results(Mock(), messaging, "run")
+                forward_results(Mock(), messaging, execution_id)
 
         ack.assert_not_called()
         nack.assert_called_once()
         messaging.stop_consuming_results.assert_called_once()
 
     def test_gateway_requires_all_five_completions(self):
+        execution_id = "execution-123"
+
         messaging = Mock()
-        messaging.result_queue_name = "results.run"
+        messaging.result_queue_name = f"results.{execution_id}"
 
         ack = Mock()
         nack = Mock()
@@ -68,7 +81,10 @@ class TestResults(unittest.TestCase):
         def consume(on_result):
             for query_id in range(1, 5):
                 on_result(
-                    QueryEndMessage(query_id, "run"),
+                    QueryEndMessage(
+                        query_id=query_id,
+                        execution_id=execution_id,
+                    ),
                     ack,
                     nack,
                 )
@@ -80,17 +96,41 @@ class TestResults(unittest.TestCase):
             patch("gateway.handler.recv_msg", return_value=AckMessage()),
         ):
             with self.assertRaisesRegex(EOFError, "all queries"):
-                forward_results(Mock(), messaging, "run")
+                forward_results(Mock(), messaging, execution_id)
 
         self.assertEqual(ack.call_count, 4)
         nack.assert_not_called()
         messaging.stop_consuming_results.assert_not_called()
 
     def test_client_rejects_invalid_or_late_results(self):
+        execution_id = "execution-123"
+
         for messages in (
-            [ResultMessage(6, {}, "run")],
-            [ResultMessage(1, [], "run")],
-            [QueryEndMessage(1, "run"), ResultMessage(1, {}, "run")],
+            [
+                ResultMessage(
+                    query_id=6,
+                    record={},
+                    execution_id=execution_id,
+                )
+            ],
+            [
+                ResultMessage(
+                    query_id=1,
+                    record=[],
+                    execution_id=execution_id,
+                )
+            ],
+            [
+                QueryEndMessage(
+                    query_id=1,
+                    execution_id=execution_id,
+                ),
+                ResultMessage(
+                    query_id=1,
+                    record={},
+                    execution_id=execution_id,
+                ),
+            ],
         ):
             with self.subTest(messages=messages), TemporaryDirectory() as output_dir:
                 with patch("client.client.recv_msg", side_effect=messages):

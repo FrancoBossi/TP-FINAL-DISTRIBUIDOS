@@ -16,9 +16,9 @@ def handle_sigterm(signum: int, frame: FrameType | None) -> NoReturn:
 def create_messaging(
     mom_host: str,
     input_queue_name: str,
-    run_id: str,
+    execution_id: str,
 ) -> GatewayMessaging:
-    result_queue_name = f"results.{run_id}"
+    result_queue_name = f"results.{execution_id}"
 
     input_queue = MessageMiddlewareQueueRabbitMQ(
         host=mom_host,
@@ -53,10 +53,10 @@ def main() -> int:
         serve(
             config.host,
             config.port,
-            lambda run_id: create_messaging(
+            lambda execution_id: create_messaging(
                 mom_host=config.mom_host,
-                input_queue_name=input_router.queue_for(run_id),
-                run_id=run_id,
+                input_queue_name=input_router.queue_for(execution_id),
+                execution_id=execution_id,
             ),
         )
     except KeyboardInterrupt:

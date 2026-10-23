@@ -18,13 +18,13 @@ class TestMessageMiddlewareQueueRabbitMQ(unittest.TestCase):
         ):
             queue = MessageMiddlewareQueueRabbitMQ(
                 host="rabbitmq",
-                queue_name="results.run-123",
+                queue_name="results.execution-123",
                 exclusive=True,
                 auto_delete=True,
             )
 
         channel.queue_declare.assert_called_once_with(
-            queue="results.run-123",
+            queue="results.execution-123",
             durable=False,
             exclusive=True,
             auto_delete=True,
@@ -35,7 +35,7 @@ class TestMessageMiddlewareQueueRabbitMQ(unittest.TestCase):
 
         channel.basic_publish.assert_called_once_with(
             exchange="",
-            routing_key="results.run-123",
+            routing_key="results.execution-123",
             body=message,
         )
 
@@ -52,7 +52,7 @@ class TestMessageMiddlewareQueueRabbitMQ(unittest.TestCase):
         ):
             queue = MessageMiddlewareQueueRabbitMQ(
                 host="rabbitmq",
-                queue_name="results.run-123",
+                queue_name="results.execution-123",
             )
 
         on_message = Mock()
@@ -61,7 +61,7 @@ class TestMessageMiddlewareQueueRabbitMQ(unittest.TestCase):
 
         channel.basic_qos.assert_called_once_with(prefetch_count=1)
         channel.basic_consume.assert_called_once_with(
-            queue="results.run-123",
+            queue="results.execution-123",
             on_message_callback=unittest.mock.ANY,
             auto_ack=False,
         )

@@ -26,7 +26,7 @@ class FakeMessaging:
     def __init__(self):
         self.published = []
         self.closed = False
-        self.result_queue_name = "results.run"
+        self.result_queue_name = "results.execution-123"
         self.acks = []
         self.nacks = []
         self.consumption_stopped = False
@@ -35,10 +35,20 @@ class FakeMessaging:
         self.published.append(message)
 
     def start_consuming_results(self, on_result):
-        run_id = self.published[-1].run_id
+        execution_id = self.published[-1].execution_id
         messages = [
-            ResultMessage(3, {"word": "système"}, run_id),
-            *[QueryEndMessage(query_id, run_id) for query_id in (5, 1, 3, 2, 4)],
+            ResultMessage(
+                query_id=3,
+                record={"word": "système"},
+                execution_id=execution_id,
+            ),
+            *[
+                QueryEndMessage(
+                    query_id=query_id,
+                    execution_id=execution_id,
+                )
+                for query_id in (5, 1, 3, 2, 4)
+            ],
         ]
 
         for message in messages:
@@ -137,7 +147,7 @@ class TestClientGateway(unittest.TestCase):
 
                 end = messaging.published[-1]
                 self.assertIsInstance(end, RoutedInputEndMessage)
-                self.assertTrue(end.run_id)
+                self.assertTrue(end.execution_id)
                 self.assertEqual(
                     end.reply_queue,
                     messaging.result_queue_name,
@@ -146,7 +156,10 @@ class TestClientGateway(unittest.TestCase):
                 if articles:
                     sent = messaging.published[0]
                     self.assertIsInstance(sent, RoutedArticleMessage)
-                    self.assertEqual(sent.run_id, end.run_id)
+                    self.assertEqual(
+                        sent.execution_id,
+                        end.execution_id,
+                    )
                     self.assertEqual(
                         sent.reply_queue,
                         messaging.result_queue_name,
