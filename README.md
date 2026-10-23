@@ -22,6 +22,7 @@ El sistema debe resolver las siguientes consultas:
 | Ejecución serial de referencia para Q1–Q5 | Implementado |
 | Comparación automática entre resultados seriales y distribuidos | Implementado |
 | Protocolo TCP entre cliente y Gateway | Implementado |
+| Serialización binaria explícita de los mensajes | Pendiente |
 | Streaming de artículos desde el cliente | Implementado |
 | Identificador único por ejecución | Implementado |
 | Particionado estable Gateway → InputBatcher | Implementado |
@@ -280,6 +281,8 @@ cuerpo serializado del mensaje
 ```
 
 El receptor continúa leyendo hasta obtener exactamente la cantidad de bytes indicada por el encabezado. Esto permite manejar fragmentación de TCP correctamente.
+
+Actualmente, el cuerpo de cada mensaje se serializa como JSON codificado en UTF-8. Está pendiente reemplazar esta representación por una serialización binaria explícita y más eficiente, manteniendo el framing sobre TCP. El nuevo formato deberá permitir transportar directamente campos binarios, como las imágenes de Query 2, sin convertirlos a Base64 durante la comunicación.
 
 Los principales mensajes externos son:
 
@@ -632,14 +635,15 @@ La implementación distribuida completa deberá respetar:
 
 ## Próximos pasos
 
-1. Implementar InputBatcher con batches limitados por bytes.
-2. Implementar Preprocessor y QueryRouter.
-3. Implementar la rama compartida de Q1 y Q2.
-4. Implementar el pipeline textual de Q3, Q4 y Q5.
-5. Implementar los protocolos de `PARTITION_END` y barreras.
-6. Implementar ResultSink.
-7. Permitir clientes concurrentes y aislados en el Gateway.
-8. Completar graceful shutdown de todos los procesos.
-9. Resolver la política definitiva de imágenes faltantes para Query 2.
-10. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
-11. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
+1. Reemplazar la serialización JSON de los mensajes por un protocolo binario explícito.
+2. Implementar InputBatcher con batches limitados por bytes.
+3. Implementar Preprocessor y QueryRouter.
+4. Implementar la rama compartida de Q1 y Q2.
+5. Implementar el pipeline textual de Q3, Q4 y Q5.
+6. Implementar los protocolos de `PARTITION_END` y barreras.
+7. Implementar ResultSink.
+8. Permitir clientes concurrentes y aislados en el Gateway.
+9. Completar graceful shutdown de todos los procesos.
+10. Resolver la política definitiva de imágenes faltantes para Query 2.
+11. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
+12. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
