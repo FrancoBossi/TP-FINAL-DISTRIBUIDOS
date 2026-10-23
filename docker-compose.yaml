@@ -1,0 +1,42 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  gateway:
+    build:
+      context: .
+      dockerfile: src/gateway/Dockerfile
+    environment:
+      SERVER_PORT: "5000"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_BATCHER_QUEUE_PREFIX: ${INPUT_BATCHER_QUEUE_PREFIX:-input_batcher.input}
+      INPUT_BATCHER_PARTITIONS: "${INPUT_BATCHER_PARTITIONS:-1}"
+    ports:
+      - "5000:5000"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  client:
+    build:
+      context: .
+      dockerfile: src/client/Dockerfile
+    profiles: ["client"]
+    environment:
+      SERVER_HOST: gateway
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      INPUT_FILE: /datasets/wikipedia_sample.parquet
+      OUTPUT_DIR: /output
+    volumes:
+      - ./datasets:/datasets:ro
+      - ./output/distributed:/output
