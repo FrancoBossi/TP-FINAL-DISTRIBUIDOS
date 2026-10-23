@@ -1,9 +1,6 @@
 services:
   rabbitmq:
     image: rabbitmq:3.13-management
-    environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -22,8 +19,6 @@ services:
       SERVER_PORT: "5000"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
-      MOM_USER: guest
-      MOM_PASSWORD: guest
       INPUT_BATCHER_QUEUE_PREFIX: ${INPUT_BATCHER_QUEUE_PREFIX:-input_batcher.input}
       INPUT_BATCHER_PARTITIONS: "${INPUT_BATCHER_PARTITIONS:-1}"
     ports:

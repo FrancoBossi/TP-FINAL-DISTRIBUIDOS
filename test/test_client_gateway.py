@@ -22,31 +22,47 @@ from common.message_protocol.message import (
 from gateway.handler import handle_client
 
 
-class FakeBroker:
+class FakeMessaging:
     def __init__(self):
         self.published = []
         self.closed = False
-        self.reply_queue = "results.run"
+        self.result_queue_name = "results.run"
         self.acks = []
+        self.nacks = []
+        self.consumption_stopped = False
 
     def publish(self, message):
         self.published.append(message)
 
-    def results(self):
+    def start_consuming_results(self, on_result):
         run_id = self.published[-1].run_id
-        yield 1, ResultMessage(3, {"word": "système"}, run_id)
-        for query_id in (5, 1, 3, 2, 4):
-            yield query_id + 1, QueryEndMessage(query_id, run_id)
+        messages = [
+            ResultMessage(3, {"word": "système"}, run_id),
+            *[QueryEndMessage(query_id, run_id) for query_id in (5, 1, 3, 2, 4)],
+        ]
 
-    def acknowledge_result(self, delivery_tag):
-        self.acks.append(delivery_tag)
+        for message in messages:
+
+            def ack():
+                self.acks.append(message)
+
+            def nack():
+                self.nacks.append(message)
+
+            on_result(message, ack, nack)
+
+            if self.consumption_stopped:
+                break
+
+    def stop_consuming_results(self):
+        self.consumption_stopped = True
 
     def close(self):
         self.closed = True
 
 
 class TestClientGateway(unittest.TestCase):
-    def test_upload_and_receive_all_five_queries_with_fake_broker(self):
+    def test_upload_and_receive_all_five_queries_with_fake_messaging(self):
         article = Article(
             "École",
             "https://example.com",
@@ -56,9 +72,12 @@ class TestClientGateway(unittest.TestCase):
             (),
             None,
         )
+
         for articles in ([article], []):
             with self.subTest(articles=articles), TemporaryDirectory() as output_dir:
-                broker, errors = FakeBroker(), []
+                messaging = FakeMessaging()
+                errors = []
+
                 client_socket, gateway_socket = socket.socketpair()
                 client_socket.settimeout(3)
                 gateway_socket.settimeout(3)
@@ -66,31 +85,40 @@ class TestClientGateway(unittest.TestCase):
                 def gateway():
                     with gateway_socket:
                         try:
-                            handle_client(gateway_socket, lambda _: broker)
+                            handle_client(gateway_socket, lambda _: messaging)
                         except Exception as error:
                             errors.append(error)
 
                 thread = threading.Thread(target=gateway, daemon=True)
                 thread.start()
+
                 try:
                     with (
                         client_socket,
                         patch(
-                            "client.client.iter_articles", return_value=iter(articles)
+                            "client.client.iter_articles",
+                            return_value=iter(articles),
                         ),
                         patch(
                             "client.client.socket.create_connection",
                             return_value=client_socket,
                         ),
                     ):
-                        Client("gateway", 5000).run("fixture.parquet", output_dir)
+                        Client("gateway", 5000).run(
+                            "fixture.parquet",
+                            output_dir,
+                        )
                 finally:
                     client_socket.close()
                     thread.join(4)
+
                 self.assertFalse(thread.is_alive())
                 self.assertEqual(errors, [])
-                self.assertTrue(broker.closed)
-                self.assertEqual(len(broker.acks), 6)
+                self.assertTrue(messaging.closed)
+                self.assertTrue(messaging.consumption_stopped)
+                self.assertEqual(len(messaging.acks), 6)
+                self.assertEqual(messaging.nacks, [])
+
                 for query_id in range(1, 6):
                     lines = (
                         (Path(output_dir) / f"query{query_id}.jsonl")
@@ -101,16 +129,31 @@ class TestClientGateway(unittest.TestCase):
                         [json.loads(line) for line in lines],
                         [{"word": "système"}] if query_id == 3 else [],
                     )
-                self.assertEqual(len(broker.published), len(articles) + 1)
-                end = broker.published[-1]
+
+                self.assertEqual(
+                    len(messaging.published),
+                    len(articles) + 1,
+                )
+
+                end = messaging.published[-1]
                 self.assertIsInstance(end, RoutedInputEndMessage)
                 self.assertTrue(end.run_id)
+                self.assertEqual(
+                    end.reply_queue,
+                    messaging.result_queue_name,
+                )
+
                 if articles:
-                    sent = broker.published[0]
+                    sent = messaging.published[0]
                     self.assertIsInstance(sent, RoutedArticleMessage)
                     self.assertEqual(sent.run_id, end.run_id)
                     self.assertEqual(
-                        sent.article["modification_date"], "2020-01-01T00:00:00+00:00"
+                        sent.reply_queue,
+                        messaging.result_queue_name,
+                    )
+                    self.assertEqual(
+                        sent.article["modification_date"],
+                        "2020-01-01T00:00:00+00:00",
                     )
                     self.assertIsNone(sent.article["abstract"])
                     self.assertEqual(sent.article["sections"], [])
@@ -128,20 +171,23 @@ class TestClientGateway(unittest.TestCase):
                 Client("unused", 0).send_articles(Mock(), [])
 
     def test_gateway_does_not_ack_failed_publication(self):
-        broker = Mock()
-        broker.publish.side_effect = RuntimeError("broker unavailable")
+        messaging = Mock()
+        messaging.publish.side_effect = RuntimeError("middleware unavailable")
+
         with (
             patch("gateway.handler.recv_msg", return_value=InputEndMessage()),
             patch("gateway.handler.send_msg") as send,
         ):
             with self.assertRaises(RuntimeError):
-                handle_client(Mock(), lambda _: broker)
+                handle_client(Mock(), lambda _: messaging)
+
         send.assert_called_once()
         self.assertIsInstance(send.call_args.args[1], ErrorMessage)
-        broker.close.assert_called_once()
+        messaging.close.assert_called_once()
 
     def test_gateway_rejects_unexpected_input(self):
-        broker = Mock()
+        messaging = Mock()
+
         for message in (AckMessage(), ArticleMessage([])):
             with (
                 self.subTest(message=message),
@@ -149,18 +195,21 @@ class TestClientGateway(unittest.TestCase):
                 patch("gateway.handler.send_msg"),
             ):
                 with self.assertRaises(ValueError):
-                    handle_client(Mock(), lambda _: broker)
-        broker.publish.assert_not_called()
+                    handle_client(Mock(), lambda _: messaging)
 
-    def test_gateway_closes_broker_on_disconnect(self):
-        broker = Mock()
+        messaging.publish.assert_not_called()
+
+    def test_gateway_closes_messaging_on_disconnect(self):
+        messaging = Mock()
+
         with (
             patch("gateway.handler.recv_msg", side_effect=EOFError("disconnected")),
             patch("gateway.handler.send_msg", side_effect=BrokenPipeError),
         ):
             with self.assertRaises(EOFError):
-                handle_client(Mock(), lambda _: broker)
-        broker.close.assert_called_once()
+                handle_client(Mock(), lambda _: messaging)
+
+        messaging.close.assert_called_once()
 
 
 if __name__ == "__main__":

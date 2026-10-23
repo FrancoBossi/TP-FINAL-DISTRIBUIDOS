@@ -16,10 +16,6 @@ class GatewayConfig:
     mom_host: str = field(
         default_factory=lambda: os.environ.get("MOM_HOST", "localhost")
     )
-    mom_user: str = field(default_factory=lambda: os.environ.get("MOM_USER", "guest"))
-    mom_password: str = field(
-        default_factory=lambda: os.environ.get("MOM_PASSWORD", "guest")
-    )
     input_batcher_queue_prefix: str = field(
         default_factory=lambda: os.environ.get(
             "INPUT_BATCHER_QUEUE_PREFIX",
