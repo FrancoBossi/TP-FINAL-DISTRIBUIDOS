@@ -2,6 +2,7 @@ import signal
 from types import FrameType
 from typing import NoReturn
 
+from common.partition_router import PartitionRouter
 from gateway.broker import RabbitMQBroker
 from gateway.config import GatewayConfig, configure_logging
 from gateway.server import serve
@@ -14,6 +15,12 @@ def handle_sigterm(signum: int, frame: FrameType | None) -> NoReturn:
 def main() -> int:
     configure_logging()
     config = GatewayConfig()
+
+    input_router = PartitionRouter(
+        queue_prefix=config.input_batcher_queue_prefix,
+        partition_count=config.input_batcher_partitions,
+    )
+
     signal.signal(signal.SIGTERM, handle_sigterm)
     try:
         serve(
@@ -23,7 +30,7 @@ def main() -> int:
                 config.mom_host,
                 config.mom_user,
                 config.mom_password,
-                input_queue=config.input_queue,
+                input_queue=input_router.queue_for(run_id),
                 run_id=run_id,
             ),
         )

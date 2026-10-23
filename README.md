@@ -2,8 +2,11 @@
 
 ## Entrada y resultados
 
-El gateway publica artículos y `INPUT_END` en la cola durable
-`input_batcher.input`, configurable mediante `INPUT_QUEUE`.
+El gateway asigna cada ejecución a una cola durable de `InputBatcher` y publica
+allí todos sus artículos y su `INPUT_END`. Las colas siguen la convención
+`input_batcher.input.<partition>`. El prefijo y la cantidad de particiones se
+configuran mediante `INPUT_BATCHER_QUEUE_PREFIX` e
+`INPUT_BATCHER_PARTITIONS`, respectivamente.
 
 Después de la carga, el cliente espera resultados de las cinco consultas y los
 guarda en `OUTPUT_DIR`. Cada consulta debe emitir un `QUERY_END`, incluso si
