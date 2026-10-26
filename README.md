@@ -282,7 +282,27 @@ cuerpo serializado del mensaje
 
 El receptor continúa leyendo hasta obtener exactamente la cantidad de bytes indicada por el encabezado. Esto permite manejar fragmentación de TCP correctamente.
 
-Actualmente, el cuerpo de cada mensaje se serializa como JSON codificado en UTF-8. Está pendiente reemplazar esta representación por una serialización binaria explícita y más eficiente, manteniendo el framing sobre TCP. El nuevo formato deberá permitir transportar directamente campos binarios, como las imágenes de Query 2, sin convertirlos a Base64 durante la comunicación.
+Actualmente, el cuerpo de cada mensaje se serializa como JSON codificado en UTF-8. Durante el hito de escalabilidad se mantendrá esta representación para priorizar una ejecución completa de las cinco consultas de punta a punta.
+
+Mientras se utilice JSON, las imágenes de Query 2 deberán transportarse como strings Base64 dentro de `ResultMessage`. Esto permite escribir directamente el mismo valor en `query2.jsonl`, cuyo formato también representa la imagen como Base64.
+
+#### Serialización binaria postergada
+
+Una vez que el pipeline distribuido funcione de punta a punta, se evaluará reemplazar JSON por una serialización binaria explícita, sin modificar el framing TCP actual de cuatro bytes de longitud.
+
+El diseño acordado como punto de partida es:
+
+- Un byte inicial para identificar la clase concreta del mensaje.
+- Códigos diferentes para mensajes externos e internos, por ejemplo `ARTICLE` y `ROUTED_ARTICLE`.
+- Campos superiores codificados en un orden conocido, sin enviar sus nombres.
+- Un codec propio para `None`, enteros, strings, bytes, listas, tuplas y diccionarios.
+- Strings y bloques de bytes precedidos por una longitud de cuatro bytes en orden de red.
+- Enteros representados con signo en ocho bytes y en orden de red.
+- Claves de diccionarios restringidas a strings.
+- Bytes binarios transportados directamente, sin Base64 dentro de la comunicación.
+- Rechazo de códigos desconocidos, mensajes truncados, UTF-8 inválido, tipos no soportados y bytes sobrantes.
+
+La asignación definitiva de códigos se realizará cuando estén estabilizados todos los tipos de mensajes del DAG. No se utilizarán bibliotecas externas que resuelvan automáticamente la serialización.
 
 Los principales mensajes externos son:
 
@@ -635,15 +655,15 @@ La implementación distribuida completa deberá respetar:
 
 ## Próximos pasos
 
-1. Reemplazar la serialización JSON de los mensajes por un protocolo binario explícito.
-2. Implementar InputBatcher con batches limitados por bytes.
-3. Implementar Preprocessor y QueryRouter.
-4. Implementar la rama compartida de Q1 y Q2.
-5. Implementar el pipeline textual de Q3, Q4 y Q5.
-6. Implementar los protocolos de `PARTITION_END` y barreras.
-7. Implementar ResultSink.
-8. Permitir clientes concurrentes y aislados en el Gateway.
-9. Completar graceful shutdown de todos los procesos.
-10. Resolver la política definitiva de imágenes faltantes para Query 2.
-11. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
+1. Implementar InputBatcher con batches limitados por bytes.
+2. Implementar Preprocessor y QueryRouter.
+3. Implementar la rama compartida de Q1 y Q2.
+4. Implementar el pipeline textual de Q3, Q4 y Q5.
+5. Implementar los protocolos de `PARTITION_END` y barreras.
+6. Implementar ResultSink.
+7. Permitir clientes concurrentes y aislados en el Gateway.
+8. Completar graceful shutdown de todos los procesos.
+9. Resolver la política definitiva de imágenes faltantes para Query 2.
+10. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
+11. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
 12. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
