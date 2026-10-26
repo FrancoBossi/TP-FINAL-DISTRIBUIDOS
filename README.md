@@ -144,7 +144,11 @@ Cuando llega un artículo:
 2. Lo agrega si el batch resultante no supera el límite.
 3. Si lo supera, publica el batch actual y comienza uno nuevo.
 4. Al recibir `INPUT_END`, publica el último batch parcial.
-5. Después inicia la propagación del fin de la etapa.
+5. Después publica el mensaje de fin en la misma cola de salida que los batches.
+
+La primera implementación utilizará una única réplica de la etapa siguiente. De esta manera, los batches y el mensaje de fin se consumen en el mismo orden en que fueron publicados. No se habilitarán múltiples réplicas consumidoras hasta implementar el protocolo de control y las barreras descritos en la sección de mensajes de finalización.
+
+InputBatcher se escala mediante particiones: todos los mensajes de una ejecución se asignan a una única cola `input_batcher.input.<partition>`, con un consumidor activo por partición lógica. No se deben colocar consumidores competidores sobre una misma partición porque dividirían entre procesos el batch pendiente de una ejecución.
 
 ### Preprocessor
 
@@ -265,7 +269,18 @@ Los finales tienen significados diferentes:
 
 `INPUT_END` no significa que las consultas hayan terminado.
 
-Cuando una etapa tiene varias réplicas, el fin debe propagarse a todas y la siguiente etapa debe esperar la barrera completa de `PARTITION_END`. No se debe asumir orden entre colas diferentes sin una barrera explícita.
+En la primera ejecución de punta a punta habrá una sola réplica por etapa. El último batch y el mensaje de fin viajarán por la misma cola, por lo que el consumidor único procesará primero todos los batches y luego el final.
+
+Antes de habilitar consumidores competidores en una etapa se implementará el siguiente protocolo, basado en el patrón utilizado en el TP de Coordinación:
+
+1. El mensaje de fin se publica después de todos los mensajes de datos en la misma cola compartida.
+2. Una sola réplica recibe ese mensaje desde la cola y lo difunde mediante un exchange de control.
+3. Cada réplica recibe una copia del control, termina cualquier mensaje que tenga en procesamiento y publica exactamente un `PARTITION_END`.
+4. La etapa siguiente mantiene una barrera por `execution_id` y espera un `PARTITION_END` de cada partición o réplica configurada antes de considerar completa la entrada.
+
+El `prefetch_count=1` limita a uno los mensajes en vuelo por réplica cuando se recibe el control. El estado compartido entre el consumidor de datos y el consumidor de control deberá protegerse con sincronización.
+
+No se debe asumir orden entre una cola de datos y una cola o exchange de control diferentes. Por eso el primer mensaje de fin atraviesa la misma cola que los datos antes de ser difundido. La implementación pendiente requiere incorporar `MessageMiddlewareExchange`, identificar las particiones y conocer la cantidad esperada de finales para completar cada barrera.
 
 ## Comunicación
 
