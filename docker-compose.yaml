@@ -55,6 +55,20 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  query-router:
+    build:
+      context: .
+      dockerfile: src/query_router/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: query_router.input
+      Q1_Q2_OUTPUT_QUEUE: until_2020.input
+      TEXT_OUTPUT_QUEUE: word_extractor.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   client:
     build:
       context: .
