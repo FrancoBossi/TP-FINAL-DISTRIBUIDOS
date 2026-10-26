@@ -2,7 +2,7 @@
 
 Trabajo práctico grupal de Sistemas Distribuidos. El sistema procesa artículos de Wikipedia en inglés y francés y genera los resultados de cinco consultas mediante una arquitectura distribuida basada en RabbitMQ.
 
-> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo y la capa común de middleware. Los controllers del DAG distribuido todavía están pendientes.
+> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware y el InputBatcher. Las etapas posteriores del DAG distribuido todavía están pendientes.
 
 ## Consultas
 
@@ -28,7 +28,8 @@ El sistema debe resolver las siguientes consultas:
 | Particionado estable Gateway → InputBatcher | Implementado |
 | Middleware común sobre RabbitMQ | Implementado |
 | Cola temporal de resultados por ejecución | Implementado |
-| InputBatcher y procesamiento distribuido del DAG | Pendiente |
+| InputBatcher con batches limitados por bytes | Implementado |
+| Etapas posteriores del DAG distribuido | Pendiente |
 | ResultSink distribuido | Pendiente |
 | Atención concurrente de varios clientes | Pendiente |
 | Graceful shutdown completo para procesos concurrentes | Pendiente |
@@ -63,6 +64,16 @@ Dataset Parquet
       | RoutedArticle / RoutedInputEnd
       v
 RabbitMQ: input_batcher.input.<partition>
+      |
+      | RoutedArticle / RoutedInputEnd
+      v
+ InputBatcher
+      |
+      | ArticleBatch / RoutedInputEnd
+      v
+RabbitMQ: preprocessor.input
+
+      ... etapas posteriores pendientes ...
 
 RabbitMQ: results.<execution_id>
       |
@@ -77,7 +88,7 @@ RabbitMQ: results.<execution_id>
 query1.jsonl ... query5.jsonl
 ```
 
-Todavía no existe un `InputBatcher` que consuma los artículos ni están implementadas las etapas posteriores. Por ese motivo, la prueba distribuida actual utiliza publicación manual de resultados ficticios.
+El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. Como las etapas posteriores todavía no están implementadas, la prueba distribuida actual utiliza publicación manual de resultados ficticios.
 
 ## Arquitectura objetivo
 
@@ -132,7 +143,7 @@ No se utiliza `hash()` de Python porque su resultado puede cambiar entre proceso
 
 ### InputBatcher
 
-El InputBatcher deberá construir batches con un límite configurable en bytes:
+El InputBatcher construye batches con un límite configurable en bytes:
 
 ```text
 MAX_BATCH_BYTES
@@ -146,7 +157,7 @@ Cuando llega un artículo:
 4. Al recibir `INPUT_END`, publica el último batch parcial.
 5. Después publica el mensaje de fin en la misma cola de salida que los batches.
 
-La primera implementación utilizará una única réplica de la etapa siguiente. De esta manera, los batches y el mensaje de fin se consumen en el mismo orden en que fueron publicados. No se habilitarán múltiples réplicas consumidoras hasta implementar el protocolo de control y las barreras descritos en la sección de mensajes de finalización.
+La primera implementación utiliza una única réplica de la etapa siguiente. De esta manera, los batches y el mensaje de fin se consumen en el mismo orden en que fueron publicados. No se habilitarán múltiples réplicas consumidoras hasta implementar el protocolo de control y las barreras descritos en la sección de mensajes de finalización.
 
 InputBatcher se escala mediante particiones: todos los mensajes de una ejecución se asignan a una única cola `input_batcher.input.<partition>`, con un consumidor activo por partición lógica. No se deben colocar consumidores competidores sobre una misma partición porque dividirían entre procesos el batch pendiente de una ejecución.
 
@@ -616,7 +627,7 @@ El cliente debe:
 - Confirmar cada resultado.
 - Finalizar después de recibir los cinco `QUERY_END`.
 
-Los artículos permanecen en la cola de entrada porque todavía no existe un InputBatcher que los consuma.
+El InputBatcher consume los artículos y deja los batches resultantes en `preprocessor.input`, donde permanecerán hasta que se implemente el Preprocessor.
 
 Detener el entorno:
 
@@ -630,19 +641,21 @@ make down
 |---|---|---:|---|
 | `SERVER_HOST` | Gateway | `0.0.0.0` | Dirección en la que escucha |
 | `SERVER_PORT` | Gateway/Client | `5000` | Puerto TCP |
-| `MOM_HOST` | Gateway | `localhost` | Host de RabbitMQ |
-| `INPUT_BATCHER_QUEUE_PREFIX` | Gateway | `input_batcher.input` | Prefijo de las colas de entrada |
+| `MOM_HOST` | Gateway/InputBatcher | `localhost` | Host de RabbitMQ |
+| `INPUT_BATCHER_QUEUE_PREFIX` | Gateway/InputBatcher | `input_batcher.input` | Prefijo de las colas de entrada |
 | `INPUT_BATCHER_PARTITIONS` | Gateway | `1` | Cantidad de particiones de InputBatcher |
+| `INPUT_BATCHER_PARTITION_ID` | InputBatcher | `0` | Partición consumida por la instancia |
+| `OUTPUT_QUEUE` | InputBatcher | `preprocessor.input` | Cola de salida hacia Preprocessor |
+| `MAX_BATCH_BYTES` | InputBatcher | `1048576` | Tamaño serializado máximo de cada batch |
 | `INPUT_FILE` | Client | `datasets/wikipedia_sample.parquet` | Dataset de entrada |
 | `OUTPUT_DIR` | Client | `output/distributed` | Directorio de resultados |
-| `LOG_LEVEL` | Client/Gateway | `INFO` | Nivel de logging |
+| `LOG_LEVEL` | Client/Gateway/InputBatcher | `INFO` | Nivel de logging |
 
 ## Configuración prevista
 
 La arquitectura completa deberá externalizar, entre otras:
 
 ```text
-MAX_BATCH_BYTES
 MAX_RECORD_BYTES
 Q3_PARTITIONS
 Q4_COUNTER_PARTITIONS
@@ -678,16 +691,15 @@ La implementación distribuida completa deberá respetar:
 
 ## Próximos pasos
 
-1. Implementar InputBatcher con batches limitados por bytes.
-2. Implementar Preprocessor y QueryRouter.
-3. Implementar la rama compartida de Q1 y Q2.
-4. Implementar el pipeline textual de Q3, Q4 y Q5.
-5. Implementar los protocolos de `PARTITION_END` y barreras.
-6. Implementar ResultSink.
-7. Permitir clientes concurrentes y aislados en el Gateway.
-8. Completar graceful shutdown de todos los procesos.
-9. Resolver la política definitiva de imágenes faltantes para Query 2.
-10. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
-11. Completar la propagación de errores y los límites para entradas no confiables.
-12. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
-13. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
+1. Implementar Preprocessor y QueryRouter.
+2. Implementar la rama compartida de Q1 y Q2.
+3. Implementar el pipeline textual de Q3, Q4 y Q5.
+4. Implementar los protocolos de `PARTITION_END` y barreras.
+5. Implementar ResultSink.
+6. Permitir clientes concurrentes y aislados en el Gateway.
+7. Completar graceful shutdown de todos los procesos.
+8. Resolver la política definitiva de imágenes faltantes para Query 2.
+9. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
+10. Completar la propagación de errores y los límites para entradas no confiables.
+11. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
+12. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
