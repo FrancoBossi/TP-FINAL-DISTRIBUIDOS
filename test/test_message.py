@@ -3,6 +3,7 @@ import unittest
 
 from common.message_protocol.message import (
     AckMessage,
+    ArticleBatchMessage,
     ArticleMessage,
     ErrorMessage,
     InputEndMessage,
@@ -28,6 +29,14 @@ class TestMessage(unittest.TestCase):
             ArticleMessage(article=article),
             RoutedArticleMessage(
                 article=article,
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
+            ArticleBatchMessage(
+                articles=[
+                    article,
+                    {"name": "Network", "abstract": "Computer network"},
+                ],
                 execution_id=execution_id,
                 reply_queue=f"results.{execution_id}",
             ),

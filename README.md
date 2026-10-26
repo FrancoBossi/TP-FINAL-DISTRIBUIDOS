@@ -150,6 +150,14 @@ La primera implementación utilizará una única réplica de la etapa siguiente.
 
 InputBatcher se escala mediante particiones: todos los mensajes de una ejecución se asignan a una única cola `input_batcher.input.<partition>`, con un consumidor activo por partición lógica. No se deben colocar consumidores competidores sobre una misma partición porque dividirían entre procesos el batch pendiente de una ejecución.
 
+#### Límites y entradas sobredimensionadas
+
+Un artículo que por sí solo supere `MAX_BATCH_BYTES` no se enviará como un batch excepcionalmente grande: será rechazado para preservar el límite configurado. La primera implementación fallará de forma visible ante este caso. Queda pendiente completar un mensaje de error de ejecución que llegue hasta el cliente, junto con el NACK sin requeue del artículo inválido, para evitar tanto una espera indefinida como un ciclo de reentregas.
+
+El protocolo TCP ya rechaza frames individuales mayores que `MAX_MESSAGE_SIZE`, actualmente 64 MiB. Este límite acota un mensaje aislado, pero no evita que un cliente envíe repetidamente mensajes cercanos al máximo. Ese escenario constituye una posible denegación de servicio por agotamiento de memoria, CPU, red o almacenamiento de RabbitMQ.
+
+Durante el hito de escalabilidad se trabaja con el dataset conocido y se prioriza el pipeline completo. Antes de aceptar entradas no confiables se deberán incorporar límites específicos por tipo de mensaje, una cuota total de bytes o artículos por ejecución, timeouts, control de frecuencia, validación temprana del esquema y propagación explícita de errores al cliente. La futura serialización binaria también deberá validar las longitudes declaradas antes de reservar memoria.
+
 ### Preprocessor
 
 El Preprocessor será una etapa sin estado encargada de:
@@ -680,5 +688,6 @@ La implementación distribuida completa deberá respetar:
 8. Completar graceful shutdown de todos los procesos.
 9. Resolver la política definitiva de imágenes faltantes para Query 2.
 10. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
-11. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
-12. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
+11. Completar la propagación de errores y los límites para entradas no confiables.
+12. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
+13. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
