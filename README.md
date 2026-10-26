@@ -282,7 +282,7 @@ cuerpo serializado del mensaje
 
 El receptor continúa leyendo hasta obtener exactamente la cantidad de bytes indicada por el encabezado. Esto permite manejar fragmentación de TCP correctamente.
 
-Actualmente, el cuerpo de cada mensaje se serializa como JSON codificado en UTF-8. Está pendiente reemplazar esta representación por una serialización binaria explícita y más eficiente, manteniendo el framing sobre TCP. El nuevo formato deberá permitir transportar directamente campos binarios, como las imágenes de Query 2, sin convertirlos a Base64 durante la comunicación.
+El cuerpo de cada mensaje utiliza una serialización binaria explícita, manteniendo el framing sobre TCP. El formato incluye tipos para strings, enteros, floats, booleanos, nulos, listas, diccionarios y bytes, por lo que permite transportar directamente campos binarios, como las imágenes de Query 2, sin convertirlos a Base64 durante la comunicación.
 
 Los principales mensajes externos son:
 
