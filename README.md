@@ -2,7 +2,7 @@
 
 Trabajo práctico grupal de Sistemas Distribuidos. El sistema procesa artículos de Wikipedia en inglés y francés y genera los resultados de cinco consultas mediante una arquitectura distribuida basada en RabbitMQ.
 
-> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo y la capa común de middleware. Los controllers del DAG distribuido todavía están pendientes.
+> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware y el InputBatcher. Las etapas posteriores del DAG distribuido todavía están pendientes.
 
 ## Consultas
 
@@ -28,7 +28,8 @@ El sistema debe resolver las siguientes consultas:
 | Particionado estable Gateway → InputBatcher | Implementado |
 | Middleware común sobre RabbitMQ | Implementado |
 | Cola temporal de resultados por ejecución | Implementado |
-| InputBatcher y procesamiento distribuido del DAG | Pendiente |
+| InputBatcher con batches limitados por bytes | Implementado |
+| Etapas posteriores del DAG distribuido | Pendiente |
 | ResultSink distribuido | Pendiente |
 | Atención concurrente de varios clientes | Pendiente |
 | Graceful shutdown completo para procesos concurrentes | Pendiente |
@@ -63,6 +64,16 @@ Dataset Parquet
       | RoutedArticle / RoutedInputEnd
       v
 RabbitMQ: input_batcher.input.<partition>
+      |
+      | RoutedArticle / RoutedInputEnd
+      v
+ InputBatcher
+      |
+      | ArticleBatch / RoutedInputEnd
+      v
+RabbitMQ: preprocessor.input
+
+      ... etapas posteriores pendientes ...
 
 RabbitMQ: results.<execution_id>
       |
@@ -77,7 +88,7 @@ RabbitMQ: results.<execution_id>
 query1.jsonl ... query5.jsonl
 ```
 
-Todavía no existe un `InputBatcher` que consuma los artículos ni están implementadas las etapas posteriores. Por ese motivo, la prueba distribuida actual utiliza publicación manual de resultados ficticios.
+El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. Como las etapas posteriores todavía no están implementadas, la prueba distribuida actual utiliza publicación manual de resultados ficticios.
 
 ## Arquitectura objetivo
 
@@ -132,7 +143,7 @@ No se utiliza `hash()` de Python porque su resultado puede cambiar entre proceso
 
 ### InputBatcher
 
-El InputBatcher deberá construir batches con un límite configurable en bytes:
+El InputBatcher construye batches con un límite configurable en bytes:
 
 ```text
 MAX_BATCH_BYTES
@@ -144,7 +155,19 @@ Cuando llega un artículo:
 2. Lo agrega si el batch resultante no supera el límite.
 3. Si lo supera, publica el batch actual y comienza uno nuevo.
 4. Al recibir `INPUT_END`, publica el último batch parcial.
-5. Después inicia la propagación del fin de la etapa.
+5. Después publica el mensaje de fin en la misma cola de salida que los batches.
+
+La primera implementación utiliza una única réplica de la etapa siguiente. De esta manera, los batches y el mensaje de fin se consumen en el mismo orden en que fueron publicados. No se habilitarán múltiples réplicas consumidoras hasta implementar el protocolo de control y las barreras descritos en la sección de mensajes de finalización.
+
+InputBatcher se escala mediante particiones: todos los mensajes de una ejecución se asignan a una única cola `input_batcher.input.<partition>`, con un consumidor activo por partición lógica. No se deben colocar consumidores competidores sobre una misma partición porque dividirían entre procesos el batch pendiente de una ejecución.
+
+#### Límites y entradas sobredimensionadas
+
+Un artículo que por sí solo supere `MAX_BATCH_BYTES` no se enviará como un batch excepcionalmente grande: será rechazado para preservar el límite configurado. La primera implementación fallará de forma visible ante este caso. Queda pendiente completar un mensaje de error de ejecución que llegue hasta el cliente, junto con el NACK sin requeue del artículo inválido, para evitar tanto una espera indefinida como un ciclo de reentregas.
+
+El protocolo TCP ya rechaza frames individuales mayores que `MAX_MESSAGE_SIZE`, actualmente 64 MiB. Este límite acota un mensaje aislado, pero no evita que un cliente envíe repetidamente mensajes cercanos al máximo. Ese escenario constituye una posible denegación de servicio por agotamiento de memoria, CPU, red o almacenamiento de RabbitMQ.
+
+Durante el hito de escalabilidad se trabaja con el dataset conocido y se prioriza el pipeline completo. Antes de aceptar entradas no confiables se deberán incorporar límites específicos por tipo de mensaje, una cuota total de bytes o artículos por ejecución, timeouts, control de frecuencia, validación temprana del esquema y propagación explícita de errores al cliente. La futura serialización binaria también deberá validar las longitudes declaradas antes de reservar memoria.
 
 ### Preprocessor
 
@@ -265,7 +288,18 @@ Los finales tienen significados diferentes:
 
 `INPUT_END` no significa que las consultas hayan terminado.
 
-Cuando una etapa tiene varias réplicas, el fin debe propagarse a todas y la siguiente etapa debe esperar la barrera completa de `PARTITION_END`. No se debe asumir orden entre colas diferentes sin una barrera explícita.
+En la primera ejecución de punta a punta habrá una sola réplica por etapa. El último batch y el mensaje de fin viajarán por la misma cola, por lo que el consumidor único procesará primero todos los batches y luego el final.
+
+Antes de habilitar consumidores competidores en una etapa se implementará el siguiente protocolo, basado en el patrón utilizado en el TP de Coordinación:
+
+1. El mensaje de fin se publica después de todos los mensajes de datos en la misma cola compartida.
+2. Una sola réplica recibe ese mensaje desde la cola y lo difunde mediante un exchange de control.
+3. Cada réplica recibe una copia del control, termina cualquier mensaje que tenga en procesamiento y publica exactamente un `PARTITION_END`.
+4. La etapa siguiente mantiene una barrera por `execution_id` y espera un `PARTITION_END` de cada partición o réplica configurada antes de considerar completa la entrada.
+
+El `prefetch_count=1` limita a uno los mensajes en vuelo por réplica cuando se recibe el control. El estado compartido entre el consumidor de datos y el consumidor de control deberá protegerse con sincronización.
+
+No se debe asumir orden entre una cola de datos y una cola o exchange de control diferentes. Por eso el primer mensaje de fin atraviesa la misma cola que los datos antes de ser difundido. La implementación pendiente requiere incorporar `MessageMiddlewareExchange`, identificar las particiones y conocer la cantidad esperada de finales para completar cada barrera.
 
 ## Comunicación
 
@@ -282,7 +316,27 @@ cuerpo serializado del mensaje
 
 El receptor continúa leyendo hasta obtener exactamente la cantidad de bytes indicada por el encabezado. Esto permite manejar fragmentación de TCP correctamente.
 
-Actualmente, el cuerpo de cada mensaje se serializa como JSON codificado en UTF-8. Está pendiente reemplazar esta representación por una serialización binaria explícita y más eficiente, manteniendo el framing sobre TCP. El nuevo formato deberá permitir transportar directamente campos binarios, como las imágenes de Query 2, sin convertirlos a Base64 durante la comunicación.
+Actualmente, el cuerpo de cada mensaje se serializa como JSON codificado en UTF-8. Durante el hito de escalabilidad se mantendrá esta representación para priorizar una ejecución completa de las cinco consultas de punta a punta.
+
+Mientras se utilice JSON, las imágenes de Query 2 deberán transportarse como strings Base64 dentro de `ResultMessage`. Esto permite escribir directamente el mismo valor en `query2.jsonl`, cuyo formato también representa la imagen como Base64.
+
+#### Serialización binaria postergada
+
+Una vez que el pipeline distribuido funcione de punta a punta, se evaluará reemplazar JSON por una serialización binaria explícita, sin modificar el framing TCP actual de cuatro bytes de longitud.
+
+El diseño acordado como punto de partida es:
+
+- Un byte inicial para identificar la clase concreta del mensaje.
+- Códigos diferentes para mensajes externos e internos, por ejemplo `ARTICLE` y `ROUTED_ARTICLE`.
+- Campos superiores codificados en un orden conocido, sin enviar sus nombres.
+- Un codec propio para `None`, enteros, strings, bytes, listas, tuplas y diccionarios.
+- Strings y bloques de bytes precedidos por una longitud de cuatro bytes en orden de red.
+- Enteros representados con signo en ocho bytes y en orden de red.
+- Claves de diccionarios restringidas a strings.
+- Bytes binarios transportados directamente, sin Base64 dentro de la comunicación.
+- Rechazo de códigos desconocidos, mensajes truncados, UTF-8 inválido, tipos no soportados y bytes sobrantes.
+
+La asignación definitiva de códigos se realizará cuando estén estabilizados todos los tipos de mensajes del DAG. No se utilizarán bibliotecas externas que resuelvan automáticamente la serialización.
 
 Los principales mensajes externos son:
 
@@ -573,7 +627,7 @@ El cliente debe:
 - Confirmar cada resultado.
 - Finalizar después de recibir los cinco `QUERY_END`.
 
-Los artículos permanecen en la cola de entrada porque todavía no existe un InputBatcher que los consuma.
+El InputBatcher consume los artículos y deja los batches resultantes en `preprocessor.input`, donde permanecerán hasta que se implemente el Preprocessor.
 
 Detener el entorno:
 
@@ -587,19 +641,21 @@ make down
 |---|---|---:|---|
 | `SERVER_HOST` | Gateway | `0.0.0.0` | Dirección en la que escucha |
 | `SERVER_PORT` | Gateway/Client | `5000` | Puerto TCP |
-| `MOM_HOST` | Gateway | `localhost` | Host de RabbitMQ |
-| `INPUT_BATCHER_QUEUE_PREFIX` | Gateway | `input_batcher.input` | Prefijo de las colas de entrada |
+| `MOM_HOST` | Gateway/InputBatcher | `localhost` | Host de RabbitMQ |
+| `INPUT_BATCHER_QUEUE_PREFIX` | Gateway/InputBatcher | `input_batcher.input` | Prefijo de las colas de entrada |
 | `INPUT_BATCHER_PARTITIONS` | Gateway | `1` | Cantidad de particiones de InputBatcher |
+| `INPUT_BATCHER_PARTITION_ID` | InputBatcher | `0` | Partición consumida por la instancia |
+| `OUTPUT_QUEUE` | InputBatcher | `preprocessor.input` | Cola de salida hacia Preprocessor |
+| `MAX_BATCH_BYTES` | InputBatcher | `1048576` | Tamaño serializado máximo de cada batch |
 | `INPUT_FILE` | Client | `datasets/wikipedia_sample.parquet` | Dataset de entrada |
 | `OUTPUT_DIR` | Client | `output/distributed` | Directorio de resultados |
-| `LOG_LEVEL` | Client/Gateway | `INFO` | Nivel de logging |
+| `LOG_LEVEL` | Client/Gateway/InputBatcher | `INFO` | Nivel de logging |
 
 ## Configuración prevista
 
 La arquitectura completa deberá externalizar, entre otras:
 
 ```text
-MAX_BATCH_BYTES
 MAX_RECORD_BYTES
 Q3_PARTITIONS
 Q4_COUNTER_PARTITIONS
@@ -635,15 +691,15 @@ La implementación distribuida completa deberá respetar:
 
 ## Próximos pasos
 
-1. Reemplazar la serialización JSON de los mensajes por un protocolo binario explícito.
-2. Implementar InputBatcher con batches limitados por bytes.
-3. Implementar Preprocessor y QueryRouter.
-4. Implementar la rama compartida de Q1 y Q2.
-5. Implementar el pipeline textual de Q3, Q4 y Q5.
-6. Implementar los protocolos de `PARTITION_END` y barreras.
-7. Implementar ResultSink.
-8. Permitir clientes concurrentes y aislados en el Gateway.
-9. Completar graceful shutdown de todos los procesos.
-10. Resolver la política definitiva de imágenes faltantes para Query 2.
-11. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
+1. Implementar Preprocessor y QueryRouter.
+2. Implementar la rama compartida de Q1 y Q2.
+3. Implementar el pipeline textual de Q3, Q4 y Q5.
+4. Implementar los protocolos de `PARTITION_END` y barreras.
+5. Implementar ResultSink.
+6. Permitir clientes concurrentes y aislados en el Gateway.
+7. Completar graceful shutdown de todos los procesos.
+8. Resolver la política definitiva de imágenes faltantes para Query 2.
+9. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
+10. Completar la propagación de errores y los límites para entradas no confiables.
+11. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
 12. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.

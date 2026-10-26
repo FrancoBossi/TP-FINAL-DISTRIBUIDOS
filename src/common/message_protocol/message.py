@@ -44,6 +44,14 @@ class RoutedArticleMessage(ArticleMessage):
 
 
 @dataclass(frozen=True)
+class ArticleBatchMessage(Message):
+    articles: list[dict[str, Any]]
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.ARTICLE_BATCH
+
+
+@dataclass(frozen=True)
 class InputEndMessage(Message):
     type: ClassVar[MessageType] = MessageType.INPUT_END
 
@@ -82,6 +90,7 @@ class QueryEndMessage(Message):
 
 MESSAGE_CLASSES: dict[MessageType, type[Message]] = {
     MessageType.ARTICLE: ArticleMessage,
+    MessageType.ARTICLE_BATCH: ArticleBatchMessage,
     MessageType.INPUT_END: InputEndMessage,
     MessageType.ACK: AckMessage,
     MessageType.ERROR: ErrorMessage,
