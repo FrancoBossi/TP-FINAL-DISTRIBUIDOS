@@ -1,4 +1,3 @@
-import json
 import unittest
 
 from common.message_protocol.message import (
@@ -56,53 +55,39 @@ class TestMessage(unittest.TestCase):
                 self.assertIs(type(decoded), type(message))
                 self.assertEqual(decoded, message)
                 self.assertIsInstance(decoded.type, MessageType)
-                self.assertEqual(
-                    json.loads(message.serialize())["type"],
-                    message.type.value,
-                )
 
         self.assertEqual(messages[0].article, article)
         self.assertIn("École".encode(), messages[0].serialize())
 
-        routed_fields = json.loads(messages[1].serialize())
-        self.assertEqual(
-            routed_fields["execution_id"],
-            execution_id,
+    def test_binary_values_are_preserved_without_base64(self):
+        message = ResultMessage(
+            query_id=2,
+            record={"name": "article", "image": b"\x00\x01\xff"},
+            execution_id="execution-123",
         )
-
-    def test_rejects_invalid_envelopes_and_missing_or_extra_fields(self):
-        for fields in (
-            [],
-            {},
-            {"type": 1},
-            {"type": "UNKNOWN"},
-            {
-                "type": "RESULT",
-                "query_id": 1,
-                "execution_id": "execution-123",
-            },
-            {"type": "ARTICLE"},
-            {"type": "ACK", "record": {}},
-            {
-                "type": "INPUT_END",
-                "execution_id": "execution-123",
-            },
-        ):
-            with self.subTest(fields=fields), self.assertRaises(ValueError):
-                Message.deserialize(json.dumps(fields).encode())
+        self.assertEqual(Message.deserialize(message.serialize()), message)
 
     def test_required_fields_are_required_at_construction(self):
         with self.assertRaises(TypeError):
             ArticleMessage()
 
-    def test_rejects_invalid_json(self):
+    def test_rejects_invalid_binary_messages(self):
         with self.assertRaises(ValueError):
-            Message.deserialize(b"not JSON")
+            Message.deserialize(b"not binary")
+        for body in (
+            b"",
+            b"\x02\x03",
+            b"\x01\xff",
+            b"\x03\x00",
+        ):
+            with self.subTest(body=body), self.assertRaises(ValueError):
+                Message.deserialize(body)
 
-    def test_rejects_non_json_payloads(self):
-        for value in (b"raw image", float("nan")):
-            with self.subTest(value=value), self.assertRaises((TypeError, ValueError)):
-                ArticleMessage({"value": value}).serialize()
+    def test_rejects_unsupported_values(self):
+        with self.assertRaises(TypeError):
+            ArticleMessage({"value": object()}).serialize()
+        with self.assertRaises(ValueError):
+            ArticleMessage({"value": float("nan")}).serialize()
 
 
 if __name__ == "__main__":

@@ -1,4 +1,3 @@
-import json
 import struct
 import unittest
 from unittest.mock import Mock
@@ -8,11 +7,12 @@ from common.message_protocol.message import AckMessage, ArticleMessage
 
 
 class TestExternalProtocol(unittest.TestCase):
-    def test_message_type_keeps_wire_string(self):
+    def test_message_type_is_binary(self):
         sender = Mock()
         send_msg(sender, AckMessage())
         frame = sender.sendall.call_args.args[0]
-        self.assertEqual(json.loads(frame[4:]), {"type": "ACK"})
+        # El primer byte del cuerpo contiene el codigo binario 3 para ACK.
+        self.assertEqual(frame[4:5], b"\x03")
         receiver = Mock()
         receiver.recv.side_effect = [frame[:4], frame[4:]]
         self.assertEqual(recv_msg(receiver), AckMessage())
@@ -43,9 +43,9 @@ class TestExternalProtocol(unittest.TestCase):
                 recv_msg(sock)
             self.assertEqual(sock.recv.call_count, 1)
 
-    def test_rejects_non_message_json(self):
-        for message in ([], {}, {"type": 1}):
-            body = json.dumps(message).encode()
+    def test_rejects_non_message_binary_payloads(self):
+        # Se rechazan tipos desconocidos y datos sobrantes en el cuerpo binario.
+        for body in (b"\xff", b"\x03\x00"):
             sock = Mock()
             sock.recv.side_effect = [struct.pack("!I", len(body)), body]
             with self.assertRaises(ValueError):
