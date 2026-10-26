@@ -8,12 +8,11 @@ import pyarrow as pa
 import pyarrow.parquet as parquet
 
 from common.article import Article
-from dataset.parquet_reader import iter_articles
+from dataset.parquet_reader import iter_article_records, iter_articles
 
 
 class TestParquetReader(unittest.TestCase):
-    def test_iter_articles(self):
-
+    def test_iter_article_records_and_articles(self):
         rows = [
             {
                 "name": "Article 1",
@@ -32,6 +31,17 @@ class TestParquetReader(unittest.TestCase):
                 "abstract": None,
                 "sections": None,
                 "image": None,
+            },
+        ]
+
+        expected_records = [
+            {
+                **rows[0],
+                "date_modified": "2023-01-01T12:00:00",
+            },
+            {
+                **rows[1],
+                "date_modified": "2023-02-01T12:00:00",
             },
         ]
 
@@ -62,8 +72,10 @@ class TestParquetReader(unittest.TestCase):
             table = pa.Table.from_pylist(rows)
             parquet.write_table(table, parquet_file_path)
 
+            records = list(iter_article_records(parquet_file_path, batch_size=1))
             articles = list(iter_articles(parquet_file_path, batch_size=1))
 
+            self.assertEqual(expected_records, records)
             self.assertEqual(expected_articles, articles)
 
 

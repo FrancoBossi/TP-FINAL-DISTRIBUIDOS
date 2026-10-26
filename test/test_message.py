@@ -8,6 +8,7 @@ from common.message_protocol.message import (
     ErrorMessage,
     InputEndMessage,
     Message,
+    NormalizedArticleBatchMessage,
     QueryEndMessage,
     ResultMessage,
     RoutedArticleMessage,
@@ -23,6 +24,16 @@ class TestMessage(unittest.TestCase):
             "abstract": None,
             "sections": ["Biographie"],
         }
+        normalized_article = {
+            "name": "École",
+            "url": "https://fr.wikipedia.org/wiki/École",
+            "language": "fr",
+            "modification_date": "2020-01-02T03:04:05",
+            "abstract": None,
+            "sections": ["Biographie"],
+            "image_url": None,
+        }
+
         execution_id = "execution-123"
 
         messages = [
@@ -37,6 +48,11 @@ class TestMessage(unittest.TestCase):
                     article,
                     {"name": "Network", "abstract": "Computer network"},
                 ],
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
+            NormalizedArticleBatchMessage(
+                articles=[normalized_article],
                 execution_id=execution_id,
                 reply_queue=f"results.{execution_id}",
             ),
