@@ -703,3 +703,44 @@ La implementación distribuida completa deberá respetar:
 10. Completar la propagación de errores y los límites para entradas no confiables.
 11. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
 12. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
+
+## Monitoreo
+
+El mismo `docker-compose.yaml` inicia cAdvisor (exportador de contenedores Docker),
+el exportador nativo `rabbitmq_prometheus`, Prometheus y Grafana:
+
+```sh
+docker compose up -d --build
+```
+
+- Grafana: <http://localhost:3000/>, usuario `admin`, contraseña
+  `admin`
+- Prometheus: <http://localhost:9090>; en `/targets` deben aparecer `prometheus`,
+  `cadvisor`, `rabbitmq` y `rabbitmq-queues` con estado `UP`.
+
+El datasource y el dashboard **Distributed System Overview** contiene un resumen del
+estado del sistema.
+
+Incluye estado de los scrapes, CPU, memoria y tráfico de red por servicio,
+mensajes pendientes y sin confirmar, consumidores por cola, tasas de publicación,
+confirmación y reentrega, y recursos del broker. Los filtros permiten seleccionar
+proyecto Compose, servicio y queue.
+
+> cAdvisor requiere Docker sobre Linux con acceso al host, modo privilegiado y
+> `/dev/kmsg`. Si Docker usa otro directorio de datos, definir `DOCKER_DATA_ROOT`
+> con el valor de `docker info --format '{{.DockerRootDir}}'`. Docker rootless y
+> Docker Desktop pueden necesitar adaptar los montajes según el host o la VM.
+
+Para diagnosticar problemas:
+
+```sh
+docker compose ps
+docker compose logs --tail=100 cadvisor prometheus grafana rabbitmq
+curl -fsS http://localhost:9090/-/ready
+curl -fsS http://localhost:3000/api/health
+```
+
+Referencias:
+- [cAdvisor Docker exporter](https://prometheus.io/docs/guides/cadvisor/)
+- [RabbitMQ Exporter](https://www.rabbitmq.com/docs/3.13/prometheus)
+- [Grafana provisioning](https://grafana.com/docs/grafana/latest/administration/provisioning/)
