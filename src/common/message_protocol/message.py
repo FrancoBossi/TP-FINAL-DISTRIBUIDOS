@@ -68,6 +68,22 @@ class Q1Q2ArticleBatchMessage(Message):
 
 
 @dataclass(frozen=True)
+class Q1CandidateBatchMessage(Message):
+    articles: list[dict[str, Any]]
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.Q1_CANDIDATE_BATCH
+
+
+@dataclass(frozen=True)
+class Q2CandidateBatchMessage(Message):
+    articles: list[dict[str, Any]]
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.Q2_CANDIDATE_BATCH
+
+
+@dataclass(frozen=True)
 class TextArticleBatchMessage(Message):
     articles: list[dict[str, Any]]
     execution_id: str
@@ -122,6 +138,8 @@ MESSAGE_CLASSES: dict[MessageType, type[Message]] = {
     MessageType.RESULT: ResultMessage,
     MessageType.QUERY_END: QueryEndMessage,
     MessageType.Q1_Q2_ARTICLE_BATCH: Q1Q2ArticleBatchMessage,
+    MessageType.Q1_CANDIDATE_BATCH: Q1CandidateBatchMessage,
+    MessageType.Q2_CANDIDATE_BATCH: Q2CandidateBatchMessage,
     MessageType.TEXT_ARTICLE_BATCH: TextArticleBatchMessage,
 }
 
