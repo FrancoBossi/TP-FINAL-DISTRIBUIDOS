@@ -112,6 +112,19 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  image-fetcher:
+    build:
+      context: .
+      dockerfile: src/q2/image_fetcher/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: image_fetcher.input
+      OUTPUT_QUEUE: result_sink.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   client:
     build:
       context: .

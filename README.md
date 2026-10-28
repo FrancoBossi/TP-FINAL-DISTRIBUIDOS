@@ -34,7 +34,8 @@ El sistema debe resolver las siguientes consultas:
 | Filtro temporal compartido de Q1 y Q2 | Implementado con una réplica |
 | Filtro de idioma y resultados de Q1 | Implementado con una réplica |
 | Filtro de secciones biográficas de Q2 | Implementado con una réplica |
-| Ramas de procesamiento Q1–Q5 | Pendiente |
+| Descarga de imágenes y resultados de Q2 | Implementado secuencialmente con una réplica |
+| Ramas textuales Q3–Q5 | Pendiente |
 | ResultSink distribuido | Pendiente |
 | Atención concurrente de varios clientes | Pendiente |
 | Graceful shutdown completo para procesos concurrentes | Pendiente |
@@ -107,11 +108,20 @@ q1_english_filter.input   q2_biography_filter.input
       Q1                         Q2BiographyFilter
       |                               |
       | RESULT / QUERY_END provisional| ImageCandidateBatch
-      v                               v
-RabbitMQ: result_sink.input    RabbitMQ: image_fetcher.input
+      |                               v
+      |                       RabbitMQ: image_fetcher.input
       |                               |
-      v                               v
- ResultSink pendiente          ImageFetcher pendiente
+      |                               v
+      |                          ImageFetcher
+      |                               |
+      |       RESULT / QUERY_END provisional
+      |_______________________________|
+                      |
+                      v
+          RabbitMQ: result_sink.input
+                      |
+                      v
+              ResultSink pendiente
 
       ... etapas posteriores pendientes ...
 
@@ -128,7 +138,7 @@ RabbitMQ: results.<execution_id>
 query1.jsonl ... query5.jsonl
 ```
 
-El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. `Until2020Filter` consume la primera rama, conserva los artículos hasta 2020 inclusive y publica las proyecciones de Q1 y Q2. Q1 ya conserva los artículos en inglés y publica sus resultados en `result_sink.input`. Como ResultSink, Q2 y las ramas textuales todavía no están implementados, la prueba distribuida completa continúa utilizando publicación manual de los resultados restantes.
+El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. `Until2020Filter` consume la primera rama, conserva los artículos hasta 2020 inclusive y publica las proyecciones de Q1 y Q2. Q1 conserva los artículos en inglés y Q2 filtra las secciones biográficas, descarga las imágenes disponibles y codifica sus bytes en Base64. Ambas ramas publican resultados y finales provisionales en `result_sink.input`. Como ResultSink y las ramas textuales todavía no están implementados, la prueba distribuida completa continúa utilizando publicación manual de los resultados restantes.
 
 ## Arquitectura objetivo
 
@@ -266,9 +276,9 @@ Los batches vacíos no se publican. El `RoutedInputEndMessage` se reenvía siemp
 
 - Q1 consume `Q1CandidateBatchMessage`, conserva los artículos cuyo idioma normalizado es `en` y publica un `ResultMessage` por artículo en `result_sink.input`. El registro contiene `url` y `modification_date` en el mismo formato ISO que la referencia serial.
 - `Q2BiographyFilter` consume `Q2CandidateBatchMessage`, busca una sección cuyo nombre completo sea `biography` o `biographie` ignorando mayúsculas y publica `ImageCandidateBatchMessage` en `image_fetcher.input`. La proyección contiene `name`, `url` e `image_url`; una URL ausente se conserva para que ImageFetcher registre y omita el candidato de forma explícita.
-- `ImageFetcher` descarga las imágenes con timeout, reintentos acotados y concurrencia limitada.
+- `ImageFetcher` utiliza `image.content_url` directamente, descarga con timeout y reintentos acotados para 429, 5xx y errores transitorios de red. Los 404 y demás 4xx se registran y no se reintentan. Si falta la URL o la descarga falla definitivamente, registra la omisión y continúa. Los bytes exitosos se codifican en Base64 y se publican como `ResultMessage(query_id=2)` en `result_sink.input`.
 
-En la primera iteración funcional, una única instancia de Q1 transforma `RoutedInputEndMessage` en `QueryEndMessage(query_id=1)`. Este final es provisional. En la iteración de escalabilidad del mismo trabajo, cada réplica emitirá `PARTITION_END` y ResultSink producirá un único `QUERY_END` después de completar la barrera.
+En la primera iteración funcional, una única instancia de Q1 y una única instancia de ImageFetcher transforman `RoutedInputEndMessage` en los `QueryEndMessage` de Q1 y Q2. Estos finales son provisionales. En la iteración de escalabilidad del mismo trabajo, cada réplica emitirá `PARTITION_END` y ResultSink producirá un único `QUERY_END` después de completar cada barrera. ImageFetcher también deberá incorporar concurrencia limitada; actualmente descarga secuencialmente para priorizar el pipeline funcional.
 
 ### Rama textual Q3/Q4/Q5
 
@@ -700,7 +710,7 @@ make down
 |---|---|---:|---|
 | `SERVER_HOST` | Gateway | `0.0.0.0` | Dirección en la que escucha |
 | `SERVER_PORT` | Gateway/Client | `5000` | Puerto TCP |
-| `MOM_HOST` | Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter/Q1/Q2BiographyFilter | `localhost` | Host de RabbitMQ |
+| `MOM_HOST` | Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter/Q1/Q2BiographyFilter/ImageFetcher | `localhost` | Host de RabbitMQ |
 | `INPUT_BATCHER_QUEUE_PREFIX` | Gateway/InputBatcher | `input_batcher.input` | Prefijo de las colas de entrada |
 | `INPUT_BATCHER_PARTITIONS` | Gateway | `1` | Cantidad de particiones de InputBatcher |
 | `INPUT_BATCHER_PARTITION_ID` | InputBatcher | `0` | Partición consumida por la instancia |
@@ -718,9 +728,11 @@ make down
 | `OUTPUT_QUEUE` | Q1 | `result_sink.input` | Cola de resultados y final provisional de Q1 |
 | `INPUT_QUEUE` | Q2BiographyFilter | `q2_biography_filter.input` | Cola de candidatos de Q2 |
 | `OUTPUT_QUEUE` | Q2BiographyFilter | `image_fetcher.input` | Cola de candidatos para descarga de imágenes |
+| `INPUT_QUEUE` | ImageFetcher | `image_fetcher.input` | Cola de candidatos con sección biográfica |
+| `OUTPUT_QUEUE` | ImageFetcher | `result_sink.input` | Cola de resultados y final provisional de Q2 |
 | `INPUT_FILE` | Client | `datasets/wikipedia_sample.parquet` | Dataset de entrada |
 | `OUTPUT_DIR` | Client | `output/distributed` | Directorio de resultados |
-| `LOG_LEVEL` | Client/Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter/Q1/Q2BiographyFilter | `INFO` | Nivel de logging |
+| `LOG_LEVEL` | Client/Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter/Q1/Q2BiographyFilter/ImageFetcher | `INFO` | Nivel de logging |
 
 ## Configuración prevista
 
@@ -770,12 +782,11 @@ El desarrollo se divide en tres momentos distintos:
 
 ## Próximos pasos
 
-1. Implementar `ImageFetcher` desde la salida de `Q2BiographyFilter`.
+1. Implementar ResultSink para entregar los resultados ya producidos por Q1 y Q2.
 2. Implementar el pipeline textual de Q3, Q4 y Q5 desde `word_extractor.input`.
-3. Implementar ResultSink.
-4. Implementar los protocolos de `PARTITION_END` y barreras.
-5. Permitir clientes concurrentes y aislados en el Gateway.
-6. Completar graceful shutdown de todos los procesos.
+3. Implementar los protocolos de `PARTITION_END` y barreras.
+4. Permitir clientes concurrentes y aislados en el Gateway.
+5. Completar graceful shutdown de todos los procesos.
 7. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
 8. Completar la propagación de errores y los límites para entradas no confiables.
 9. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
