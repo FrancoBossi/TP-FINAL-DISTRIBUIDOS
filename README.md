@@ -2,7 +2,7 @@
 
 Trabajo práctico grupal de Sistemas Distribuidos. El sistema procesa artículos de Wikipedia en inglés y francés y genera los resultados de cinco consultas mediante una arquitectura distribuida basada en RabbitMQ.
 
-> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware y el InputBatcher. Las etapas posteriores del DAG distribuido todavía están pendientes.
+> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware, el InputBatcher y el Preprocessor. Las etapas posteriores del DAG distribuido todavía están pendientes.
 
 ## Consultas
 
@@ -29,7 +29,8 @@ El sistema debe resolver las siguientes consultas:
 | Middleware común sobre RabbitMQ | Implementado |
 | Cola temporal de resultados por ejecución | Implementado |
 | InputBatcher con batches limitados por bytes | Implementado |
-| Etapas posteriores del DAG distribuido | Pendiente |
+| Validación y normalización de artículos en Preprocessor | Implementado |
+| Etapas posteriores al Preprocessor | Pendiente |
 | ResultSink distribuido | Pendiente |
 | Atención concurrente de varios clientes | Pendiente |
 | Graceful shutdown completo para procesos concurrentes | Pendiente |
@@ -72,6 +73,14 @@ RabbitMQ: input_batcher.input.<partition>
       | ArticleBatch / RoutedInputEnd
       v
 RabbitMQ: preprocessor.input
+      |
+      | ArticleBatch / RoutedInputEnd
+      v
+ Preprocessor
+      |
+      | NormalizedArticleBatch / RoutedInputEnd
+      v
+RabbitMQ: query_router.input
 
       ... etapas posteriores pendientes ...
 
@@ -88,7 +97,7 @@ RabbitMQ: results.<execution_id>
 query1.jsonl ... query5.jsonl
 ```
 
-El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. Como las etapas posteriores todavía no están implementadas, la prueba distribuida actual utiliza publicación manual de resultados ficticios.
+El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. Como las etapas posteriores todavía no están implementadas, la prueba distribuida actual utiliza publicación manual de resultados ficticios.
 
 ## Arquitectura objetivo
 
@@ -171,14 +180,16 @@ Durante el hito de escalabilidad se trabaja con el dataset conocido y se prioriz
 
 ### Preprocessor
 
-El Preprocessor será una etapa sin estado encargada de:
+El Preprocessor es una etapa sin estado encargada de:
 
 - Validar la estructura de cada artículo.
 - Normalizar fecha e idioma.
 - Preparar la representación básica del abstract.
 - Construir un artículo normalizado para las siguientes etapas.
 
-No deberá aplicar reglas específicas de una query.
+Recibe `ArticleBatchMessage`, publica `NormalizedArticleBatchMessage` y reenvía el mensaje de fin después de los batches anteriores. No aplica reglas específicas de ninguna query.
+
+La implementación actual utiliza una sola réplica. La normalización de cada batch es independiente y permite escalar horizontalmente la etapa, pero antes de habilitar consumidores competidores se debe implementar una barrera que impida publicar el fin mientras otra réplica todavía procesa un batch.
 
 ### QueryRouter
 
@@ -627,7 +638,7 @@ El cliente debe:
 - Confirmar cada resultado.
 - Finalizar después de recibir los cinco `QUERY_END`.
 
-El InputBatcher consume los artículos y deja los batches resultantes en `preprocessor.input`, donde permanecerán hasta que se implemente el Preprocessor.
+El InputBatcher consume los artículos y el Preprocessor deja los batches normalizados en `query_router.input`, donde permanecerán hasta que se implemente el QueryRouter.
 
 Detener el entorno:
 
@@ -641,15 +652,17 @@ make down
 |---|---|---:|---|
 | `SERVER_HOST` | Gateway | `0.0.0.0` | Dirección en la que escucha |
 | `SERVER_PORT` | Gateway/Client | `5000` | Puerto TCP |
-| `MOM_HOST` | Gateway/InputBatcher | `localhost` | Host de RabbitMQ |
+| `MOM_HOST` | Gateway/InputBatcher/Preprocessor | `localhost` | Host de RabbitMQ |
 | `INPUT_BATCHER_QUEUE_PREFIX` | Gateway/InputBatcher | `input_batcher.input` | Prefijo de las colas de entrada |
 | `INPUT_BATCHER_PARTITIONS` | Gateway | `1` | Cantidad de particiones de InputBatcher |
 | `INPUT_BATCHER_PARTITION_ID` | InputBatcher | `0` | Partición consumida por la instancia |
 | `OUTPUT_QUEUE` | InputBatcher | `preprocessor.input` | Cola de salida hacia Preprocessor |
 | `MAX_BATCH_BYTES` | InputBatcher | `1048576` | Tamaño serializado máximo de cada batch |
+| `INPUT_QUEUE` | Preprocessor | `preprocessor.input` | Cola de batches crudos |
+| `OUTPUT_QUEUE` | Preprocessor | `query_router.input` | Cola de batches normalizados |
 | `INPUT_FILE` | Client | `datasets/wikipedia_sample.parquet` | Dataset de entrada |
 | `OUTPUT_DIR` | Client | `output/distributed` | Directorio de resultados |
-| `LOG_LEVEL` | Client/Gateway/InputBatcher | `INFO` | Nivel de logging |
+| `LOG_LEVEL` | Client/Gateway/InputBatcher/Preprocessor | `INFO` | Nivel de logging |
 
 ## Configuración prevista
 
@@ -691,7 +704,7 @@ La implementación distribuida completa deberá respetar:
 
 ## Próximos pasos
 
-1. Implementar Preprocessor y QueryRouter.
+1. Implementar QueryRouter.
 2. Implementar la rama compartida de Q1 y Q2.
 3. Implementar el pipeline textual de Q3, Q4 y Q5.
 4. Implementar los protocolos de `PARTITION_END` y barreras.

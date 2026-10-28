@@ -42,6 +42,19 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  preprocessor:
+    build:
+      context: .
+      dockerfile: src/preprocessor/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: preprocessor.input
+      OUTPUT_QUEUE: query_router.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   client:
     build:
       context: .
