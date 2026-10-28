@@ -31,7 +31,8 @@ El sistema debe resolver las siguientes consultas:
 | InputBatcher con batches limitados por bytes | Implementado |
 | Validación y normalización de artículos en Preprocessor | Implementado |
 | Fan-out y proyecciones mínimas en QueryRouter | Implementado |
-| Ramas de procesamiento Q1–Q5 | Pendiente |
+| Rama compartida de Q1/Q2 hasta 2020 | Implementado |
+| Filtros específicos y etapas posteriores de Q1/Q2 | Pendiente |
 | ResultSink distribuido | Pendiente |
 | Atención concurrente de varios clientes | Pendiente |
 | Graceful shutdown completo para procesos concurrentes | Pendiente |
@@ -93,7 +94,17 @@ RabbitMQ: until_2020.input     RabbitMQ: word_extractor.input
       |                               |
       | Q1Q2ArticleBatch              | TextArticleBatch
       v                               v
- rama Q1/Q2 pendiente          rama Q3/Q4/Q5 pendiente
+ Until2020Filter                rama Q3/Q4/Q5 pendiente
+      |
+      |-----------------------|
+      v                       v
+   q1.input                q2.input
+
+`Until2020Filter` es el nodo compartido de Q1 y Q2. Filtra una sola vez los
+artículos cuya fecha de modificación sea anterior o igual a 2020 y publica el
+batch resultante en ambas colas. El `INPUT_END` también se replica en las dos
+salidas. Los filtros específicos de idioma de Q1 y de secciones/imagen de Q2
+se implementarán como etapas posteriores.
 
       ... etapas posteriores pendientes ...
 
@@ -110,7 +121,9 @@ RabbitMQ: results.<execution_id>
 query1.jsonl ... query5.jsonl
 ```
 
-El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. Como las ramas de las consultas todavía no están implementadas, la prueba distribuida actual utiliza publicación manual de resultados ficticios.
+El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. Como las etapas específicas y el ResultSink todavía no están implementados, la
+prueba distribuida completa aún utiliza publicación manual de resultados
+ficticios.
 
 ## Arquitectura objetivo
 

@@ -72,6 +72,20 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  until-2020:
+    build:
+      context: .
+      dockerfile: src/until_2020/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: until_2020.input
+      Q1_OUTPUT_QUEUE: q1.input
+      Q2_OUTPUT_QUEUE: q2.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   client:
     build:
       context: .
