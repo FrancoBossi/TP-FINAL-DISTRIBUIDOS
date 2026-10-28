@@ -52,6 +52,30 @@ class ArticleBatchMessage(Message):
 
 
 @dataclass(frozen=True)
+class NormalizedArticleBatchMessage(Message):
+    articles: list[dict[str, Any]]
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.NORMALIZED_ARTICLE_BATCH
+
+
+@dataclass(frozen=True)
+class Q1Q2ArticleBatchMessage(Message):
+    articles: list[dict[str, Any]]
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.Q1_Q2_ARTICLE_BATCH
+
+
+@dataclass(frozen=True)
+class TextArticleBatchMessage(Message):
+    articles: list[dict[str, Any]]
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.TEXT_ARTICLE_BATCH
+
+
+@dataclass(frozen=True)
 class InputEndMessage(Message):
     type: ClassVar[MessageType] = MessageType.INPUT_END
 
@@ -91,11 +115,14 @@ class QueryEndMessage(Message):
 MESSAGE_CLASSES: dict[MessageType, type[Message]] = {
     MessageType.ARTICLE: ArticleMessage,
     MessageType.ARTICLE_BATCH: ArticleBatchMessage,
+    MessageType.NORMALIZED_ARTICLE_BATCH: NormalizedArticleBatchMessage,
     MessageType.INPUT_END: InputEndMessage,
     MessageType.ACK: AckMessage,
     MessageType.ERROR: ErrorMessage,
     MessageType.RESULT: ResultMessage,
     MessageType.QUERY_END: QueryEndMessage,
+    MessageType.Q1_Q2_ARTICLE_BATCH: Q1Q2ArticleBatchMessage,
+    MessageType.TEXT_ARTICLE_BATCH: TextArticleBatchMessage,
 }
 
 ROUTED_CLASSES: dict[MessageType, type[Message]] = {

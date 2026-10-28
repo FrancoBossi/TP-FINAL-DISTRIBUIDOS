@@ -45,6 +45,33 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  preprocessor:
+    build:
+      context: .
+      dockerfile: src/preprocessor/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: preprocessor.input
+      OUTPUT_QUEUE: query_router.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  query-router:
+    build:
+      context: .
+      dockerfile: src/query_router/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: query_router.input
+      Q1_Q2_OUTPUT_QUEUE: until_2020.input
+      TEXT_OUTPUT_QUEUE: word_extractor.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   client:
     build:
       context: .
@@ -60,6 +87,7 @@ services:
       - ./output/distributed:/output
 
   cadvisor:
+    profiles: ["monitoring"]
     image: ghcr.io/google/cadvisor:0.55.1
     restart: unless-stopped
     privileged: true
@@ -68,14 +96,16 @@ services:
     command:
       - --docker_only=true
       - --housekeeping_interval=15s
+      - --containerd=/rootfs/run/containerd/containerd.sock
     volumes:
       - /:/rootfs:ro
-      - /var/run:/var/run:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - /sys:/sys:ro
       - ${DOCKER_DATA_ROOT:-/var/lib/docker}:/var/lib/docker:ro
       - /dev/disk:/dev/disk:ro
 
   prometheus:
+    profiles: ["monitoring"]
     image: prom/prometheus:v3.5.0
     restart: unless-stopped
     command:
@@ -94,6 +124,7 @@ services:
         condition: service_started
 
   grafana:
+    profiles: ["monitoring"]
     image: grafana/grafana:12.1.0
     restart: unless-stopped
     environment:

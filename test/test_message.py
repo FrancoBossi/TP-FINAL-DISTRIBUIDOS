@@ -8,10 +8,13 @@ from common.message_protocol.message import (
     ErrorMessage,
     InputEndMessage,
     Message,
+    NormalizedArticleBatchMessage,
+    Q1Q2ArticleBatchMessage,
     QueryEndMessage,
     ResultMessage,
     RoutedArticleMessage,
     RoutedInputEndMessage,
+    TextArticleBatchMessage,
 )
 from common.message_protocol.message_type import MessageType
 
@@ -23,6 +26,16 @@ class TestMessage(unittest.TestCase):
             "abstract": None,
             "sections": ["Biographie"],
         }
+        normalized_article = {
+            "name": "École",
+            "url": "https://fr.wikipedia.org/wiki/École",
+            "language": "fr",
+            "modification_date": "2020-01-02T03:04:05",
+            "abstract": None,
+            "sections": ["Biographie"],
+            "image_url": None,
+        }
+
         execution_id = "execution-123"
 
         messages = [
@@ -37,6 +50,11 @@ class TestMessage(unittest.TestCase):
                     article,
                     {"name": "Network", "abstract": "Computer network"},
                 ],
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
+            NormalizedArticleBatchMessage(
+                articles=[normalized_article],
                 execution_id=execution_id,
                 reply_queue=f"results.{execution_id}",
             ),
@@ -55,6 +73,33 @@ class TestMessage(unittest.TestCase):
             QueryEndMessage(
                 query_id=3,
                 execution_id=execution_id,
+            ),
+            Q1Q2ArticleBatchMessage(
+                articles=[
+                    {
+                        "name": normalized_article["name"],
+                        "url": normalized_article["url"],
+                        "language": normalized_article["language"],
+                        "modification_date": normalized_article["modification_date"],
+                        "sections": normalized_article["sections"],
+                        "image_url": normalized_article["image_url"],
+                    }
+                ],
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
+            TextArticleBatchMessage(
+                articles=[
+                    {
+                        "article_id": normalized_article["url"],
+                        "url": normalized_article["url"],
+                        "language": normalized_article["language"],
+                        "modification_date": normalized_article["modification_date"],
+                        "abstract": normalized_article["abstract"],
+                    }
+                ],
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
             ),
         ]
 

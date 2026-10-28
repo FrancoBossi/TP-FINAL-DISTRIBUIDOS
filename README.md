@@ -2,7 +2,7 @@
 
 Trabajo práctico grupal de Sistemas Distribuidos. El sistema procesa artículos de Wikipedia en inglés y francés y genera los resultados de cinco consultas mediante una arquitectura distribuida basada en RabbitMQ.
 
-> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware y el InputBatcher. Las etapas posteriores del DAG distribuido todavía están pendientes.
+> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware, el InputBatcher, el Preprocessor y el QueryRouter. Las ramas de las consultas y las etapas posteriores del DAG distribuido todavía están pendientes.
 
 ## Consultas
 
@@ -29,7 +29,9 @@ El sistema debe resolver las siguientes consultas:
 | Middleware común sobre RabbitMQ | Implementado |
 | Cola temporal de resultados por ejecución | Implementado |
 | InputBatcher con batches limitados por bytes | Implementado |
-| Etapas posteriores del DAG distribuido | Pendiente |
+| Validación y normalización de artículos en Preprocessor | Implementado |
+| Fan-out y proyecciones mínimas en QueryRouter | Implementado |
+| Ramas de procesamiento Q1–Q5 | Pendiente |
 | ResultSink distribuido | Pendiente |
 | Atención concurrente de varios clientes | Pendiente |
 | Graceful shutdown completo para procesos concurrentes | Pendiente |
@@ -72,6 +74,26 @@ RabbitMQ: input_batcher.input.<partition>
       | ArticleBatch / RoutedInputEnd
       v
 RabbitMQ: preprocessor.input
+      |
+      | ArticleBatch / RoutedInputEnd
+      v
+ Preprocessor
+      |
+      | NormalizedArticleBatch / RoutedInputEnd
+      v
+RabbitMQ: query_router.input
+      |
+      | NormalizedArticleBatch / RoutedInputEnd
+      v
+ QueryRouter
+      |
+      |-------------------------------|
+      v                               v
+RabbitMQ: until_2020.input     RabbitMQ: word_extractor.input
+      |                               |
+      | Q1Q2ArticleBatch              | TextArticleBatch
+      v                               v
+ rama Q1/Q2 pendiente          rama Q3/Q4/Q5 pendiente
 
       ... etapas posteriores pendientes ...
 
@@ -88,7 +110,7 @@ RabbitMQ: results.<execution_id>
 query1.jsonl ... query5.jsonl
 ```
 
-El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. Como las etapas posteriores todavía no están implementadas, la prueba distribuida actual utiliza publicación manual de resultados ficticios.
+El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. Como las ramas de las consultas todavía no están implementadas, la prueba distribuida actual utiliza publicación manual de resultados ficticios.
 
 ## Arquitectura objetivo
 
@@ -171,25 +193,35 @@ Durante el hito de escalabilidad se trabaja con el dataset conocido y se prioriz
 
 ### Preprocessor
 
-El Preprocessor será una etapa sin estado encargada de:
+El Preprocessor es una etapa sin estado encargada de:
 
 - Validar la estructura de cada artículo.
 - Normalizar fecha e idioma.
 - Preparar la representación básica del abstract.
 - Construir un artículo normalizado para las siguientes etapas.
 
-No deberá aplicar reglas específicas de una query.
+Recibe `ArticleBatchMessage`, publica `NormalizedArticleBatchMessage` y reenvía el mensaje de fin después de los batches anteriores. No aplica reglas específicas de ninguna query.
+
+La implementación actual utiliza una sola réplica. La normalización de cada batch es independiente y permite escalar horizontalmente la etapa, pero antes de habilitar consumidores competidores se debe implementar una barrera que impida publicar el fin mientras otra réplica todavía procesa un batch.
 
 ### QueryRouter
 
-El QueryRouter realizará el fan-out hacia dos ramas:
+El QueryRouter realiza el fan-out hacia dos ramas:
 
 ```text
 Q1/Q2
 Q3/Q4/Q5
 ```
 
-Publicará solamente los campos requeridos por cada rama y no realizará filtros propios de las consultas.
+Publica solamente los campos requeridos por cada rama y no realiza filtros propios de las consultas.
+
+`until_2020.input` recibe `Q1Q2ArticleBatchMessage`. Cada artículo contiene `name`, `url`, `language`, `modification_date`, `sections` e `image_url`.
+
+`word_extractor.input` recibe `TextArticleBatchMessage`. Cada artículo contiene `article_id`, `url`, `language`, `modification_date` y `abstract`. Mientras el dataset no provea un identificador independiente, `article_id` utiliza la URL como identidad estable.
+
+El mensaje de fin se publica en ambas salidas después de los batches anteriores. La implementación actual utiliza una sola réplica hasta incorporar el protocolo de control y las barreras.
+
+El fan-out tiene semántica at-least-once. El mensaje de entrada se confirma solamente después de publicar ambas salidas. Si la primera publicación funciona y la segunda falla, se rechaza la entrada y una reentrega puede duplicar el mensaje en la primera rama. La idempotencia de las etapas posteriores queda pendiente para el hito de tolerancia a fallos.
 
 ### Rama Q1/Q2
 
@@ -627,7 +659,7 @@ El cliente debe:
 - Confirmar cada resultado.
 - Finalizar después de recibir los cinco `QUERY_END`.
 
-El InputBatcher consume los artículos y deja los batches resultantes en `preprocessor.input`, donde permanecerán hasta que se implemente el Preprocessor.
+El QueryRouter deja las proyecciones en `until_2020.input` y `word_extractor.input`, donde permanecerán hasta que se implementen las ramas Q1/Q2 y Q3/Q4/Q5.
 
 Detener el entorno:
 
@@ -641,15 +673,20 @@ make down
 |---|---|---:|---|
 | `SERVER_HOST` | Gateway | `0.0.0.0` | Dirección en la que escucha |
 | `SERVER_PORT` | Gateway/Client | `5000` | Puerto TCP |
-| `MOM_HOST` | Gateway/InputBatcher | `localhost` | Host de RabbitMQ |
+| `MOM_HOST` | Gateway/InputBatcher/Preprocessor/QueryRouter | `localhost` | Host de RabbitMQ |
 | `INPUT_BATCHER_QUEUE_PREFIX` | Gateway/InputBatcher | `input_batcher.input` | Prefijo de las colas de entrada |
 | `INPUT_BATCHER_PARTITIONS` | Gateway | `1` | Cantidad de particiones de InputBatcher |
 | `INPUT_BATCHER_PARTITION_ID` | InputBatcher | `0` | Partición consumida por la instancia |
 | `OUTPUT_QUEUE` | InputBatcher | `preprocessor.input` | Cola de salida hacia Preprocessor |
 | `MAX_BATCH_BYTES` | InputBatcher | `1048576` | Tamaño serializado máximo de cada batch |
+| `INPUT_QUEUE` | Preprocessor | `preprocessor.input` | Cola de batches crudos |
+| `OUTPUT_QUEUE` | Preprocessor | `query_router.input` | Cola de batches normalizados |
+| `INPUT_QUEUE` | QueryRouter | `query_router.input` | Cola de batches normalizados |
+| `Q1_Q2_OUTPUT_QUEUE` | QueryRouter | `until_2020.input` | Cola de la rama Q1/Q2 |
+| `TEXT_OUTPUT_QUEUE` | QueryRouter | `word_extractor.input` | Cola de la rama Q3/Q4/Q5 |
 | `INPUT_FILE` | Client | `datasets/wikipedia_sample.parquet` | Dataset de entrada |
 | `OUTPUT_DIR` | Client | `output/distributed` | Directorio de resultados |
-| `LOG_LEVEL` | Client/Gateway/InputBatcher | `INFO` | Nivel de logging |
+| `LOG_LEVEL` | Client/Gateway/InputBatcher/Preprocessor/QueryRouter | `INFO` | Nivel de logging |
 
 ## Configuración prevista
 
@@ -691,45 +728,57 @@ La implementación distribuida completa deberá respetar:
 
 ## Próximos pasos
 
-1. Implementar Preprocessor y QueryRouter.
-2. Implementar la rama compartida de Q1 y Q2.
-3. Implementar el pipeline textual de Q3, Q4 y Q5.
-4. Implementar los protocolos de `PARTITION_END` y barreras.
-5. Implementar ResultSink.
-6. Permitir clientes concurrentes y aislados en el Gateway.
-7. Completar graceful shutdown de todos los procesos.
-8. Resolver la política definitiva de imágenes faltantes para Query 2.
-9. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
-10. Completar la propagación de errores y los límites para entradas no confiables.
-11. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
-12. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
+1. Implementar la rama compartida de Q1 y Q2 desde `until_2020.input`.
+2. Implementar el pipeline textual de Q3, Q4 y Q5 desde `word_extractor.input`.
+3. Implementar los protocolos de `PARTITION_END` y barreras.
+4. Implementar ResultSink.
+5. Permitir clientes concurrentes y aislados en el Gateway.
+6. Completar graceful shutdown de todos los procesos.
+7. Resolver la política definitiva de imágenes faltantes para Query 2.
+8. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
+9. Completar la propagación de errores y los límites para entradas no confiables.
+10. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
+11. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
 
 ## Monitoreo
 
-El mismo `docker-compose.yaml` inicia cAdvisor (exportador de contenedores Docker),
-el exportador nativo `rabbitmq_prometheus`, Prometheus y Grafana:
+El monitoreo es opcional y se encuentra agrupado bajo el perfil `monitoring`.
+Este perfil inicia cAdvisor, Prometheus y Grafana. RabbitMQ expone sus métricas
+mediante el plugin nativo `rabbitmq_prometheus`.
+
+Para iniciar el sistema junto con el monitoreo:
 
 ```sh
-docker compose up -d --build
+docker compose --profile monitoring up -d --build
 ```
 
+El arranque habitual mediante `make up` no inicia los componentes de monitoreo.
+
 - Grafana: <http://localhost:3000/>, usuario `admin`, contraseña
-  `admin`
-- Prometheus: <http://localhost:9090>; en `/targets` deben aparecer `prometheus`,
+  `admin`.
+- Prometheus: <http://localhost:9090>. En `/targets` deben aparecer `prometheus`,
   `cadvisor`, `rabbitmq` y `rabbitmq-queues` con estado `UP`.
 
-El datasource y el dashboard **Distributed System Overview** contiene un resumen del
-estado del sistema.
+El datasource y el dashboard **System Overview** se aprovisionan automáticamente
+en Grafana.
 
-Incluye estado de los scrapes, CPU, memoria y tráfico de red por servicio,
-mensajes pendientes y sin confirmar, consumidores por cola, tasas de publicación,
-confirmación y reentrega, y recursos del broker. Los filtros permiten seleccionar
-proyecto Compose, servicio y queue.
+El dashboard incluye el estado de los scrapes, CPU, memoria y tráfico de red por
+servicio, mensajes pendientes y sin confirmar, consumidores por cola, tasas de
+publicación, confirmación y reentrega, y recursos del broker. Sus filtros permiten
+seleccionar el proyecto de Compose, el servicio y la cola.
 
-> cAdvisor requiere Docker sobre Linux con acceso al host, modo privilegiado y
-> `/dev/kmsg`. Si Docker usa otro directorio de datos, definir `DOCKER_DATA_ROOT`
-> con el valor de `docker info --format '{{.DockerRootDir}}'`. Docker rootless y
-> Docker Desktop pueden necesitar adaptar los montajes según el host o la VM.
+cAdvisor accede al daemon de Docker mediante el socket
+`/var/run/docker.sock`, montado dentro del contenedor, y al runtime containerd
+mediante `/rootfs/run/containerd/containerd.sock`. También requiere acceso al host,
+modo privilegiado y `/dev/kmsg`. Si Docker utiliza otro directorio de datos, se
+debe definir `DOCKER_DATA_ROOT` con el valor obtenido mediante:
+
+```sh
+docker info --format '{{.DockerRootDir}}'
+```
+
+Las instalaciones rootless o con una ubicación no convencional del socket pueden
+requerir adaptar estos montajes.
 
 Para diagnosticar problemas:
 
@@ -740,7 +789,14 @@ curl -fsS http://localhost:9090/-/ready
 curl -fsS http://localhost:3000/api/health
 ```
 
+Para detener todo el entorno, incluido el monitoreo:
+
+```sh
+docker compose --profile monitoring down
+```
+
 Referencias:
+
 - [cAdvisor Docker exporter](https://prometheus.io/docs/guides/cadvisor/)
 - [RabbitMQ Exporter](https://www.rabbitmq.com/docs/3.13/prometheus)
 - [Grafana provisioning](https://grafana.com/docs/grafana/latest/administration/provisioning/)

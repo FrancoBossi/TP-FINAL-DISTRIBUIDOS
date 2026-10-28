@@ -3,11 +3,9 @@ import logging
 import socket
 from collections.abc import Iterable
 from contextlib import ExitStack
-from dataclasses import asdict
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
-from common.article import Article
 from common.message_protocol.external import (
     QUERY_IDS,
     recv_msg,
@@ -23,7 +21,7 @@ from common.message_protocol.message import (
     QueryEndMessage,
     ResultMessage,
 )
-from dataset.parquet_reader import iter_articles
+from dataset.parquet_reader import iter_article_records
 
 LOG_BATCH_SIZE = 1000
 logger = logging.getLogger(__name__)
@@ -40,10 +38,14 @@ class Client:
             raise RuntimeError(message.message)
         return message
 
-    def _send_article(self, sock: socket.socket, article: Article) -> None:
-        record = asdict(article)
-        record["modification_date"] = article.modification_date.isoformat()
-        send_msg(sock, ArticleMessage(article=record))
+    def _send_article(
+        self,
+        sock: socket.socket,
+        article: dict[str, Any],
+    ) -> None:
+
+        send_msg(sock, ArticleMessage(article=article))
+
         if not isinstance(self._receive(sock), AckMessage):
             raise ValueError("Expected ACK for ARTICLE")
 
@@ -52,15 +54,23 @@ class Client:
         if not isinstance(self._receive(sock), AckMessage):
             raise ValueError("Expected ACK for INPUT_END")
 
-    def send_articles(self, sock: socket.socket, articles: Iterable[Article]) -> None:
+    def send_articles(
+        self,
+        sock: socket.socket,
+        articles: Iterable[dict[str, Any]],
+    ) -> None:
+
         sent = 0
         logger.info("Started uploading articles")
+
         for article in articles:
             self._send_article(sock, article)
             sent += 1
-            logger.debug("Sent article %d: %s", sent, article.name)
+            logger.debug("Sent article %d: %s", sent, article["name"])
+
             if sent % LOG_BATCH_SIZE == 0:
                 logger.info("Upload progress: %d articles acknowledged", sent)
+
         self._send_end_of_input(sock)
         logger.info("Upload complete: %d articles acknowledged", sent)
 
@@ -117,5 +127,5 @@ class Client:
         logger.info("Connecting to gateway at %s:%d", self.host, self.port)
         with socket.create_connection((self.host, self.port)) as sock:
             logger.info("Connected; reading articles from %s", input_file)
-            self.send_articles(sock, iter_articles(input_file))
+            self.send_articles(sock, iter_article_records(input_file))
             self.receive_results(sock, output_dir)

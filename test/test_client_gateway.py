@@ -2,13 +2,11 @@ import json
 import socket
 import threading
 import unittest
-from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
 from client.client import Client
-from common.article import Article
 from common.message_protocol.message import (
     AckMessage,
     ArticleMessage,
@@ -73,15 +71,19 @@ class FakeMessaging:
 
 class TestClientGateway(unittest.TestCase):
     def test_upload_and_receive_all_five_queries_with_fake_messaging(self):
-        article = Article(
-            "École",
-            "https://example.com",
-            "fr",
-            datetime(2020, 1, 1, tzinfo=timezone.utc),
-            None,
-            (),
-            None,
-        )
+        article = {
+            "abstract": None,
+            "date_modified": "2020-01-01T00:00:00+00:00",
+            "image": {
+                "content_url": "https://upload.wikimedia.org/example.jpg",
+                "height": 100,
+                "width": 200,
+            },
+            "in_language": {"identifier": "fr"},
+            "name": "École",
+            "sections": '[{"name": "Histoire"}]',
+            "url": "https://example.com",
+        }
 
         for articles in ([article], []):
             with self.subTest(articles=articles), TemporaryDirectory() as output_dir:
@@ -106,7 +108,7 @@ class TestClientGateway(unittest.TestCase):
                     with (
                         client_socket,
                         patch(
-                            "client.client.iter_articles",
+                            "client.client.iter_article_records",
                             return_value=iter(articles),
                         ),
                         patch(
@@ -164,12 +166,7 @@ class TestClientGateway(unittest.TestCase):
                         sent.reply_queue,
                         messaging.result_queue_name,
                     )
-                    self.assertEqual(
-                        sent.article["modification_date"],
-                        "2020-01-01T00:00:00+00:00",
-                    )
-                    self.assertIsNone(sent.article["abstract"])
-                    self.assertEqual(sent.article["sections"], [])
+                    self.assertEqual(sent.article, article)
 
     def test_client_rejects_wrong_upload_ack(self):
         with patch("client.client.recv_msg", return_value=InputEndMessage()):

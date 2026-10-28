@@ -90,7 +90,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "up{job!~\"cadvisor|prometheus\"}",
+          "expr": "up",
           "legendFormat": "{{job}}"
         }
       ],
