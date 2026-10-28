@@ -739,3 +739,64 @@ La implementación distribuida completa deberá respetar:
 9. Completar la propagación de errores y los límites para entradas no confiables.
 10. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
 11. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
+
+## Monitoreo
+
+El monitoreo es opcional y se encuentra agrupado bajo el perfil `monitoring`.
+Este perfil inicia cAdvisor, Prometheus y Grafana. RabbitMQ expone sus métricas
+mediante el plugin nativo `rabbitmq_prometheus`.
+
+Para iniciar el sistema junto con el monitoreo:
+
+```sh
+docker compose --profile monitoring up -d --build
+```
+
+El arranque habitual mediante `make up` no inicia los componentes de monitoreo.
+
+- Grafana: <http://localhost:3000/>, usuario `admin`, contraseña
+  `admin`.
+- Prometheus: <http://localhost:9090>. En `/targets` deben aparecer `prometheus`,
+  `cadvisor`, `rabbitmq` y `rabbitmq-queues` con estado `UP`.
+
+El datasource y el dashboard **System Overview** se aprovisionan automáticamente
+en Grafana.
+
+El dashboard incluye el estado de los scrapes, CPU, memoria y tráfico de red por
+servicio, mensajes pendientes y sin confirmar, consumidores por cola, tasas de
+publicación, confirmación y reentrega, y recursos del broker. Sus filtros permiten
+seleccionar el proyecto de Compose, el servicio y la cola.
+
+cAdvisor accede al daemon de Docker mediante el socket
+`/var/run/docker.sock`, montado dentro del contenedor, y al runtime containerd
+mediante `/rootfs/run/containerd/containerd.sock`. También requiere acceso al host,
+modo privilegiado y `/dev/kmsg`. Si Docker utiliza otro directorio de datos, se
+debe definir `DOCKER_DATA_ROOT` con el valor obtenido mediante:
+
+```sh
+docker info --format '{{.DockerRootDir}}'
+```
+
+Las instalaciones rootless o con una ubicación no convencional del socket pueden
+requerir adaptar estos montajes.
+
+Para diagnosticar problemas:
+
+```sh
+docker compose ps
+docker compose logs --tail=100 cadvisor prometheus grafana rabbitmq
+curl -fsS http://localhost:9090/-/ready
+curl -fsS http://localhost:3000/api/health
+```
+
+Para detener todo el entorno, incluido el monitoreo:
+
+```sh
+docker compose --profile monitoring down
+```
+
+Referencias:
+
+- [cAdvisor Docker exporter](https://prometheus.io/docs/guides/cadvisor/)
+- [RabbitMQ Exporter](https://www.rabbitmq.com/docs/3.13/prometheus)
+- [Grafana provisioning](https://grafana.com/docs/grafana/latest/administration/provisioning/)
