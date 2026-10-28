@@ -99,6 +99,19 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  q2-biography-filter:
+    build:
+      context: .
+      dockerfile: src/q2/biography_filter/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q2_biography_filter.input
+      OUTPUT_QUEUE: image_fetcher.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   client:
     build:
       context: .

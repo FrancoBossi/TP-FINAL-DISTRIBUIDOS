@@ -6,6 +6,7 @@ from common.message_protocol.message import (
     ArticleBatchMessage,
     ArticleMessage,
     ErrorMessage,
+    ImageCandidateBatchMessage,
     InputEndMessage,
     Message,
     NormalizedArticleBatchMessage,
@@ -107,6 +108,17 @@ class TestMessage(unittest.TestCase):
                         "name": normalized_article["name"],
                         "url": normalized_article["url"],
                         "sections": normalized_article["sections"],
+                        "image_url": normalized_article["image_url"],
+                    }
+                ],
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
+            ImageCandidateBatchMessage(
+                articles=[
+                    {
+                        "name": normalized_article["name"],
+                        "url": normalized_article["url"],
                         "image_url": normalized_article["image_url"],
                     }
                 ],

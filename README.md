@@ -33,6 +33,7 @@ El sistema debe resolver las siguientes consultas:
 | Fan-out y proyecciones mínimas en QueryRouter | Implementado |
 | Filtro temporal compartido de Q1 y Q2 | Implementado con una réplica |
 | Filtro de idioma y resultados de Q1 | Implementado con una réplica |
+| Filtro de secciones biográficas de Q2 | Implementado con una réplica |
 | Ramas de procesamiento Q1–Q5 | Pendiente |
 | ResultSink distribuido | Pendiente |
 | Atención concurrente de varios clientes | Pendiente |
@@ -49,9 +50,9 @@ La arquitectura objetivo requiere ejecuciones aisladas y concurrentes entre vari
 
 La referencia serial utiliza `image.content_url` cuando está presente en el registro del dataset. El sistema realiza un HTTP GET directo a esa URL y utiliza el cuerpo de la respuesta como los bytes de la imagen.
 
-La descarga cuenta con timeout y una cantidad acotada de reintentos. Si el artículo no tiene `content_url` o la descarga falla definitivamente, ese artículo se omite del resultado de Query 2.
+El criterio fue confirmado con la cátedra: no es necesario consultar adicionalmente la API REST de Wikimedia. La implementación distribuida utilizará directamente `image.content_url` cuando esté presente.
 
-Está pendiente confirmar si la implementación distribuida deberá consultar adicionalmente la API REST de Wikimedia cuando el dataset no incluya una imagen.
+La descarga contará con timeout y una cantidad acotada de reintentos para errores transitorios. Un HTTP 404 se tratará como un error permanente: se registrará de forma identificable, no se reintentará y ese artículo se omitirá del resultado. Si el artículo no tiene `content_url` o cualquier otro error agota sus reintentos, también se registrará la omisión y la ejecución continuará.
 
 ## Flujo implementado actualmente
 
@@ -103,14 +104,14 @@ q1_english_filter.input   q2_biography_filter.input
       |                               |
       | Q1CandidateBatch              | Q2CandidateBatch
       v                               v
-      Q1                         filtros Q2 pendientes
-      |
-      | RESULT / QUERY_END provisional
-      v
-RabbitMQ: result_sink.input
-      |
-      v
- ResultSink pendiente
+      Q1                         Q2BiographyFilter
+      |                               |
+      | RESULT / QUERY_END provisional| ImageCandidateBatch
+      v                               v
+RabbitMQ: result_sink.input    RabbitMQ: image_fetcher.input
+      |                               |
+      v                               v
+ ResultSink pendiente          ImageFetcher pendiente
 
       ... etapas posteriores pendientes ...
 
@@ -264,7 +265,7 @@ Consume `Q1Q2ArticleBatchMessage` desde `until_2020.input`. Por cada batch que c
 Los batches vacíos no se publican. El `RoutedInputEndMessage` se reenvía siempre a ambas ramas para que puedan finalizar incluso cuando una ejecución no tenga candidatos. Actualmente se ejecuta una sola réplica: antes de escalarla se debe reemplazar el fin simple por el protocolo de control y barrera, ya que una réplica podría reenviar el final mientras otra todavía procesa un batch anterior.
 
 - Q1 consume `Q1CandidateBatchMessage`, conserva los artículos cuyo idioma normalizado es `en` y publica un `ResultMessage` por artículo en `result_sink.input`. El registro contiene `url` y `modification_date` en el mismo formato ISO que la referencia serial.
-- `Q2BiographyFilter` busca las secciones `biography` o `biographie`.
+- `Q2BiographyFilter` consume `Q2CandidateBatchMessage`, busca una sección cuyo nombre completo sea `biography` o `biographie` ignorando mayúsculas y publica `ImageCandidateBatchMessage` en `image_fetcher.input`. La proyección contiene `name`, `url` e `image_url`; una URL ausente se conserva para que ImageFetcher registre y omita el candidato de forma explícita.
 - `ImageFetcher` descarga las imágenes con timeout, reintentos acotados y concurrencia limitada.
 
 En la primera iteración funcional, una única instancia de Q1 transforma `RoutedInputEndMessage` en `QueryEndMessage(query_id=1)`. Este final es provisional. En la iteración de escalabilidad del mismo trabajo, cada réplica emitirá `PARTITION_END` y ResultSink producirá un único `QUERY_END` después de completar la barrera.
@@ -699,7 +700,7 @@ make down
 |---|---|---:|---|
 | `SERVER_HOST` | Gateway | `0.0.0.0` | Dirección en la que escucha |
 | `SERVER_PORT` | Gateway/Client | `5000` | Puerto TCP |
-| `MOM_HOST` | Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter/Q1 | `localhost` | Host de RabbitMQ |
+| `MOM_HOST` | Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter/Q1/Q2BiographyFilter | `localhost` | Host de RabbitMQ |
 | `INPUT_BATCHER_QUEUE_PREFIX` | Gateway/InputBatcher | `input_batcher.input` | Prefijo de las colas de entrada |
 | `INPUT_BATCHER_PARTITIONS` | Gateway | `1` | Cantidad de particiones de InputBatcher |
 | `INPUT_BATCHER_PARTITION_ID` | InputBatcher | `0` | Partición consumida por la instancia |
@@ -715,9 +716,11 @@ make down
 | `Q2_OUTPUT_QUEUE` | Until2020Filter | `q2_biography_filter.input` | Cola de candidatos para Q2 |
 | `INPUT_QUEUE` | Q1 | `q1_english_filter.input` | Cola de candidatos de Q1 |
 | `OUTPUT_QUEUE` | Q1 | `result_sink.input` | Cola de resultados y final provisional de Q1 |
+| `INPUT_QUEUE` | Q2BiographyFilter | `q2_biography_filter.input` | Cola de candidatos de Q2 |
+| `OUTPUT_QUEUE` | Q2BiographyFilter | `image_fetcher.input` | Cola de candidatos para descarga de imágenes |
 | `INPUT_FILE` | Client | `datasets/wikipedia_sample.parquet` | Dataset de entrada |
 | `OUTPUT_DIR` | Client | `output/distributed` | Directorio de resultados |
-| `LOG_LEVEL` | Client/Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter/Q1 | `INFO` | Nivel de logging |
+| `LOG_LEVEL` | Client/Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter/Q1/Q2BiographyFilter | `INFO` | Nivel de logging |
 
 ## Configuración prevista
 
@@ -767,17 +770,16 @@ El desarrollo se divide en tres momentos distintos:
 
 ## Próximos pasos
 
-1. Implementar `Q2BiographyFilter` e `ImageFetcher` desde la salida de `Until2020Filter`.
+1. Implementar `ImageFetcher` desde la salida de `Q2BiographyFilter`.
 2. Implementar el pipeline textual de Q3, Q4 y Q5 desde `word_extractor.input`.
 3. Implementar ResultSink.
 4. Implementar los protocolos de `PARTITION_END` y barreras.
 5. Permitir clientes concurrentes y aislados en el Gateway.
 6. Completar graceful shutdown de todos los procesos.
-7. Resolver la política definitiva de imágenes faltantes para Query 2.
-8. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
-9. Completar la propagación de errores y los límites para entradas no confiables.
-10. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
-11. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
+7. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
+8. Completar la propagación de errores y los límites para entradas no confiables.
+9. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
+10. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
 
 ## Monitoreo
 
