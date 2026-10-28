@@ -86,6 +86,19 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  q1:
+    build:
+      context: .
+      dockerfile: src/q1/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q1_english_filter.input
+      OUTPUT_QUEUE: result_sink.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   client:
     build:
       context: .

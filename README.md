@@ -31,6 +31,8 @@ El sistema debe resolver las siguientes consultas:
 | InputBatcher con batches limitados por bytes | Implementado |
 | Validación y normalización de artículos en Preprocessor | Implementado |
 | Fan-out y proyecciones mínimas en QueryRouter | Implementado |
+| Filtro temporal compartido de Q1 y Q2 | Implementado con una réplica |
+| Filtro de idioma y resultados de Q1 | Implementado con una réplica |
 | Ramas de procesamiento Q1–Q5 | Pendiente |
 | ResultSink distribuido | Pendiente |
 | Atención concurrente de varios clientes | Pendiente |
@@ -101,7 +103,14 @@ q1_english_filter.input   q2_biography_filter.input
       |                               |
       | Q1CandidateBatch              | Q2CandidateBatch
       v                               v
- filtros Q1 pendientes          filtros Q2 pendientes
+      Q1                         filtros Q2 pendientes
+      |
+      | RESULT / QUERY_END provisional
+      v
+RabbitMQ: result_sink.input
+      |
+      v
+ ResultSink pendiente
 
       ... etapas posteriores pendientes ...
 
@@ -118,7 +127,7 @@ RabbitMQ: results.<execution_id>
 query1.jsonl ... query5.jsonl
 ```
 
-El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. `Until2020Filter` consume la primera rama, conserva los artículos hasta 2020 inclusive y publica las proyecciones de Q1 y Q2. Como los filtros específicos de las consultas y las etapas posteriores todavía no están implementados, la prueba distribuida completa continúa utilizando publicación manual de resultados ficticios.
+El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. `Until2020Filter` consume la primera rama, conserva los artículos hasta 2020 inclusive y publica las proyecciones de Q1 y Q2. Q1 ya conserva los artículos en inglés y publica sus resultados en `result_sink.input`. Como ResultSink, Q2 y las ramas textuales todavía no están implementados, la prueba distribuida completa continúa utilizando publicación manual de los resultados restantes.
 
 ## Arquitectura objetivo
 
@@ -254,9 +263,11 @@ Consume `Q1Q2ArticleBatchMessage` desde `until_2020.input`. Por cada batch que c
 
 Los batches vacíos no se publican. El `RoutedInputEndMessage` se reenvía siempre a ambas ramas para que puedan finalizar incluso cuando una ejecución no tenga candidatos. Actualmente se ejecuta una sola réplica: antes de escalarla se debe reemplazar el fin simple por el protocolo de control y barrera, ya que una réplica podría reenviar el final mientras otra todavía procesa un batch anterior.
 
-- `Q1EnglishFilter` conserva artículos en inglés y genera los resultados de Query 1.
+- Q1 consume `Q1CandidateBatchMessage`, conserva los artículos cuyo idioma normalizado es `en` y publica un `ResultMessage` por artículo en `result_sink.input`. El registro contiene `url` y `modification_date` en el mismo formato ISO que la referencia serial.
 - `Q2BiographyFilter` busca las secciones `biography` o `biographie`.
 - `ImageFetcher` descarga las imágenes con timeout, reintentos acotados y concurrencia limitada.
+
+En la primera iteración funcional, una única instancia de Q1 transforma `RoutedInputEndMessage` en `QueryEndMessage(query_id=1)`. Este final es provisional. En la iteración de escalabilidad del mismo trabajo, cada réplica emitirá `PARTITION_END` y ResultSink producirá un único `QUERY_END` después de completar la barrera.
 
 ### Rama textual Q3/Q4/Q5
 
@@ -688,7 +699,7 @@ make down
 |---|---|---:|---|
 | `SERVER_HOST` | Gateway | `0.0.0.0` | Dirección en la que escucha |
 | `SERVER_PORT` | Gateway/Client | `5000` | Puerto TCP |
-| `MOM_HOST` | Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter | `localhost` | Host de RabbitMQ |
+| `MOM_HOST` | Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter/Q1 | `localhost` | Host de RabbitMQ |
 | `INPUT_BATCHER_QUEUE_PREFIX` | Gateway/InputBatcher | `input_batcher.input` | Prefijo de las colas de entrada |
 | `INPUT_BATCHER_PARTITIONS` | Gateway | `1` | Cantidad de particiones de InputBatcher |
 | `INPUT_BATCHER_PARTITION_ID` | InputBatcher | `0` | Partición consumida por la instancia |
@@ -702,9 +713,11 @@ make down
 | `INPUT_QUEUE` | Until2020Filter | `until_2020.input` | Cola compartida de Q1 y Q2 |
 | `Q1_OUTPUT_QUEUE` | Until2020Filter | `q1_english_filter.input` | Cola de candidatos para Q1 |
 | `Q2_OUTPUT_QUEUE` | Until2020Filter | `q2_biography_filter.input` | Cola de candidatos para Q2 |
+| `INPUT_QUEUE` | Q1 | `q1_english_filter.input` | Cola de candidatos de Q1 |
+| `OUTPUT_QUEUE` | Q1 | `result_sink.input` | Cola de resultados y final provisional de Q1 |
 | `INPUT_FILE` | Client | `datasets/wikipedia_sample.parquet` | Dataset de entrada |
 | `OUTPUT_DIR` | Client | `output/distributed` | Directorio de resultados |
-| `LOG_LEVEL` | Client/Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter | `INFO` | Nivel de logging |
+| `LOG_LEVEL` | Client/Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter/Q1 | `INFO` | Nivel de logging |
 
 ## Configuración prevista
 
@@ -744,12 +757,20 @@ La implementación distribuida completa deberá respetar:
 11. Los recursos temporales se eliminan al completar o abortar una ejecución.
 12. Un `SIGTERM` no fabrica mensajes de finalización para trabajo incompleto.
 
+## Orden de implementación
+
+El desarrollo se divide en tres momentos distintos:
+
+1. Completar primero un pipeline funcional de punta a punta con una réplica por componente y finales simples.
+2. Dentro de este mismo TP de escalabilidad, incorporar múltiples réplicas, mensajes de control, `PARTITION_END` y barreras que produzcan un único `QUERY_END` por consulta.
+3. En la instancia posterior de tolerancia a fallos, incorporar persistencia, recuperación ante caídas e idempotencia frente a reentregas.
+
 ## Próximos pasos
 
-1. Implementar `Q1EnglishFilter`, `Q2BiographyFilter` e `ImageFetcher` desde las salidas de `Until2020Filter`.
+1. Implementar `Q2BiographyFilter` e `ImageFetcher` desde la salida de `Until2020Filter`.
 2. Implementar el pipeline textual de Q3, Q4 y Q5 desde `word_extractor.input`.
-3. Implementar los protocolos de `PARTITION_END` y barreras.
-4. Implementar ResultSink.
+3. Implementar ResultSink.
+4. Implementar los protocolos de `PARTITION_END` y barreras.
 5. Permitir clientes concurrentes y aislados en el Gateway.
 6. Completar graceful shutdown de todos los procesos.
 7. Resolver la política definitiva de imágenes faltantes para Query 2.
