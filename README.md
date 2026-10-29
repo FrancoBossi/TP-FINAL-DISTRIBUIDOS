@@ -2,7 +2,7 @@
 
 Trabajo práctico grupal de Sistemas Distribuidos. El sistema procesa artículos de Wikipedia en inglés y francés y genera los resultados de cinco consultas mediante una arquitectura distribuida basada en RabbitMQ.
 
-> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware, el InputBatcher, el Preprocessor y el QueryRouter. Las ramas de las consultas y las etapas posteriores del DAG distribuido todavía están pendientes.
+> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware, el InputBatcher, el Preprocessor, el QueryRouter y las ramas funcionales de Q1, Q2 y Q3 hasta `result_sink.input`. Q4, Q5 y ResultSink todavía están pendientes.
 
 ## Consultas
 
@@ -339,7 +339,7 @@ palabras dentro de cada abstract y conserva stopwords. Publica batches
 además de `execution_id` y `reply_queue`. Una presencia puede repetirse entre
 artículos o batches.
 
-`Q3WordAggregator` mantiene, por palabra y ejecución, si fue observada en inglés y en francés. Cuando ambas condiciones se cumplen, emite esa palabra una sola vez.
+`Q3WordAggregator` mantiene, por palabra y ejecución, si fue observada en inglés y en francés. Cuando ambas condiciones se cumplen, emite esa palabra una sola vez. La versión funcional utiliza una única partición y publica un `QUERY_END` provisional; las múltiples particiones y su barrera se incorporarán durante la etapa de escalabilidad.
 
 La afinidad se calcula a partir de:
 
@@ -827,15 +827,14 @@ El desarrollo se divide en tres momentos distintos:
 ## Próximos pasos
 
 1. Implementar ResultSink para entregar los resultados ya producidos por Q1, Q2 y Q3.
-2. Implementar el pipeline textual de Q4 y Q5 desde `word_extractor.input`.
-3. Implementar los protocolos de `PARTITION_END` y barreras.
-4. Implementar `Q4Q5WordProjector` (stopwords y deduplicación), Q4 y Q5.
+2. Implementar `Q4Q5WordProjector`, Q4 y Q5 a partir de la salida tokenizada que ya produce WordExtractor.
+3. Ejecutar y comparar automáticamente Q1-Q5 con la referencia serial.
+4. Implementar los protocolos de `PARTITION_END` y barreras.
 5. Permitir clientes concurrentes y aislados en el Gateway.
 6. Completar graceful shutdown de todos los procesos.
-7. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
-8. Completar la propagación de errores y los límites para entradas no confiables.
-9. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
-10. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
+7. Completar la propagación de errores y los límites para entradas no confiables.
+8. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
+9. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
 
 ## Monitoreo
 
