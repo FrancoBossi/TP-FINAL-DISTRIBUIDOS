@@ -72,6 +72,46 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  q3-word-aggregator:
+    build:
+      context: .
+      dockerfile: src/q3/word_aggregator/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q3_word_aggregator.input.0
+      OUTPUT_QUEUE: result_sink.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  q3-word-projector:
+    build:
+      context: .
+      dockerfile: src/q3/word_projector/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q3_word_projector.input
+      OUTPUT_QUEUE_PREFIX: q3_word_aggregator.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  word-extractor:
+    build:
+      context: .
+      dockerfile: src/word_extractor/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: word_extractor.input
+      Q3_OUTPUT_QUEUE: q3_word_projector.input
+      Q4_Q5_OUTPUT_QUEUE: q4_q5_word_projector.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   until-2020-filter:
     build:
       context: .

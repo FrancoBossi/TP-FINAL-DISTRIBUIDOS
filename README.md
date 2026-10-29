@@ -2,7 +2,7 @@
 
 Trabajo práctico grupal de Sistemas Distribuidos. El sistema procesa artículos de Wikipedia en inglés y francés y genera los resultados de cinco consultas mediante una arquitectura distribuida basada en RabbitMQ.
 
-> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware, el InputBatcher, el Preprocessor y el QueryRouter. Las ramas de las consultas y las etapas posteriores del DAG distribuido todavía están pendientes.
+> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware, el InputBatcher, el Preprocessor, el QueryRouter y las ramas funcionales de Q1, Q2 y Q3 hasta `result_sink.input`. Q4, Q5 y ResultSink todavía están pendientes.
 
 ## Consultas
 
@@ -35,7 +35,9 @@ El sistema debe resolver las siguientes consultas:
 | Filtro de idioma y resultados de Q1 | Implementado con una réplica |
 | Filtro de secciones biográficas de Q2 | Implementado con una réplica |
 | Descarga de imágenes y resultados de Q2 | Implementado secuencialmente con una réplica |
-| Ramas textuales Q3–Q5 | Pendiente |
+| Tokenización compartida en WordExtractor | Implementado con una réplica |
+| Proyección y agregación de palabras compartidas de Q3 | Implementado con una partición |
+| Proyección compartida y ramas Q4/Q5 | Pendiente |
 | ResultSink distribuido | Pendiente |
 | Atención concurrente de varios clientes | Pendiente |
 | Graceful shutdown completo para procesos concurrentes | Pendiente |
@@ -97,7 +99,7 @@ RabbitMQ: until_2020.input     RabbitMQ: word_extractor.input
       |                               |
       | Q1Q2ArticleBatch              | TextArticleBatch
       v                               v
- Until2020Filter                rama Q3/Q4/Q5 pendiente
+ Until2020Filter                WordExtractor (ver rama textual debajo)
       |
       |-------------------------------|
       v                               v
@@ -138,7 +140,30 @@ RabbitMQ: results.<execution_id>
 query1.jsonl ... query5.jsonl
 ```
 
-El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. `Until2020Filter` consume la primera rama, conserva los artículos hasta 2020 inclusive y publica las proyecciones de Q1 y Q2. Q1 conserva los artículos en inglés y Q2 filtra las secciones biográficas, descarga las imágenes disponibles y codifica sus bytes en Base64. Ambas ramas publican resultados y finales provisionales en `result_sink.input`. Como ResultSink y las ramas textuales todavía no están implementados, la prueba distribuida completa continúa utilizando publicación manual de los resultados restantes.
+El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. `Until2020Filter` consume la primera rama, conserva los artículos hasta 2020 inclusive y publica las proyecciones de Q1 y Q2. Q1 conserva los artículos en inglés y Q2 filtra las secciones biográficas, descarga las imágenes disponibles y codifica sus bytes en Base64. Q1, Q2 y Q3 publican resultados y finales provisionales en `result_sink.input`. La rama textual implementada se detalla a continuación. Como ResultSink y Q4/Q5 todavía no están implementados, el cliente no puede completar la ejecución de las cinco consultas sin intervención manual.
+
+La rama textual implementada continúa desde `word_extractor.input`:
+
+```text
+WordExtractor
+    | TokenizedArticleBatchMessage
+    |-------------------------------------|
+    v                                     v
+q3_word_projector.input         q4_q5_word_projector.input
+    |                                     |
+Q3WordProjector                    Q4/Q5 pendientes
+    | Q3WordPresenceBatchMessage
+    v
+q3_word_aggregator.input.0
+    |
+Q3WordAggregator
+    | RESULT / QUERY_END provisional
+    v
+result_sink.input -> ResultSink pendiente
+```
+
+La salida Q4/Q5 ya se publica, pero se acumula en su cola porque todavía no
+hay un consumidor. ResultSink tampoco tiene consumidor implementado.
 
 ## Arquitectura objetivo
 
@@ -297,19 +322,31 @@ Q3WordAggregator   Q4WordCounter   Q5DateRouter
                    Q4Top20Reducer  Stats   Comparator
 ```
 
-`WordExtractor` solamente normaliza y tokeniza. No aplica fechas, stopwords ni reglas particulares de una consulta.
+`WordExtractor` está implementado y reutiliza `common.text.extract_words`:
+convierte a minúsculas, tokeniza y descarta tokens exclusivamente numéricos.
+No filtra fechas ni idiomas y conserva repeticiones y stopwords. Transforma
+`TextArticleBatchMessage` en `TokenizedArticleBatchMessage`, cuyos artículos
+contienen `article_id`, `url`, `language`, `modification_date` y `words`.
+Los metadatos `execution_id` y `reply_queue` se conservan en el batch.
+Publica el mismo batch en las colas independientes de Q3 y Q4/Q5; reenvía
+`RoutedInputEndMessage` a ambas incluso si no hubo artículos.
 
 #### Query 3
 
-`Q3WordProjector` produce palabras únicas por artículo junto con su idioma.
+`Q3WordProjector` conserva solamente artículos `en` y `fr`, deduplica las
+palabras dentro de cada abstract y conserva stopwords. Publica batches
+`Q3WordPresenceBatchMessage` con `presences` de la forma `{word, language}`,
+además de `execution_id` y `reply_queue`. Una presencia puede repetirse entre
+artículos o batches.
 
-`Q3WordAggregator` mantiene, por palabra y ejecución, si fue observada en inglés y en francés. Cuando ambas condiciones se cumplen, emite esa palabra una sola vez.
+`Q3WordAggregator` mantiene, por palabra y ejecución, si fue observada en inglés y en francés. Cuando ambas condiciones se cumplen, emite esa palabra una sola vez. La versión funcional utiliza una única partición y publica un `QUERY_END` provisional; las múltiples particiones y su barrera se incorporarán durante la etapa de escalabilidad.
 
 La afinidad se calcula a partir de:
 
 ```text
 (execution_id, word)
 ```
+
 
 #### Query 4
 
@@ -696,7 +733,7 @@ El cliente debe:
 - Confirmar cada resultado.
 - Finalizar después de recibir los cinco `QUERY_END`.
 
-El QueryRouter deja las proyecciones textuales en `word_extractor.input`. `Until2020Filter` consume la otra proyección y deja los candidatos filtrados en `q1_english_filter.input` y `q2_biography_filter.input`, donde permanecerán hasta que se implementen los filtros específicos de Q1 y Q2.
+El QueryRouter publica las proyecciones textuales en `word_extractor.input`, consumida por la rama Q3. `Until2020Filter` alimenta los filtros de Q1 y Q2. Los resultados de las tres consultas permanecen en `result_sink.input` hasta implementar ResultSink; las proyecciones de Q4/Q5 permanecen en `q4_q5_word_projector.input`.
 
 Detener el entorno:
 
@@ -710,7 +747,7 @@ make down
 |---|---|---:|---|
 | `SERVER_HOST` | Gateway | `0.0.0.0` | Dirección en la que escucha |
 | `SERVER_PORT` | Gateway/Client | `5000` | Puerto TCP |
-| `MOM_HOST` | Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter/Q1/Q2BiographyFilter/ImageFetcher | `localhost` | Host de RabbitMQ |
+| `MOM_HOST` | Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter/Q1/Q2BiographyFilter/ImageFetcher/WordExtractor/Q3WordProjector/Q3WordAggregator | `localhost` | Host de RabbitMQ |
 | `INPUT_BATCHER_QUEUE_PREFIX` | Gateway/InputBatcher | `input_batcher.input` | Prefijo de las colas de entrada |
 | `INPUT_BATCHER_PARTITIONS` | Gateway | `1` | Cantidad de particiones de InputBatcher |
 | `INPUT_BATCHER_PARTITION_ID` | InputBatcher | `0` | Partición consumida por la instancia |
@@ -730,9 +767,16 @@ make down
 | `OUTPUT_QUEUE` | Q2BiographyFilter | `image_fetcher.input` | Cola de candidatos para descarga de imágenes |
 | `INPUT_QUEUE` | ImageFetcher | `image_fetcher.input` | Cola de candidatos con sección biográfica |
 | `OUTPUT_QUEUE` | ImageFetcher | `result_sink.input` | Cola de resultados y final provisional de Q2 |
+| `INPUT_QUEUE` | WordExtractor | `word_extractor.input` | Batches de abstracts |
+| `Q3_OUTPUT_QUEUE` | WordExtractor | `q3_word_projector.input` | Artículos tokenizados para Q3 |
+| `Q4_Q5_OUTPUT_QUEUE` | WordExtractor | `q4_q5_word_projector.input` | Artículos tokenizados para Q4/Q5 pendientes |
+| `INPUT_QUEUE` | Q3WordProjector | `q3_word_projector.input` | Artículos tokenizados |
+| `OUTPUT_QUEUE_PREFIX` | Q3WordProjector | `q3_word_aggregator.input` | Prefijo de salida; actualmente usa `.0` |
+| `INPUT_QUEUE` | Q3WordAggregator | `q3_word_aggregator.input.0` | Presencias de palabras |
+| `OUTPUT_QUEUE` | Q3WordAggregator | `result_sink.input` | Resultados y final provisional de Q3 |
 | `INPUT_FILE` | Client | `datasets/wikipedia_sample.parquet` | Dataset de entrada |
 | `OUTPUT_DIR` | Client | `output/distributed` | Directorio de resultados |
-| `LOG_LEVEL` | Client/Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter/Q1/Q2BiographyFilter/ImageFetcher | `INFO` | Nivel de logging |
+| `LOG_LEVEL` | Client/Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter/Q1/Q2BiographyFilter/ImageFetcher/WordExtractor/Q3WordProjector/Q3WordAggregator | `INFO` | Nivel de logging |
 
 ## Configuración prevista
 
@@ -782,15 +826,15 @@ El desarrollo se divide en tres momentos distintos:
 
 ## Próximos pasos
 
-1. Implementar ResultSink para entregar los resultados ya producidos por Q1 y Q2.
-2. Implementar el pipeline textual de Q3, Q4 y Q5 desde `word_extractor.input`.
-3. Implementar los protocolos de `PARTITION_END` y barreras.
-4. Permitir clientes concurrentes y aislados en el Gateway.
-5. Completar graceful shutdown de todos los procesos.
-7. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
-8. Completar la propagación de errores y los límites para entradas no confiables.
-9. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
-10. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
+1. Implementar ResultSink para entregar los resultados ya producidos por Q1, Q2 y Q3.
+2. Implementar `Q4Q5WordProjector`, Q4 y Q5 a partir de la salida tokenizada que ya produce WordExtractor.
+3. Ejecutar y comparar automáticamente Q1-Q5 con la referencia serial.
+4. Implementar los protocolos de `PARTITION_END` y barreras.
+5. Permitir clientes concurrentes y aislados en el Gateway.
+6. Completar graceful shutdown de todos los procesos.
+7. Completar la propagación de errores y los límites para entradas no confiables.
+8. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
+9. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
 
 ## Monitoreo
 

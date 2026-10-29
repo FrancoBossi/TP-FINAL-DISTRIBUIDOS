@@ -92,6 +92,33 @@ class ImageCandidateBatchMessage(Message):
 
 
 @dataclass(frozen=True)
+class TokenizedArticleBatchMessage(Message):
+    """Articles with article_id, url, language, modification_date and words.
+
+    words is a JSON list of tokens, retaining repetitions and stopwords.
+    """
+
+    articles: list[dict[str, Any]]
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.TOKENIZED_ARTICLE_BATCH
+
+
+@dataclass(frozen=True)
+class Q3WordPresenceBatchMessage(Message):
+    """Presences with word and language (en/fr), routed to one partition.
+
+    Each presence represents a distinct word within an article; the same
+    word/language may recur across articles or batches.
+    """
+
+    presences: list[dict[str, str]]
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.Q3_WORD_PRESENCE_BATCH
+
+
+@dataclass(frozen=True)
 class TextArticleBatchMessage(Message):
     articles: list[dict[str, Any]]
     execution_id: str
@@ -150,6 +177,8 @@ MESSAGE_CLASSES: dict[MessageType, type[Message]] = {
     MessageType.Q2_CANDIDATE_BATCH: Q2CandidateBatchMessage,
     MessageType.IMAGE_CANDIDATE_BATCH: ImageCandidateBatchMessage,
     MessageType.TEXT_ARTICLE_BATCH: TextArticleBatchMessage,
+    MessageType.TOKENIZED_ARTICLE_BATCH: TokenizedArticleBatchMessage,
+    MessageType.Q3_WORD_PRESENCE_BATCH: Q3WordPresenceBatchMessage,
 }
 
 ROUTED_CLASSES: dict[MessageType, type[Message]] = {
