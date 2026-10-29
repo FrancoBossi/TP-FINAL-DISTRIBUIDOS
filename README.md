@@ -368,7 +368,7 @@ Antes de habilitar consumidores competidores en una etapa se implementará el si
 
 El `prefetch_count=1` limita a uno los mensajes en vuelo por réplica cuando se recibe el control. El estado compartido entre el consumidor de datos y el consumidor de control deberá protegerse con sincronización.
 
-No se debe asumir orden entre una cola de datos y una cola o exchange de control diferentes. Por eso el primer mensaje de fin atraviesa la misma cola que los datos antes de ser difundido. La implementación pendiente requiere incorporar `MessageMiddlewareExchange`, identificar las particiones y conocer la cantidad esperada de finales para completar cada barrera.
+No se debe asumir orden entre una cola de datos y una cola o exchange de control diferentes. Por eso el primer mensaje de fin atraviesa la misma cola que los datos antes de ser difundido. La interfaz abstracta `MessageMiddlewareExchange` ya está definida. Queda pendiente implementar `MessageMiddlewareExchangeRabbitMQ`, identificar las particiones y conocer la cantidad esperada de finales para completar cada barrera.
 
 ## Comunicación
 
@@ -431,7 +431,7 @@ La implementación actual incluye:
 
 Los componentes de negocio no utilizan Pika directamente.
 
-Para etapas que requieran difusión de mensajes de control se agregará `MessageMiddlewareExchange`.
+La interfaz `MessageMiddlewareExchange` ya está definida, pero todavía no tiene una implementación concreta sobre RabbitMQ. `MessageMiddlewareExchangeRabbitMQ` se basará en la utilizada en el TP de Coordinación y se adaptará al protocolo de este sistema. Cada réplica consumirá el control desde su propia cola exclusiva vinculada al exchange, de modo que una publicación llegue a todas las réplicas del grupo.
 
 ### ACK de resultados
 
