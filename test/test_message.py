@@ -13,16 +13,76 @@ from common.message_protocol.message import (
     Q1CandidateBatchMessage,
     Q1Q2ArticleBatchMessage,
     Q2CandidateBatchMessage,
+    Q3WordPresenceBatchMessage,
     QueryEndMessage,
     ResultMessage,
     RoutedArticleMessage,
     RoutedInputEndMessage,
     TextArticleBatchMessage,
+    TokenizedArticleBatchMessage,
 )
 from common.message_protocol.message_type import MessageType
 
 
 class TestMessage(unittest.TestCase):
+    def test_roundtrip_text_pipeline_contracts(self):
+        articles = [
+            {
+                "article_id": "https://example.com/école",
+                "url": "https://example.com/école",
+                "language": "fr",
+                "modification_date": "2023-01-01T00:00:00",
+                "words": ["café", "café", "and"],
+            },
+            {
+                "article_id": "https://example.com/empty",
+                "url": "https://example.com/empty",
+                "language": "en",
+                "modification_date": "2019-01-01T00:00:00",
+                "words": [],
+            },
+        ]
+        presences = [
+            {"word": "café", "language": "en"},
+            {"word": "café", "language": "fr"},
+            {"word": "and", "language": "fr"},
+        ]
+        for message_class, field, payload in (
+            (TokenizedArticleBatchMessage, "articles", articles),
+            (Q3WordPresenceBatchMessage, "presences", presences),
+        ):
+            for values in (payload, []):
+                with self.subTest(message_class=message_class, payload=values):
+                    message = message_class(
+                        **{field: values},
+                        execution_id="execution-123",
+                        reply_queue="results.execution-123",
+                    )
+                    encoded = message.serialize()
+                    decoded = Message.deserialize(encoded)
+                    self.assertIs(type(decoded), message_class)
+                    self.assertEqual(message, decoded)
+                    self.assertEqual(json.loads(encoded)["type"], message.type.value)
+                    if values:
+                        self.assertIn("café".encode(), encoded)
+
+    def test_text_pipeline_requires_payload_and_execution_metadata(self):
+        for kind, payload_field in (
+            (MessageType.TOKENIZED_ARTICLE_BATCH, "articles"),
+            (MessageType.Q3_WORD_PRESENCE_BATCH, "presences"),
+        ):
+            fields = {
+                "type": kind.value,
+                payload_field: [],
+                "execution_id": "execution-123",
+                "reply_queue": "results.execution-123",
+            }
+            for missing in (payload_field, "execution_id", "reply_queue"):
+                with self.subTest(kind=kind, missing=missing):
+                    incomplete = {k: v for k, v in fields.items() if k != missing}
+                    with self.assertRaises(ValueError):
+                        Message.deserialize(json.dumps(incomplete).encode())
+
     def test_roundtrip_all_message_classes(self):
         article = {
             "name": "École",
