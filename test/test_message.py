@@ -6,10 +6,13 @@ from common.message_protocol.message import (
     ArticleBatchMessage,
     ArticleMessage,
     ErrorMessage,
+    ImageCandidateBatchMessage,
     InputEndMessage,
     Message,
     NormalizedArticleBatchMessage,
+    Q1CandidateBatchMessage,
     Q1Q2ArticleBatchMessage,
+    Q2CandidateBatchMessage,
     QueryEndMessage,
     ResultMessage,
     RoutedArticleMessage,
@@ -82,6 +85,40 @@ class TestMessage(unittest.TestCase):
                         "language": normalized_article["language"],
                         "modification_date": normalized_article["modification_date"],
                         "sections": normalized_article["sections"],
+                        "image_url": normalized_article["image_url"],
+                    }
+                ],
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
+            Q1CandidateBatchMessage(
+                articles=[
+                    {
+                        "url": normalized_article["url"],
+                        "language": normalized_article["language"],
+                        "modification_date": normalized_article["modification_date"],
+                    }
+                ],
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
+            Q2CandidateBatchMessage(
+                articles=[
+                    {
+                        "name": normalized_article["name"],
+                        "url": normalized_article["url"],
+                        "sections": normalized_article["sections"],
+                        "image_url": normalized_article["image_url"],
+                    }
+                ],
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
+            ImageCandidateBatchMessage(
+                articles=[
+                    {
+                        "name": normalized_article["name"],
+                        "url": normalized_article["url"],
                         "image_url": normalized_article["image_url"],
                     }
                 ],

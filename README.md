@@ -31,7 +31,11 @@ El sistema debe resolver las siguientes consultas:
 | InputBatcher con batches limitados por bytes | Implementado |
 | Validación y normalización de artículos en Preprocessor | Implementado |
 | Fan-out y proyecciones mínimas en QueryRouter | Implementado |
-| Ramas de procesamiento Q1–Q5 | Pendiente |
+| Filtro temporal compartido de Q1 y Q2 | Implementado con una réplica |
+| Filtro de idioma y resultados de Q1 | Implementado con una réplica |
+| Filtro de secciones biográficas de Q2 | Implementado con una réplica |
+| Descarga de imágenes y resultados de Q2 | Implementado secuencialmente con una réplica |
+| Ramas textuales Q3–Q5 | Pendiente |
 | ResultSink distribuido | Pendiente |
 | Atención concurrente de varios clientes | Pendiente |
 | Graceful shutdown completo para procesos concurrentes | Pendiente |
@@ -47,9 +51,9 @@ La arquitectura objetivo requiere ejecuciones aisladas y concurrentes entre vari
 
 La referencia serial utiliza `image.content_url` cuando está presente en el registro del dataset. El sistema realiza un HTTP GET directo a esa URL y utiliza el cuerpo de la respuesta como los bytes de la imagen.
 
-La descarga cuenta con timeout y una cantidad acotada de reintentos. Si el artículo no tiene `content_url` o la descarga falla definitivamente, ese artículo se omite del resultado de Query 2.
+El criterio fue confirmado con la cátedra: no es necesario consultar adicionalmente la API REST de Wikimedia. La implementación distribuida utilizará directamente `image.content_url` cuando esté presente.
 
-Está pendiente confirmar si la implementación distribuida deberá consultar adicionalmente la API REST de Wikimedia cuando el dataset no incluya una imagen.
+La descarga contará con timeout y una cantidad acotada de reintentos para errores transitorios. Un HTTP 404 se tratará como un error permanente: se registrará de forma identificable, no se reintentará y ese artículo se omitirá del resultado. Si el artículo no tiene `content_url` o cualquier otro error agota sus reintentos, también se registrará la omisión y la ejecución continuará.
 
 ## Flujo implementado actualmente
 
@@ -93,7 +97,31 @@ RabbitMQ: until_2020.input     RabbitMQ: word_extractor.input
       |                               |
       | Q1Q2ArticleBatch              | TextArticleBatch
       v                               v
- rama Q1/Q2 pendiente          rama Q3/Q4/Q5 pendiente
+ Until2020Filter                rama Q3/Q4/Q5 pendiente
+      |
+      |-------------------------------|
+      v                               v
+q1_english_filter.input   q2_biography_filter.input
+      |                               |
+      | Q1CandidateBatch              | Q2CandidateBatch
+      v                               v
+      Q1                         Q2BiographyFilter
+      |                               |
+      | RESULT / QUERY_END provisional| ImageCandidateBatch
+      |                               v
+      |                       RabbitMQ: image_fetcher.input
+      |                               |
+      |                               v
+      |                          ImageFetcher
+      |                               |
+      |       RESULT / QUERY_END provisional
+      |_______________________________|
+                      |
+                      v
+          RabbitMQ: result_sink.input
+                      |
+                      v
+              ResultSink pendiente
 
       ... etapas posteriores pendientes ...
 
@@ -110,7 +138,7 @@ RabbitMQ: results.<execution_id>
 query1.jsonl ... query5.jsonl
 ```
 
-El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. Como las ramas de las consultas todavía no están implementadas, la prueba distribuida actual utiliza publicación manual de resultados ficticios.
+El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. `Until2020Filter` consume la primera rama, conserva los artículos hasta 2020 inclusive y publica las proyecciones de Q1 y Q2. Q1 conserva los artículos en inglés y Q2 filtra las secciones biográficas, descarga las imágenes disponibles y codifica sus bytes en Base64. Ambas ramas publican resultados y finales provisionales en `result_sink.input`. Como ResultSink y las ramas textuales todavía no están implementados, la prueba distribuida completa continúa utilizando publicación manual de los resultados restantes.
 
 ## Arquitectura objetivo
 
@@ -239,9 +267,18 @@ Q1EnglishFilter   Q2BiographyFilter
 
 `Until2020Filter` aplica una sola vez la condición `fecha <= 2020`.
 
-- `Q1EnglishFilter` conserva artículos en inglés y genera los resultados de Query 1.
-- `Q2BiographyFilter` busca las secciones `biography` o `biographie`.
-- `ImageFetcher` descarga las imágenes con timeout, reintentos acotados y concurrencia limitada.
+Consume `Q1Q2ArticleBatchMessage` desde `until_2020.input`. Por cada batch que contenga artículos hasta 2020 publica:
+
+- `Q1CandidateBatchMessage` en `q1_english_filter.input`, con `url`, `language` y `modification_date`.
+- `Q2CandidateBatchMessage` en `q2_biography_filter.input`, con `name`, `url`, `sections` e `image_url`.
+
+Los batches vacíos no se publican. El `RoutedInputEndMessage` se reenvía siempre a ambas ramas para que puedan finalizar incluso cuando una ejecución no tenga candidatos. Actualmente se ejecuta una sola réplica: antes de escalarla se debe reemplazar el fin simple por el protocolo de control y barrera, ya que una réplica podría reenviar el final mientras otra todavía procesa un batch anterior.
+
+- Q1 consume `Q1CandidateBatchMessage`, conserva los artículos cuyo idioma normalizado es `en` y publica un `ResultMessage` por artículo en `result_sink.input`. El registro contiene `url` y `modification_date` en el mismo formato ISO que la referencia serial.
+- `Q2BiographyFilter` consume `Q2CandidateBatchMessage`, busca una sección cuyo nombre completo sea `biography` o `biographie` ignorando mayúsculas y publica `ImageCandidateBatchMessage` en `image_fetcher.input`. La proyección contiene `name`, `url` e `image_url`; una URL ausente se conserva para que ImageFetcher registre y omita el candidato de forma explícita.
+- `ImageFetcher` utiliza `image.content_url` directamente, descarga con timeout y reintentos acotados para 429, 5xx y errores transitorios de red. Los 404 y demás 4xx se registran y no se reintentan. Si falta la URL o la descarga falla definitivamente, registra la omisión y continúa. Los bytes exitosos se codifican en Base64 y se publican como `ResultMessage(query_id=2)` en `result_sink.input`.
+
+En la primera iteración funcional, una única instancia de Q1 y una única instancia de ImageFetcher transforman `RoutedInputEndMessage` en los `QueryEndMessage` de Q1 y Q2. Estos finales son provisionales. En la iteración de escalabilidad del mismo trabajo, cada réplica emitirá `PARTITION_END` y ResultSink producirá un único `QUERY_END` después de completar cada barrera. ImageFetcher también deberá incorporar concurrencia limitada; actualmente descarga secuencialmente para priorizar el pipeline funcional.
 
 ### Rama textual Q3/Q4/Q5
 
@@ -331,7 +368,7 @@ Antes de habilitar consumidores competidores en una etapa se implementará el si
 
 El `prefetch_count=1` limita a uno los mensajes en vuelo por réplica cuando se recibe el control. El estado compartido entre el consumidor de datos y el consumidor de control deberá protegerse con sincronización.
 
-No se debe asumir orden entre una cola de datos y una cola o exchange de control diferentes. Por eso el primer mensaje de fin atraviesa la misma cola que los datos antes de ser difundido. La implementación pendiente requiere incorporar `MessageMiddlewareExchange`, identificar las particiones y conocer la cantidad esperada de finales para completar cada barrera.
+No se debe asumir orden entre una cola de datos y una cola o exchange de control diferentes. Por eso el primer mensaje de fin atraviesa la misma cola que los datos antes de ser difundido. La interfaz abstracta `MessageMiddlewareExchange` ya está definida. Queda pendiente implementar `MessageMiddlewareExchangeRabbitMQ`, identificar las particiones y conocer la cantidad esperada de finales para completar cada barrera.
 
 ## Comunicación
 
@@ -394,7 +431,7 @@ La implementación actual incluye:
 
 Los componentes de negocio no utilizan Pika directamente.
 
-Para etapas que requieran difusión de mensajes de control se agregará `MessageMiddlewareExchange`.
+La interfaz `MessageMiddlewareExchange` ya está definida, pero todavía no tiene una implementación concreta sobre RabbitMQ. `MessageMiddlewareExchangeRabbitMQ` se basará en la utilizada en el TP de Coordinación y se adaptará al protocolo de este sistema. Cada réplica consumirá el control desde su propia cola exclusiva vinculada al exchange, de modo que una publicación llegue a todas las réplicas del grupo.
 
 ### ACK de resultados
 
@@ -659,7 +696,7 @@ El cliente debe:
 - Confirmar cada resultado.
 - Finalizar después de recibir los cinco `QUERY_END`.
 
-El QueryRouter deja las proyecciones en `until_2020.input` y `word_extractor.input`, donde permanecerán hasta que se implementen las ramas Q1/Q2 y Q3/Q4/Q5.
+El QueryRouter deja las proyecciones textuales en `word_extractor.input`. `Until2020Filter` consume la otra proyección y deja los candidatos filtrados en `q1_english_filter.input` y `q2_biography_filter.input`, donde permanecerán hasta que se implementen los filtros específicos de Q1 y Q2.
 
 Detener el entorno:
 
@@ -673,7 +710,7 @@ make down
 |---|---|---:|---|
 | `SERVER_HOST` | Gateway | `0.0.0.0` | Dirección en la que escucha |
 | `SERVER_PORT` | Gateway/Client | `5000` | Puerto TCP |
-| `MOM_HOST` | Gateway/InputBatcher/Preprocessor/QueryRouter | `localhost` | Host de RabbitMQ |
+| `MOM_HOST` | Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter/Q1/Q2BiographyFilter/ImageFetcher | `localhost` | Host de RabbitMQ |
 | `INPUT_BATCHER_QUEUE_PREFIX` | Gateway/InputBatcher | `input_batcher.input` | Prefijo de las colas de entrada |
 | `INPUT_BATCHER_PARTITIONS` | Gateway | `1` | Cantidad de particiones de InputBatcher |
 | `INPUT_BATCHER_PARTITION_ID` | InputBatcher | `0` | Partición consumida por la instancia |
@@ -684,9 +721,18 @@ make down
 | `INPUT_QUEUE` | QueryRouter | `query_router.input` | Cola de batches normalizados |
 | `Q1_Q2_OUTPUT_QUEUE` | QueryRouter | `until_2020.input` | Cola de la rama Q1/Q2 |
 | `TEXT_OUTPUT_QUEUE` | QueryRouter | `word_extractor.input` | Cola de la rama Q3/Q4/Q5 |
+| `INPUT_QUEUE` | Until2020Filter | `until_2020.input` | Cola compartida de Q1 y Q2 |
+| `Q1_OUTPUT_QUEUE` | Until2020Filter | `q1_english_filter.input` | Cola de candidatos para Q1 |
+| `Q2_OUTPUT_QUEUE` | Until2020Filter | `q2_biography_filter.input` | Cola de candidatos para Q2 |
+| `INPUT_QUEUE` | Q1 | `q1_english_filter.input` | Cola de candidatos de Q1 |
+| `OUTPUT_QUEUE` | Q1 | `result_sink.input` | Cola de resultados y final provisional de Q1 |
+| `INPUT_QUEUE` | Q2BiographyFilter | `q2_biography_filter.input` | Cola de candidatos de Q2 |
+| `OUTPUT_QUEUE` | Q2BiographyFilter | `image_fetcher.input` | Cola de candidatos para descarga de imágenes |
+| `INPUT_QUEUE` | ImageFetcher | `image_fetcher.input` | Cola de candidatos con sección biográfica |
+| `OUTPUT_QUEUE` | ImageFetcher | `result_sink.input` | Cola de resultados y final provisional de Q2 |
 | `INPUT_FILE` | Client | `datasets/wikipedia_sample.parquet` | Dataset de entrada |
 | `OUTPUT_DIR` | Client | `output/distributed` | Directorio de resultados |
-| `LOG_LEVEL` | Client/Gateway/InputBatcher/Preprocessor/QueryRouter | `INFO` | Nivel de logging |
+| `LOG_LEVEL` | Client/Gateway/InputBatcher/Preprocessor/QueryRouter/Until2020Filter/Q1/Q2BiographyFilter/ImageFetcher | `INFO` | Nivel de logging |
 
 ## Configuración prevista
 
@@ -726,19 +772,25 @@ La implementación distribuida completa deberá respetar:
 11. Los recursos temporales se eliminan al completar o abortar una ejecución.
 12. Un `SIGTERM` no fabrica mensajes de finalización para trabajo incompleto.
 
+## Orden de implementación
+
+El desarrollo se divide en tres momentos distintos:
+
+1. Completar primero un pipeline funcional de punta a punta con una réplica por componente y finales simples.
+2. Dentro de este mismo TP de escalabilidad, incorporar múltiples réplicas, mensajes de control, `PARTITION_END` y barreras que produzcan un único `QUERY_END` por consulta.
+3. En la instancia posterior de tolerancia a fallos, incorporar persistencia, recuperación ante caídas e idempotencia frente a reentregas.
+
 ## Próximos pasos
 
-1. Implementar la rama compartida de Q1 y Q2 desde `until_2020.input`.
+1. Implementar ResultSink para entregar los resultados ya producidos por Q1 y Q2.
 2. Implementar el pipeline textual de Q3, Q4 y Q5 desde `word_extractor.input`.
 3. Implementar los protocolos de `PARTITION_END` y barreras.
-4. Implementar ResultSink.
-5. Permitir clientes concurrentes y aislados en el Gateway.
-6. Completar graceful shutdown de todos los procesos.
-7. Resolver la política definitiva de imágenes faltantes para Query 2.
-8. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
-9. Completar la propagación de errores y los límites para entradas no confiables.
-10. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
-11. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
+4. Permitir clientes concurrentes y aislados en el Gateway.
+5. Completar graceful shutdown de todos los procesos.
+7. Ejecutar y comparar automáticamente todo el pipeline con la referencia serial.
+8. Completar la propagación de errores y los límites para entradas no confiables.
+9. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
+10. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
 
 ## Monitoreo
 

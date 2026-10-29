@@ -72,6 +72,59 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  until-2020-filter:
+    build:
+      context: .
+      dockerfile: src/until_2020_filter/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: until_2020.input
+      Q1_OUTPUT_QUEUE: q1_english_filter.input
+      Q2_OUTPUT_QUEUE: q2_biography_filter.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  q1:
+    build:
+      context: .
+      dockerfile: src/q1/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q1_english_filter.input
+      OUTPUT_QUEUE: result_sink.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  q2-biography-filter:
+    build:
+      context: .
+      dockerfile: src/q2/biography_filter/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q2_biography_filter.input
+      OUTPUT_QUEUE: image_fetcher.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  image-fetcher:
+    build:
+      context: .
+      dockerfile: src/q2/image_fetcher/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: image_fetcher.input
+      OUTPUT_QUEUE: result_sink.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   client:
     build:
       context: .
