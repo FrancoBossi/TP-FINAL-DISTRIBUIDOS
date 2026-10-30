@@ -22,7 +22,8 @@ El sistema debe resolver las siguientes consultas:
 | Ejecución serial de referencia para Q1–Q5 | Implementado |
 | Comparación automática entre resultados seriales y distribuidos | Implementado |
 | Protocolo TCP entre cliente y Gateway | Implementado |
-| Serialización binaria explícita de los mensajes | Pendiente |
+| Protocolo binario entre cliente y Gateway | Implementado |
+| Serialización JSON de los mensajes internos de RabbitMQ | Implementado |
 | Streaming de artículos desde el cliente | Implementado |
 | Identificador único por ejecución | Implementado |
 | Particionado estable Gateway → InputBatcher | Implementado |
@@ -242,7 +243,7 @@ Un artículo que por sí solo supere `MAX_BATCH_BYTES` no se enviará como un ba
 
 El protocolo TCP ya rechaza frames individuales mayores que `MAX_MESSAGE_SIZE`, actualmente 64 MiB. Este límite acota un mensaje aislado, pero no evita que un cliente envíe repetidamente mensajes cercanos al máximo. Ese escenario constituye una posible denegación de servicio por agotamiento de memoria, CPU, red o almacenamiento de RabbitMQ.
 
-Durante el hito de escalabilidad se trabaja con el dataset conocido y se prioriza el pipeline completo. Antes de aceptar entradas no confiables se deberán incorporar límites específicos por tipo de mensaje, una cuota total de bytes o artículos por ejecución, timeouts, control de frecuencia, validación temprana del esquema y propagación explícita de errores al cliente. La futura serialización binaria también deberá validar las longitudes declaradas antes de reservar memoria.
+Durante el hito de escalabilidad se trabaja con el dataset conocido y se prioriza el pipeline completo. Antes de aceptar entradas no confiables se deberán incorporar límites específicos por tipo de mensaje, una cuota total de bytes o artículos por ejecución, timeouts, control de frecuencia, validación temprana del esquema y propagación explícita de errores al cliente. El codec binario externo ya valida los tamaños de los frames y detecta valores truncados, pero estos controles no reemplazan las cuotas por ejecución.
 
 ### Preprocessor
 
@@ -417,32 +418,34 @@ Cada frame contiene:
 
 ```text
 4 bytes de longitud en orden de red
-cuerpo serializado del mensaje
+cuerpo binario del mensaje
 ```
 
 El receptor continúa leyendo hasta obtener exactamente la cantidad de bytes indicada por el encabezado. Esto permite manejar fragmentación de TCP correctamente.
 
-Actualmente, el cuerpo de cada mensaje se serializa como JSON codificado en UTF-8. Durante el hito de escalabilidad se mantendrá esta representación para priorizar una ejecución completa de las cinco consultas de punta a punta.
-
-Mientras se utilice JSON, las imágenes de Query 2 deberán transportarse como strings Base64 dentro de `ResultMessage`. Esto permite escribir directamente el mismo valor en `query2.jsonl`, cuyo formato también representa la imagen como Base64.
-
-#### Serialización binaria postergada
-
-Una vez que el pipeline distribuido funcione de punta a punta, se evaluará reemplazar JSON por una serialización binaria explícita, sin modificar el framing TCP actual de cuatro bytes de longitud.
-
-El diseño acordado como punto de partida es:
+El cuerpo utiliza un protocolo binario propio. Su primer byte identifica la clase
+concreta del mensaje externo y los campos siguientes se codifican mediante un
+codec manual para valores simples y estructuras anidadas. El formato incluye:
 
 - Un byte inicial para identificar la clase concreta del mensaje.
-- Códigos diferentes para mensajes externos e internos, por ejemplo `ARTICLE` y `ROUTED_ARTICLE`.
-- Campos superiores codificados en un orden conocido, sin enviar sus nombres.
-- Un codec propio para `None`, enteros, strings, bytes, listas, tuplas y diccionarios.
+- Un codec propio para `None`, booleanos, enteros, floats, strings, bytes, listas y diccionarios.
 - Strings y bloques de bytes precedidos por una longitud de cuatro bytes en orden de red.
 - Enteros representados con signo en ocho bytes y en orden de red.
 - Claves de diccionarios restringidas a strings.
-- Bytes binarios transportados directamente, sin Base64 dentro de la comunicación.
 - Rechazo de códigos desconocidos, mensajes truncados, UTF-8 inválido, tipos no soportados y bytes sobrantes.
 
-La asignación definitiva de códigos se realizará cuando estén estabilizados todos los tipos de mensajes del DAG. No se utilizarán bibliotecas externas que resuelvan automáticamente la serialización.
+El cliente lee el Parquet incrementalmente mediante
+`ParquetFile.iter_batches()`, recorre sus registros de a uno y envía cada
+`ARTICLE` con este protocolo. El Gateway lo decodifica, agrega `execution_id` y
+`reply_queue`, construye el mensaje interno y recién entonces lo serializa como
+JSON UTF-8 para publicarlo en RabbitMQ. De esta manera, el cliente no conoce el
+middleware ni construye el JSON interno del sistema distribuido.
+
+Los resultados atraviesan el mismo protocolo binario en el camino de regreso. La
+imagen de Query 2 continúa representada como Base64 dentro del `ResultMessage`
+interno y de `query2.jsonl`, porque RabbitMQ aún transporta esos mensajes como
+JSON. El codec externo admite bytes, pero cambiar únicamente ese último tramo no
+eliminaría el Base64 usado previamente dentro del pipeline.
 
 Los principales mensajes externos son:
 
@@ -833,8 +836,7 @@ El desarrollo se divide en tres momentos distintos:
 5. Permitir clientes concurrentes y aislados en el Gateway.
 6. Completar graceful shutdown de todos los procesos.
 7. Completar la propagación de errores y los límites para entradas no confiables.
-8. Reemplazar la serialización JSON por el protocolo binario explícito documentado.
-9. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
+8. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
 
 ## Monitoreo
 
@@ -862,6 +864,38 @@ El dashboard incluye el estado de los scrapes, CPU, memoria y tráfico de red po
 servicio, mensajes pendientes y sin confirmar, consumidores por cola, tasas de
 publicación, confirmación y reentrega, y recursos del broker. Sus filtros permiten
 seleccionar el proyecto de Compose, el servicio y la cola.
+
+### Observaciones previstas para la demo
+
+La demo no se limitará a mostrar los resultados finales. También se utilizarán
+el panel de administración de RabbitMQ, las estadísticas de Docker y el dashboard
+de Grafana para relacionar el comportamiento observable con las decisiones de la
+arquitectura.
+
+El guion de demostración deberá incluir, una vez implementadas las capacidades
+correspondientes:
+
+- Ejecutar dos clientes concurrentes y comprobar que sus ejecuciones, colas de
+  respuesta y archivos de salida permanecen aislados.
+- Repetir la prueba con tres clientes para observar cómo cambia la carga del
+  sistema.
+- Interrumpir uno de los clientes y verificar qué recursos temporales permanecen,
+  qué ocurre con su cola de resultados y cómo se recuperan o eliminan los datos
+  persistidos en volúmenes de Docker.
+- Inspeccionar en RabbitMQ los mensajes listos, los mensajes sin confirmar, los
+  consumidores, las tasas de publicación, ACK, NACK y reentrega.
+- Identificar qué componentes pueden emitir un NACK, ante qué errores y si el
+  mensaje se reencola o se descarta.
+- Comparar el consumo de CPU, memoria y red de cada componente y de las distintas
+  ramas de queries durante una ejecución.
+- Relacionar los cambios de carga con el tamaño de las colas para detectar el
+  componente que actúa como cuello de botella.
+
+Este guion describe la demo objetivo, no el estado funcional actual. En
+particular, la concurrencia de clientes, la recuperación ante la caída de uno de
+ellos y el manejo completo de recursos temporales continúan pendientes. Las
+pruebas concretas, la carga utilizada y el comportamiento esperado de cada caída
+se definirán cuando el pipeline y esas capacidades estén implementados.
 
 cAdvisor accede al daemon de Docker mediante el socket
 `/var/run/docker.sock`, montado dentro del contenedor, y al runtime containerd

@@ -229,7 +229,9 @@ N bytes: cuerpo del mensaje
 
 El receptor continúa leyendo hasta completar exactamente la longitud indicada. Esto evita asumir que una llamada a `recv` coincide con un mensaje completo.
 
-El cuerpo se serializa actualmente como JSON UTF-8. Es una decisión provisional para acelerar el pipeline completo. El framing ya permite reemplazar posteriormente el cuerpo por una serialización binaria propia sin cambiar la delimitación.
+El cuerpo se serializa mediante un protocolo binario propio. El primer byte identifica el tipo de mensaje externo y los valores posteriores utilizan etiquetas binarias para representar `None`, booleanos, enteros, floats, strings UTF-8, bytes, listas y diccionarios. Los valores variables incluyen su longitud en cuatro bytes y los enteros se representan con signo en ocho bytes. El decoder rechaza tipos desconocidos, mensajes truncados, UTF-8 inválido y bytes sobrantes.
+
+El cliente no genera el JSON interno del sistema. Lee el Parquet incrementalmente, codifica cada artículo con este protocolo y lo envía por TCP. Gateway decodifica el artículo, agrega `execution_id` y `reply_queue`, construye el DTO interno y recién entonces lo serializa como JSON UTF-8 para publicarlo en RabbitMQ. La misma codificación binaria se utiliza para ACK, errores y resultados enviados por la conexión externa.
 
 ### 7.2 Gateway
 
@@ -340,7 +342,7 @@ La cátedra confirmó que es válido utilizar directamente la URL del dataset y 
 
 La API REST se descartó porque no agrega información cuando la página no posee imagen y porque consultar datos actuales podría introducir una inconsistencia temporal con el snapshot del Parquet.
 
-Como los mensajes actuales son JSON, los bytes se codifican en Base64 para formar un string transportable y escribible en `query2.jsonl`. Base64 aumenta el tamaño aproximadamente un 33 %, pero evita representar bytes arbitrarios en JSON. Una serialización binaria futura podrá transportar los bytes directamente.
+Como los mensajes internos de RabbitMQ y el archivo `query2.jsonl` utilizan JSON, los bytes se codifican en Base64 para formar un string transportable y escribible. Base64 aumenta el tamaño aproximadamente un 33 %. Aunque el protocolo externo admite bytes, el resultado ya llega al Gateway representado como Base64; cambiar solamente el último tramo no elimina ese overhead dentro del pipeline.
 
 ImageFetcher descarga secuencialmente en la primera versión funcional. La arquitectura prevé múltiples réplicas y, si una réplica realiza concurrencia interna, un límite explícito para no generar carga descontrolada sobre Wikimedia.
 
@@ -564,9 +566,12 @@ Esta separación evita que filtros y transformaciones dependan de RabbitMQ y per
 
 ### 15.3 DTOs y serialización
 
-Los mensajes se modelan como dataclasses inmutables. Actualmente se serializan a JSON UTF-8. Se acordó evaluar una serialización binaria manual una vez estabilizados todos los mensajes del DAG.
+Los mensajes se modelan como dataclasses inmutables. Se utilizan dos serializaciones distintas según la frontera:
 
-La alternativa binaria reduciría overhead, permitiría transportar bytes sin Base64 y evitaría enviar nombres de campos. Sus costos son mayor complejidad, necesidad de versionado y validación cuidadosa de longitudes, tipos y mensajes truncados. Implementarla antes de conocer todos los contratos generaría retrabajo y no es necesaria para validar el pipeline funcional.
+- Cliente-Gateway: protocolo binario manual, limitado a los mensajes externos.
+- Comunicación interna mediante RabbitMQ: JSON UTF-8.
+
+Esta separación hace que Gateway sea quien genere `execution_id`, `reply_queue` y el JSON publicado en el middleware. El cliente no genera ni utiliza esos datos de enrutamiento, aunque el DTO de resultado compartido todavía transporte `execution_id` en la respuesta. Al mismo tiempo, conservar JSON dentro del DAG facilita inspeccionar las colas y estabilizar los contratos que todavía faltan para Q4 y Q5. El costo aceptado es un mayor tamaño interno y la necesidad de Base64 para la imagen de Q2.
 
 ---
 
@@ -677,8 +682,8 @@ El monitoreo no participa del flujo funcional y su caída no debe impedir el pro
 | Filtro temporal común Q1/Q2 | Un filtro por query | Evalúa una sola vez la misma condición | Introduce una etapa compartida adicional |
 | URL directa de imagen | Wikimedia REST API | La cátedra lo confirmó; respeta el snapshot y evita una consulta redundante | URLs antiguas pueden responder 404 |
 | Omitir imagen tras error permanente | Fallar toda la ejecución | Un recurso externo ausente no invalida las demás consultas | Q2 puede tener menos resultados que candidatos funcionales |
-| Base64 mientras se usa JSON | Lista de enteros o bytes crudos | Representación estándar y compatible con JSONL | Aproximadamente 33 % de overhead |
-| JSON provisional | Codec binario inmediato | Simplifica depuración y permite estabilizar contratos primero | Mayor tamaño y CPU; se posterga optimización |
+| Base64 en mensajes internos y JSONL | Lista de enteros o bytes crudos | Representación estándar y compatible con RabbitMQ JSON y el archivo final | Aproximadamente 33 % de overhead |
+| Binario externo y JSON interno | JSON también entre cliente y Gateway, o binario en todo el DAG | Mantiene al cliente mínimo y construye el JSON recién en Gateway, sin perder inspección simple de las colas | Se mantienen dos codecs y JSON conserva overhead dentro del pipeline |
 | Una réplica primero | Implementar barreras desde el inicio | Permite validar funcionalidad de punta a punta incrementalmente | No demuestra aún escalabilidad y los finales son provisionales |
 | Colas compartidas para stateless | Particionar todas las etapas | Balanceo automático y menor afinidad | Requiere protocolo de cierre por grupo |
 | Particionado para stateful | Estado global compartido | Evita locks distribuidos y mantiene cada clave en un dueño lógico | La cantidad de particiones no cambia libremente durante una ejecución |
@@ -707,9 +712,9 @@ Es simple, pero todas las ejecuciones competirían por el mismo proceso. Partici
 
 Un único consumidor recibiría el final y podría reenviarlo antes de que otros terminen. Por eso el final entra ordenado por la cola DATA y luego se difunde al grupo; la etapa siguiente espera una barrera de `PARTITION_END`.
 
-### 21.5 Implementar primero la serialización binaria
+### 21.5 Utilizar el mismo formato en TCP y RabbitMQ
 
-Optimizar antes de estabilizar los mensajes obligaría a modificar códigos y codecs durante cada incorporación de una etapa. JSON permite inspeccionar mensajes y no impide validar las propiedades distribuidas. La optimización permanece documentada, pero se realiza después del pipeline completo.
+Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a construir la representación que utilizaría el sistema interno. También se descartó, por ahora, convertir todo el DAG a binario: los contratos de Q4 y Q5 todavía no están estabilizados y JSON facilita inspeccionar mensajes durante el desarrollo y la demo. La solución separa ambas fronteras: protocolo binario externo y JSON interno construido después de Gateway.
 
 ---
 
@@ -727,7 +732,7 @@ Optimizar antes de estabilizar los mensajes obligaría a modificar códigos y co
 
 ### 22.2 Evidencia disponible al corte
 
-- La suite local completa pasa con 130 tests.
+- La suite local completa pasa con 132 tests.
 - Se verificó el recorrido Q1 hasta `result_sink.input` con RabbitMQ real.
 - Se verificó Q2 desde `until_2020.input` hasta resultados Base64 y `QUERY_END` provisional.
 - Se verificó que un candidato sin URL se registra y se omite.
@@ -781,7 +786,6 @@ La demo final deberá ensayarse y ser reproducible. El recorrido previsto es:
 
 ### 24.3 Mejoras posteriores al pipeline funcional
 
-- protocolo binario manual
 - límites y cuotas para entradas no confiables
 - propagación integral de `QUERY_FAILED`
 - política explícita de poison messages
@@ -846,6 +850,7 @@ La demo final deberá ensayarse y ser reproducible. El recorrido previsto es:
 | Query 2 | Se permite usar directamente `image.content_url` del dataset. |
 | HTTP 404 | Debe manejarse ordenadamente; no invalida toda la ejecución. |
 | Prioridad de desarrollo | Primero lograr el pipeline completo de punta a punta. |
-| JSON | Puede mantenerse inicialmente; la optimización no bloquea la funcionalidad. |
+| Serialización externa | El cliente envía un protocolo binario; Gateway construye después los mensajes JSON internos. |
+| JSON interno | Puede mantenerse en RabbitMQ para estabilizar e inspeccionar los contratos del DAG. |
 | Escalabilidad | Múltiples réplicas, control y barreras pertenecen a este hito, no al de tolerancia. |
 | Tolerancia a fallos | Persistencia, recuperación e idempotencia se profundizan en el hito posterior. |
