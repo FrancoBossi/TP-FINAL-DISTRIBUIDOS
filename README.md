@@ -2,7 +2,7 @@
 
 Trabajo práctico grupal de Sistemas Distribuidos. El sistema procesa artículos de Wikipedia en inglés y francés y genera los resultados de cinco consultas mediante una arquitectura distribuida basada en RabbitMQ.
 
-> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware, el InputBatcher, el Preprocessor, el QueryRouter, las ramas funcionales de Q1, Q2, Q3 y Q4, ResultSink y la proyección compartida de Q4/Q5. Las etapas posteriores de Q5 todavía están pendientes.
+> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware, el InputBatcher, el Preprocessor, el QueryRouter, las ramas funcionales de Q1, Q2, Q3 y Q4, ResultSink, la proyección compartida de Q4/Q5 y Q5DateRouter. El cálculo del promedio y la comparación de Q5 todavía están pendientes.
 
 ## Consultas
 
@@ -40,7 +40,8 @@ El sistema debe resolver las siguientes consultas:
 | Proyección y agregación de palabras compartidas de Q3 | Implementado con una partición |
 | Proyección compartida de Q4/Q5 | Implementado con una réplica |
 | Agregación y resultados de Q4 | Implementado con contador y reducer |
-| Etapas de Q5 | Pendiente |
+| Separación temporal de Q5 en Q5DateRouter | Implementado con una réplica |
+| Estadísticas, promedio y comparación de Q5 | Pendiente |
 | ResultSink | Implementado para ramas con una sola instancia |
 | Atención concurrente de varios clientes | Pendiente |
 | Graceful shutdown completo para procesos concurrentes | Pendiente |
@@ -160,7 +161,7 @@ Q3WordProjector                    Q4Q5WordProjector
     v                                     v                               v
 q3_word_aggregator.input.0        q4_word_counter.input.0          q5_date_router.input
     |                                     |                               |
-Q3WordAggregator                    Q4WordCounter                    Q5 pendiente
+Q3WordAggregator                    Q4WordCounter                    Q5DateRouter
     | RESULT / QUERY_END provisional
     v
 result_sink.input -> ResultSink
@@ -168,8 +169,8 @@ result_sink.input -> ResultSink
 
 `Q4Q5WordProjector` consume la salida tokenizada y publica las proyecciones
 específicas de Q4 y Q5. La rama Q4 continúa por un único `Q4WordCounter` y
-`Q4Top20Reducer` hasta `result_sink.input`. La proyección de Q5 se acumula en
-`q5_date_router.input` porque su consumidor todavía no está implementado.
+`Q4Top20Reducer` hasta `result_sink.input`. Q5DateRouter separa histórico y
+candidatos; ambas salidas se acumulan hasta implementar sus consumidores.
 
 ## Arquitectura objetivo
 
@@ -387,10 +388,16 @@ El mismo `Q4Q5WordProjector` publica en `q5_date_router.input` un
 Los artículos sin abstract se omiten; un abstract presente pero vacío se
 conserva con conteo cero, de acuerdo con la referencia serial.
 
-`Q5DateRouter` separa:
+`Q5DateRouter` está implementado con una réplica. Consume
+`Q5ArticleWordCountBatchMessage`, no publica batches vacíos y separa:
 
-- Artículos hasta 2020 para calcular suma y cantidad.
-- Artículos desde 2021 como candidatos.
+- Conteos de artículos hasta 2020 en `q5_stats_worker.input`, mediante
+  `Q5HistoricalWordCountBatchMessage`.
+- `article_id`, URL y conteo de artículos desde 2021 en
+  `q5_comparator.input`, mediante `Q5CandidateBatchMessage`.
+
+El mensaje de fin se reenvía siempre a ambas ramas. La implementación actual
+utiliza una sola réplica hasta incorporar el protocolo de control y barreras.
 
 `Q5AverageReducer` calcula el promedio global.
 
@@ -413,7 +420,7 @@ actuales deben emitir exactamente un final por consulta, después de sus resulta
 
 Gateway y Client comienzan la recepción de resultados después de finalizar la
 subida. Desde ese momento, los resultados se entregan incrementalmente sin
-esperar las demás consultas. Q5 sigue pendiente, por lo que el cliente
+esperar las demás consultas. Las etapas posteriores de Q5 siguen pendientes, por lo que el cliente
 continúa esperando sus cinco finales para terminar la ejecución completa.
 
 ## Mensajes de finalización
@@ -768,7 +775,7 @@ El cliente debe:
 - Confirmar cada resultado.
 - Finalizar después de recibir los cinco `QUERY_END`.
 
-El QueryRouter publica las proyecciones textuales en `word_extractor.input`, consumida por las ramas Q3, Q4 y Q5. `Until2020Filter` alimenta los filtros de Q1 y Q2. ResultSink reenvía los resultados de Q1-Q4 a `results.<execution_id>`; las proyecciones de Q5 permanecen en `q5_date_router.input` hasta implementar sus consumidores.
+El QueryRouter publica las proyecciones textuales en `word_extractor.input`, consumida por las ramas Q3, Q4 y Q5. `Until2020Filter` alimenta los filtros de Q1 y Q2. ResultSink reenvía los resultados de Q1-Q4 a `results.<execution_id>`; las salidas de Q5DateRouter permanecen en `q5_stats_worker.input` y `q5_comparator.input` hasta implementar sus consumidores.
 
 Detener el entorno:
 
@@ -817,6 +824,9 @@ make down
 | `PARTITION_ID` | Q4WordCounter | `0` | Identificador de la única partición funcional |
 | `INPUT_QUEUE` | Q4Top20Reducer | `q4_top20_reducer.input` | Top local y final del counter |
 | `OUTPUT_QUEUE` | Q4Top20Reducer | `result_sink.input` | Resultados y final de Q4 |
+| `INPUT_QUEUE` | Q5DateRouter | `q5_date_router.input` | Artículos con conteo para Q5 |
+| `HISTORICAL_OUTPUT_QUEUE` | Q5DateRouter | `q5_stats_worker.input` | Conteos de artículos hasta 2020 |
+| `CANDIDATE_OUTPUT_QUEUE` | Q5DateRouter | `q5_comparator.input` | Candidatos desde 2021 |
 | `INPUT_FILE` | Client | `datasets/wikipedia_sample.parquet` | Dataset de entrada |
 | `OUTPUT_DIR` | Client | `output/distributed` | Directorio de resultados |
 | `LOG_LEVEL` | Todos los procesos | `INFO` | Nivel de logging |
@@ -870,7 +880,7 @@ El desarrollo se divide en tres momentos distintos:
 ## Próximos pasos
 
 1. Incorporar barreras para productores replicados en ResultSink.
-2. Implementar las etapas posteriores de Q5 a partir de las proyecciones ya producidas por `Q4Q5WordProjector`.
+2. Implementar Q5StatsWorker, Q5AverageReducer y Q5Comparator a partir de las salidas de Q5DateRouter.
 3. Ejecutar y comparar automáticamente Q1-Q5 con la referencia serial.
 4. Implementar los protocolos de `PARTITION_END` y barreras.
 5. Permitir clientes concurrentes y aislados en el Gateway.

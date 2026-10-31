@@ -18,6 +18,8 @@ from common.message_protocol.message import (
     Q4PartitionEndMessage,
     Q4WordBatchMessage,
     Q5ArticleWordCountBatchMessage,
+    Q5CandidateBatchMessage,
+    Q5HistoricalWordCountBatchMessage,
     QueryEndMessage,
     ResultMessage,
     RoutedArticleMessage,
@@ -96,6 +98,8 @@ class TestMessage(unittest.TestCase):
             (MessageType.Q3_WORD_PRESENCE_BATCH, "presences"),
             (MessageType.Q4_WORD_BATCH, "words"),
             (MessageType.Q5_ARTICLE_WORD_COUNT_BATCH, "articles"),
+            (MessageType.Q5_HISTORICAL_WORD_COUNT_BATCH, "word_counts"),
+            (MessageType.Q5_CANDIDATE_BATCH, "articles"),
         ):
             fields = {
                 "type": kind.value,
@@ -234,6 +238,22 @@ class TestMessage(unittest.TestCase):
             ),
             Q4PartitionEndMessage(
                 partition_id=0,
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
+            Q5HistoricalWordCountBatchMessage(
+                word_counts=[0, 2, 4],
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
+            Q5CandidateBatchMessage(
+                articles=[
+                    {
+                        "article_id": "https://example.com/new",
+                        "url": "https://example.com/new",
+                        "word_count": 3,
+                    }
+                ],
                 execution_id=execution_id,
                 reply_queue=f"results.{execution_id}",
             ),

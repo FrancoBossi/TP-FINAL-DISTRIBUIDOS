@@ -164,6 +164,26 @@ class Q5ArticleWordCountBatchMessage(Message):
 
 
 @dataclass(frozen=True)
+class Q5HistoricalWordCountBatchMessage(Message):
+    """Word counts from articles modified up to 2020 inclusive."""
+
+    word_counts: list[int]
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.Q5_HISTORICAL_WORD_COUNT_BATCH
+
+
+@dataclass(frozen=True)
+class Q5CandidateBatchMessage(Message):
+    """Articles modified after 2020 that must be compared with the average."""
+
+    articles: list[dict[str, Any]]
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.Q5_CANDIDATE_BATCH
+
+
+@dataclass(frozen=True)
 class TextArticleBatchMessage(Message):
     articles: list[dict[str, Any]]
     execution_id: str
@@ -228,6 +248,8 @@ MESSAGE_CLASSES: dict[MessageType, type[Message]] = {
     MessageType.Q4_PARTIAL_TOP_BATCH: Q4PartialTopBatchMessage,
     MessageType.Q4_PARTITION_END: Q4PartitionEndMessage,
     MessageType.Q5_ARTICLE_WORD_COUNT_BATCH: Q5ArticleWordCountBatchMessage,
+    MessageType.Q5_HISTORICAL_WORD_COUNT_BATCH: Q5HistoricalWordCountBatchMessage,
+    MessageType.Q5_CANDIDATE_BATCH: Q5CandidateBatchMessage,
 }
 
 ROUTED_CLASSES: dict[MessageType, type[Message]] = {
