@@ -2,7 +2,7 @@
 
 Trabajo práctico grupal de Sistemas Distribuidos. El sistema procesa artículos de Wikipedia en inglés y francés y genera los resultados de cinco consultas mediante una arquitectura distribuida basada en RabbitMQ.
 
-> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware, el InputBatcher, el Preprocessor, el QueryRouter y las ramas funcionales de Q1, Q2 y Q3 hasta `result_sink.input`. Q4, Q5 y ResultSink todavía están pendientes.
+> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware, el InputBatcher, el Preprocessor, el QueryRouter y las ramas funcionales de Q1, Q2 y Q3 hasta `result_sink.input`. ResultSink entrega los resultados incrementalmente; Q4 y Q5 todavía están pendientes.
 
 ## Consultas
 
@@ -39,7 +39,7 @@ El sistema debe resolver las siguientes consultas:
 | Tokenización compartida en WordExtractor | Implementado con una réplica |
 | Proyección y agregación de palabras compartidas de Q3 | Implementado con una partición |
 | Proyección compartida y ramas Q4/Q5 | Pendiente |
-| ResultSink distribuido | Pendiente |
+| ResultSink | Implementado para ramas con una sola instancia |
 | Atención concurrente de varios clientes | Pendiente |
 | Graceful shutdown completo para procesos concurrentes | Pendiente |
 | Estrategia de tolerancia a fallos y persistencia | Pendiente |
@@ -124,7 +124,7 @@ q1_english_filter.input   q2_biography_filter.input
           RabbitMQ: result_sink.input
                       |
                       v
-              ResultSink pendiente
+              ResultSink
 
       ... etapas posteriores pendientes ...
 
@@ -141,7 +141,7 @@ RabbitMQ: results.<execution_id>
 query1.jsonl ... query5.jsonl
 ```
 
-El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. `Until2020Filter` consume la primera rama, conserva los artículos hasta 2020 inclusive y publica las proyecciones de Q1 y Q2. Q1 conserva los artículos en inglés y Q2 filtra las secciones biográficas, descarga las imágenes disponibles y codifica sus bytes en Base64. Q1, Q2 y Q3 publican resultados y finales provisionales en `result_sink.input`. La rama textual implementada se detalla a continuación. Como ResultSink y Q4/Q5 todavía no están implementados, el cliente no puede completar la ejecución de las cinco consultas sin intervención manual.
+El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. `Until2020Filter` consume la primera rama, conserva los artículos hasta 2020 inclusive y publica las proyecciones de Q1 y Q2. Q1 conserva los artículos en inglés y Q2 filtra las secciones biográficas, descarga las imágenes disponibles y codifica sus bytes en Base64. Q1, Q2 y Q3 publican resultados y finales provisionales en `result_sink.input`. La rama textual implementada se detalla a continuación. Como Q4/Q5 todavía no están implementados, el cliente no puede completar la ejecución de las cinco consultas sin intervención manual.
 
 La rama textual implementada continúa desde `word_extractor.input`:
 
@@ -160,11 +160,11 @@ q3_word_aggregator.input.0
 Q3WordAggregator
     | RESULT / QUERY_END provisional
     v
-result_sink.input -> ResultSink pendiente
+result_sink.input -> ResultSink
 ```
 
 La salida Q4/Q5 ya se publica, pero se acumula en su cola porque todavía no
-hay un consumidor. ResultSink tampoco tiene consumidor implementado.
+hay un consumidor. ResultSink consume `result_sink.input`.
 
 ## Arquitectura objetivo
 
@@ -372,17 +372,21 @@ RabbitMQ se utiliza como transporte, no como almacenamiento de largo plazo para 
 
 ### ResultSink
 
-El ResultSink recibirá resultados y finales de las distintas ramas.
+El servicio `result-sink` consume `result_sink.input` y reenvía cada `ResultMessage`
+inmediatamente a `results.<execution_id>`, sin acumular registros ni esperar al
+final de una consulta. También reenvía los `QueryEndMessage` producidos por las
+ramas actuales (una instancia por rama). La publicación usa confirmaciones de
+RabbitMQ y enrutamiento obligatorio antes de confirmar el mensaje de entrada.
+No declara las colas de respuesta: son exclusivas y pertenecen al Gateway.
 
-Estará particionado por `execution_id` para que todos los resultados de una ejecución converjan en una única réplica lógica.
+Esta versión utiliza una sola instancia de ResultSink. Las barreras para ramas
+replicadas y la deduplicación persistente quedan pendientes; los productores
+actuales deben emitir exactamente un final por consulta, después de sus resultados.
 
-Cada query debe producir exactamente un mensaje final:
-
-```text
-QUERY_END
-```
-
-El cliente considera terminada la ejecución solamente después de recibir los finales de las cinco consultas.
+Gateway y Client comienzan la recepción de resultados después de finalizar la
+subida. Desde ese momento, los resultados se entregan incrementalmente sin
+esperar las demás consultas. Q4 y Q5 siguen pendientes, por lo que el cliente
+continúa esperando sus finales para terminar la ejecución completa.
 
 ## Mensajes de finalización
 
@@ -736,7 +740,7 @@ El cliente debe:
 - Confirmar cada resultado.
 - Finalizar después de recibir los cinco `QUERY_END`.
 
-El QueryRouter publica las proyecciones textuales en `word_extractor.input`, consumida por la rama Q3. `Until2020Filter` alimenta los filtros de Q1 y Q2. Los resultados de las tres consultas permanecen en `result_sink.input` hasta implementar ResultSink; las proyecciones de Q4/Q5 permanecen en `q4_q5_word_projector.input`.
+El QueryRouter publica las proyecciones textuales en `word_extractor.input`, consumida por la rama Q3. `Until2020Filter` alimenta los filtros de Q1 y Q2. ResultSink reenvía los resultados de las tres consultas a `results.<execution_id>`; las proyecciones de Q4/Q5 permanecen en `q4_q5_word_projector.input`.
 
 Detener el entorno:
 
@@ -829,7 +833,7 @@ El desarrollo se divide en tres momentos distintos:
 
 ## Próximos pasos
 
-1. Implementar ResultSink para entregar los resultados ya producidos por Q1, Q2 y Q3.
+1. Incorporar barreras para productores replicados en ResultSink.
 2. Implementar `Q4Q5WordProjector`, Q4 y Q5 a partir de la salida tokenizada que ya produce WordExtractor.
 3. Ejecutar y comparar automáticamente Q1-Q5 con la referencia serial.
 4. Implementar los protocolos de `PARTITION_END` y barreras.
