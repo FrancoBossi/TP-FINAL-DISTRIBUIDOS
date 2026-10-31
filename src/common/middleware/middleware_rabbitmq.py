@@ -34,7 +34,14 @@ class _MessageMiddlewareRabbitMQBase:
             MessageMiddlewareMessageError,
         ):
             self._connection = pika.BlockingConnection(
-                pika.ConnectionParameters(host=host)
+                pika.ConnectionParameters(
+                    host=host,
+                    # Health checks do not guarantee every startup connection succeeds.
+                    connection_attempts=10,
+                    retry_delay=3,
+                    socket_timeout=5,
+                    stack_timeout=10,
+                )
             )
             self._channel = self._connection.channel()
 
