@@ -36,7 +36,7 @@ class TestResults(unittest.TestCase):
         nack.assert_called_once()
         messaging.stop_consuming_results.assert_called_once()
 
-    def test_gateway_does_not_ack_middleware_until_client_acks(self):
+    def test_gateway_acks_discarded_result_after_client_disconnects(self):
         execution_id = "execution-123"
 
         messaging = Mock()
@@ -65,9 +65,9 @@ class TestResults(unittest.TestCase):
             with self.assertRaises(EOFError):
                 forward_results(Mock(), messaging, execution_id)
 
-        ack.assert_not_called()
-        nack.assert_called_once()
-        messaging.stop_consuming_results.assert_called_once()
+        ack.assert_called_once()
+        nack.assert_not_called()
+        messaging.stop_consuming_results.assert_not_called()
 
     def test_gateway_requires_all_five_completions(self):
         execution_id = "execution-123"
