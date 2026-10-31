@@ -184,6 +184,37 @@ class Q5CandidateBatchMessage(Message):
 
 
 @dataclass(frozen=True)
+class Q5PartialStatsMessage(Message):
+    """Partial sum and count produced by one Q5 stats partition."""
+
+    total_word_count: int
+    abstract_count: int
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.Q5_PARTIAL_STATS
+
+
+@dataclass(frozen=True)
+class Q5StatsPartitionEndMessage(Message):
+    """End marker emitted by one Q5 stats partition."""
+
+    partition_id: int
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.Q5_STATS_PARTITION_END
+
+
+@dataclass(frozen=True)
+class Q5AverageMessage(Message):
+    """Global historical word-count average for one execution."""
+
+    average_word_count: float
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.Q5_AVERAGE
+
+
+@dataclass(frozen=True)
 class TextArticleBatchMessage(Message):
     articles: list[dict[str, Any]]
     execution_id: str
@@ -250,6 +281,9 @@ MESSAGE_CLASSES: dict[MessageType, type[Message]] = {
     MessageType.Q5_ARTICLE_WORD_COUNT_BATCH: Q5ArticleWordCountBatchMessage,
     MessageType.Q5_HISTORICAL_WORD_COUNT_BATCH: Q5HistoricalWordCountBatchMessage,
     MessageType.Q5_CANDIDATE_BATCH: Q5CandidateBatchMessage,
+    MessageType.Q5_PARTIAL_STATS: Q5PartialStatsMessage,
+    MessageType.Q5_STATS_PARTITION_END: Q5StatsPartitionEndMessage,
+    MessageType.Q5_AVERAGE: Q5AverageMessage,
 }
 
 ROUTED_CLASSES: dict[MessageType, type[Message]] = {

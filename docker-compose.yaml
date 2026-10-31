@@ -25,7 +25,7 @@ services:
       INPUT_BATCHER_QUEUE_PREFIX: ${INPUT_BATCHER_QUEUE_PREFIX:-input_batcher.input}
       INPUT_BATCHER_PARTITIONS: "${INPUT_BATCHER_PARTITIONS:-1}"
     ports:
-      - "5000:5000"
+      - "${GATEWAY_HOST_PORT:-5001}:5000"
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -167,6 +167,50 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  q5-stats-worker:
+    build:
+      context: .
+      dockerfile: src/q5/stats_worker/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q5_stats_worker.input
+      OUTPUT_QUEUE: q5_average_reducer.input
+      PARTITION_ID: "0"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  q5-average-reducer:
+    build:
+      context: .
+      dockerfile: src/q5/average_reducer/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q5_average_reducer.input
+      OUTPUT_QUEUE: q5_comparator.input
+      PARTITION_COUNT: "1"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  q5-comparator:
+    build:
+      context: .
+      dockerfile: src/q5/comparator/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q5_comparator.input
+      OUTPUT_QUEUE: result_sink.input
+      Q5_BUFFER_DIRECTORY: /var/lib/q5-candidates
+    volumes:
+      - q5_candidate_buffer:/var/lib/q5-candidates
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   until-2020-filter:
     build:
       context: .
@@ -304,3 +348,4 @@ services:
 volumes:
   prometheus_data:
   grafana_data:
+  q5_candidate_buffer:
