@@ -1,6 +1,7 @@
 import json
 import logging
 import socket
+import time
 from collections.abc import Iterable
 from contextlib import ExitStack
 from pathlib import Path
@@ -24,6 +25,9 @@ from common.message_protocol.message import (
 from dataset.parquet_reader import iter_article_records
 
 LOG_BATCH_SIZE = 1000
+CONNECTION_ATTEMPTS = 10
+CONNECTION_RETRY_DELAY = 3
+CONNECTION_TIMEOUT = 5
 logger = logging.getLogger(__name__)
 
 
@@ -31,6 +35,36 @@ class Client:
     def __init__(self, host: str, port: int) -> None:
         self.host = host
         self.port = port
+
+    def _try_connect(self, attempt: int) -> None:
+        try:
+            sock = socket.create_connection(
+                (self.host, self.port), timeout=CONNECTION_TIMEOUT
+            )
+        except OSError as error:
+            if attempt == CONNECTION_ATTEMPTS:
+                raise
+            logger.warning(
+                "Gateway connection attempt %d/%d failed: %s; retrying in %ds",
+                attempt,
+                CONNECTION_ATTEMPTS,
+                error,
+                CONNECTION_RETRY_DELAY,
+            )
+            time.sleep(CONNECTION_RETRY_DELAY)
+        else:
+            try:
+                sock.settimeout(None)
+            except Exception:
+                sock.close()
+                raise
+            return sock
+
+    def _connect(self) -> socket.socket:
+        for attempt in range(1, CONNECTION_ATTEMPTS + 1):
+            sock = self._try_connect(attempt)
+            if sock is not None:
+                return sock
 
     def _receive(self, sock: socket.socket) -> Message:
         message = recv_msg(sock)
@@ -125,7 +159,7 @@ class Client:
         self, input_file: str | Path, output_dir: str | Path = "output/distributed"
     ) -> None:
         logger.info("Connecting to gateway at %s:%d", self.host, self.port)
-        with socket.create_connection((self.host, self.port)) as sock:
+        with self._connect() as sock:
             logger.info("Connected; reading articles from %s", input_file)
             self.send_articles(sock, iter_article_records(input_file))
             self.receive_results(sock, output_dir)
