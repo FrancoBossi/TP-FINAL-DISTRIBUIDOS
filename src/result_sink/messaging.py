@@ -1,8 +1,10 @@
 from collections.abc import Callable
 
 from common.message_protocol.message import Message, QueryEndMessage, ResultMessage
-from common.middleware.middleware import MessageMiddlewareQueue
-from common.middleware.middleware_rabbitmq import MessagePublisherRabbitMQ
+from common.middleware.middleware import (
+    MessageMiddlewarePublisher,
+    MessageMiddlewareQueue,
+)
 
 Ack = Callable[[], None]
 Nack = Callable[..., None]
@@ -13,7 +15,7 @@ class ResultSinkMessaging:
     def __init__(
         self,
         input_queue: MessageMiddlewareQueue,
-        publisher: MessagePublisherRabbitMQ,
+        publisher: MessageMiddlewarePublisher,
     ) -> None:
         self._input_queue = input_queue
         self._publisher = publisher

@@ -7,6 +7,7 @@ from common.middleware.middleware import (
     MessageMiddlewareCloseError,
     MessageMiddlewareDisconnectedError,
     MessageMiddlewareMessageError,
+    MessageMiddlewarePublisher,
     MessageMiddlewareQueue,
 )
 
@@ -100,7 +101,10 @@ class _MessageMiddlewareRabbitMQBase:
             self._connection.close()
 
 
-class MessagePublisherRabbitMQ(_MessageMiddlewareRabbitMQBase):
+class MessagePublisherRabbitMQ(
+    _MessageMiddlewareRabbitMQBase,
+    MessageMiddlewarePublisher,
+):
     """Publish to existing queues without declaring Gateway's exclusive queues."""
 
     def __init__(self, host: str) -> None:
@@ -114,13 +118,18 @@ class MessagePublisherRabbitMQ(_MessageMiddlewareRabbitMQBase):
             self.close()
             raise
 
-    def send_to(self, queue_name: str, message: bytes) -> None:
+    def send_to(self, destination: str, message: bytes) -> None:
         self._check_connection()
+
         with _pika_error_to_middleware_error(
-            "publishing result", MessageMiddlewareMessageError
+            "publishing result",
+            MessageMiddlewareMessageError,
         ):
             self._channel.basic_publish(
-                exchange="", routing_key=queue_name, body=message, mandatory=True
+                exchange="",
+                routing_key=destination,
+                body=message,
+                mandatory=True,
             )
 
 

@@ -37,6 +37,16 @@ class MessageMiddlewareQueue(MessageMiddleware):
         pass
 
 
+class MessageMiddlewarePublisher(ABC):
+    @abstractmethod
+    def send_to(self, destination: str, message: bytes) -> None:
+        pass
+
+    @abstractmethod
+    def close(self) -> None:
+        pass
+
+
 class MessageMiddlewareExchange(MessageMiddleware):
     @abstractmethod
     def __init__(

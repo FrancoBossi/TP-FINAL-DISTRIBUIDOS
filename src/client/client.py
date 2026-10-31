@@ -36,7 +36,7 @@ class Client:
         self.host = host
         self.port = port
 
-    def _try_connect(self, attempt: int) -> None:
+    def _try_connect(self, attempt: int) -> socket.socket | None:
         try:
             sock = socket.create_connection(
                 (self.host, self.port), timeout=CONNECTION_TIMEOUT
