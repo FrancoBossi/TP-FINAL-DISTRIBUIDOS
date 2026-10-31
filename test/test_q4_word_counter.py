@@ -47,6 +47,37 @@ class TestQ4WordCounter(unittest.TestCase):
         self.assertEqual(2, ack.call_count)
         nack.assert_not_called()
 
+    def test_failed_publication_is_nacked_and_keeps_counts_for_retry(self):
+        messaging = Mock()
+        controller = Q4WordCounterController(messaging, partition_id=0)
+        ack, nack = Mock(), Mock()
+
+        controller.process_message(
+            Q4WordBatchMessage(
+                words=["network", "network", "system"],
+                execution_id="execution-123",
+                reply_queue="results.execution-123",
+            ),
+            ack,
+            nack,
+        )
+
+        messaging.publish.side_effect = RuntimeError("middleware unavailable")
+
+        with self.assertRaises(RuntimeError):
+            controller.process_message(
+                RoutedInputEndMessage(
+                    execution_id="execution-123",
+                    reply_queue="results.execution-123",
+                ),
+                ack,
+                nack,
+            )
+
+        self.assertIn("execution-123", controller._counts)
+        self.assertEqual(1, ack.call_count)
+        nack.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()

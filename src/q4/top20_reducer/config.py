@@ -13,13 +13,8 @@ class Q4Top20ReducerConfig:
         default_factory=lambda: os.environ.get("MOM_HOST", "localhost")
     )
     input_queue: str = field(
-        default_factory=lambda: os.environ.get(
-            "INPUT_QUEUE", "q4_top20_reducer.input"
-        )
+        default_factory=lambda: os.environ.get("INPUT_QUEUE", "q4_top20_reducer.input")
     )
     output_queue: str = field(
         default_factory=lambda: os.environ.get("OUTPUT_QUEUE", "result_sink.input")
-    )
-    partition_count: int = field(
-        default_factory=lambda: int(os.environ.get("Q4_COUNTER_PARTITIONS", "1"))
     )

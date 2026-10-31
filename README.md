@@ -166,10 +166,10 @@ Q3WordAggregator                    Q4WordCounter                    Q5 pendient
 result_sink.input -> ResultSink
 ```
 
-`Q4Q5WordProjector` ya consume la salida tokenizada y publica las proyecciones
-específicas de Q4 y Q5. Estas se acumulan en sus colas de salida porque los
-consumidores siguientes todavía no están implementados. ResultSink consume
-`result_sink.input`.
+`Q4Q5WordProjector` consume la salida tokenizada y publica las proyecciones
+específicas de Q4 y Q5. La rama Q4 continúa por un único `Q4WordCounter` y
+`Q4Top20Reducer` hasta `result_sink.input`. La proyección de Q5 se acumula en
+`q5_date_router.input` porque su consumidor todavía no está implementado.
 
 ## Arquitectura objetivo
 
@@ -361,22 +361,24 @@ La afinidad se calcula a partir de:
 `Q4Q5WordProjector` está implementado. Omite los artículos cuyo abstract era
 `None`, elimina stopwords y repeticiones dentro del mismo abstract y publica un
 `Q4WordBatchMessage` con una aparición por palabra y artículo en
-`q4_word_counter.input.<n>`. Las repeticiones entre artículos se conservan porque
-representan apariciones distintas. La salida se enruta por
-`(execution_id, word)` hacia la partición correspondiente.
+`q4_word_counter.input.0`. Las repeticiones entre artículos se conservan porque
+representan apariciones distintas.
 
-`Q4WordCounter` cuenta apariciones y produce un top 20 local por partición.
-El proyector enruta cada aparición por `(execution_id, word)` mediante un hash
-estable, por lo que todas las apariciones de una palabra llegan a la misma
-partición. Al terminar, cada contador publica su top local y un
-`Q4PartitionEndMessage`.
+La versión funcional despliega un solo `Q4WordCounter`. Este cuenta las
+apariciones y, al recibir el final, publica su top 20 local y un
+`Q4PartitionEndMessage` con `partition_id=0`.
 
-`Q4Top20Reducer` combina los tops parciales y genera el top 20 global. Espera
-la marca de fin de todas las particiones antes de publicar los pares
-`{word, count}` y el único `QUERY_END` de Q4. Enviar solamente veinte
-candidatos por partición es suficiente porque una palabra fuera del top local
-ya tiene veinte palabras de su partición que la superan o empatan según el
-desempate alfabético.
+`Q4Top20Reducer` recibe el top parcial y espera la marca de fin de la única
+partición configurada antes de publicar los pares `{word, count}` y el único
+`QUERY_END` de Q4.
+
+El diseño objetivo particionará el conteo por `(execution_id, word)`. Cada
+contador producirá su top 20 local y el reducer esperará los finales de todas
+las particiones. Enviar solamente veinte candidatos por partición es suficiente
+porque una palabra fuera del top local ya tiene veinte palabras de su partición
+que la superan o empatan según el desempate alfabético. El routing, el despliegue
+de múltiples counters y la coordinación con múltiples producers quedan
+pendientes dentro del hito de escalabilidad.
 
 #### Query 5
 
@@ -808,8 +810,13 @@ make down
 | `INPUT_QUEUE` | Q3WordAggregator | `q3_word_aggregator.input.0` | Presencias de palabras |
 | `OUTPUT_QUEUE` | Q3WordAggregator | `result_sink.input` | Resultados y final provisional de Q3 |
 | `INPUT_QUEUE` | Q4Q5WordProjector | `q4_q5_word_projector.input` | Artículos tokenizados para Q4 y Q5 |
-| `Q4_OUTPUT_QUEUE` | Q4Q5WordProjector | `q4_word_counter.input.<n>` | Apariciones de palabras para Q4, particionadas por `(execution_id, word)` |
+| `Q4_OUTPUT_QUEUE` | Q4Q5WordProjector | `q4_word_counter.input.0` | Apariciones de palabras para la única partición funcional de Q4 |
 | `Q5_OUTPUT_QUEUE` | Q4Q5WordProjector | `q5_date_router.input` | Artículos y sus conteos para Q5 |
+| `INPUT_QUEUE` | Q4WordCounter | `q4_word_counter.input.0` | Apariciones de palabras de Q4 |
+| `OUTPUT_QUEUE` | Q4WordCounter | `q4_top20_reducer.input` | Top 20 local y final de la partición |
+| `PARTITION_ID` | Q4WordCounter | `0` | Identificador de la única partición funcional |
+| `INPUT_QUEUE` | Q4Top20Reducer | `q4_top20_reducer.input` | Top local y final del counter |
+| `OUTPUT_QUEUE` | Q4Top20Reducer | `result_sink.input` | Resultados y final de Q4 |
 | `INPUT_FILE` | Client | `datasets/wikipedia_sample.parquet` | Dataset de entrada |
 | `OUTPUT_DIR` | Client | `output/distributed` | Directorio de resultados |
 | `LOG_LEVEL` | Todos los procesos | `INFO` | Nivel de logging |

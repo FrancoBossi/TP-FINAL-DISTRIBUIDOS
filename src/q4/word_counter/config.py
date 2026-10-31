@@ -13,14 +13,10 @@ class Q4WordCounterConfig:
         default_factory=lambda: os.environ.get("MOM_HOST", "localhost")
     )
     input_queue: str = field(
-        default_factory=lambda: os.environ.get(
-            "INPUT_QUEUE", "q4_word_counter.input.0"
-        )
+        default_factory=lambda: os.environ.get("INPUT_QUEUE", "q4_word_counter.input.0")
     )
     output_queue: str = field(
-        default_factory=lambda: os.environ.get(
-            "OUTPUT_QUEUE", "q4_top20_reducer.input"
-        )
+        default_factory=lambda: os.environ.get("OUTPUT_QUEUE", "q4_top20_reducer.input")
     )
     partition_id: int = field(
         default_factory=lambda: int(os.environ.get("PARTITION_ID", "0"))

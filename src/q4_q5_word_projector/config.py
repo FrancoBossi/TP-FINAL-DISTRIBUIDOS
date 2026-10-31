@@ -27,9 +27,7 @@ class Q4Q5WordProjectorConfig:
             "q4_word_counter.input.0",
         )
     )
-    q4_partition_count: int = field(
-        default_factory=lambda: int(os.environ.get("Q4_COUNTER_PARTITIONS", "1"))
-    )
+
     q5_output_queue: str = field(
         default_factory=lambda: os.environ.get(
             "Q5_OUTPUT_QUEUE",

@@ -1,7 +1,6 @@
 import logging
 import signal
 from functools import partial
-from types import FrameType
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
 from q4.word_counter.config import Q4WordCounterConfig, configure_logging

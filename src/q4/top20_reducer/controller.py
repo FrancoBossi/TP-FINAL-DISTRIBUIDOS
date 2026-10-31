@@ -40,9 +40,7 @@ class Q4Top20ReducerController:
 
     def _handle_message(self, message: Message) -> None:
         if isinstance(message, Q4PartialTopBatchMessage):
-            state = self._executions.setdefault(
-                message.execution_id, ExecutionState()
-            )
+            state = self._executions.setdefault(message.execution_id, ExecutionState())
             for candidate in message.words:
                 word = candidate["word"]
                 count = candidate["count"]
@@ -52,9 +50,7 @@ class Q4Top20ReducerController:
             return
 
         if isinstance(message, Q4PartitionEndMessage):
-            state = self._executions.setdefault(
-                message.execution_id, ExecutionState()
-            )
+            state = self._executions.setdefault(message.execution_id, ExecutionState())
             if not 0 <= message.partition_id < self._partition_count:
                 raise ValueError("Q4 partition id is outside configured range")
             state.ended_partitions.add(message.partition_id)

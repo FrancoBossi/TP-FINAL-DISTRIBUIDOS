@@ -8,9 +8,9 @@ RUN pip install --no-cache-dir pika nltk \
         stopwords
 
 COPY src/common ./src/common
-COPY src/q4_q5 ./src/q4_q5
+COPY src/q4_q5_word_projector ./src/q4_q5_word_projector
 
 ENV PYTHONPATH=/app/src
 ENV NLTK_DATA=/usr/local/share/nltk_data
 
-ENTRYPOINT ["python", "-m", "q4_q5.word_projector.main"]
+ENTRYPOINT ["python", "-m", "q4_q5_word_projector.main"]

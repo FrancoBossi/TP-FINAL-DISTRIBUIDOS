@@ -44,10 +44,7 @@ class Q4WordCounterController:
             top = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:TOP]
             self._messaging.publish(
                 Q4PartialTopBatchMessage(
-                    words=[
-                        {"word": word, "count": count}
-                        for word, count in top
-                    ],
+                    words=[{"word": word, "count": count} for word, count in top],
                     execution_id=message.execution_id,
                     reply_queue=message.reply_queue,
                 )
@@ -62,9 +59,7 @@ class Q4WordCounterController:
             self._counts.pop(message.execution_id, None)
             return
 
-        raise ValueError(
-            "Q4WordCounter expected Q4_WORD_BATCH or ROUTED_INPUT_END"
-        )
+        raise ValueError("Q4WordCounter expected Q4_WORD_BATCH or ROUTED_INPUT_END")
 
     def start(self) -> None:
         self._messaging.start_consuming(self.process_message)
