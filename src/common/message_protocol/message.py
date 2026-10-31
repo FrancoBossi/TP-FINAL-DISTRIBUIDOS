@@ -134,6 +134,26 @@ class Q4WordBatchMessage(Message):
 
 
 @dataclass(frozen=True)
+class Q4PartialTopBatchMessage(Message):
+    """Top words produced by one Q4 counter partition."""
+
+    words: list[dict[str, Any]]
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.Q4_PARTIAL_TOP_BATCH
+
+
+@dataclass(frozen=True)
+class Q4PartitionEndMessage(Message):
+    """End marker emitted by a Q4 counter partition."""
+
+    partition_id: int
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.Q4_PARTITION_END
+
+
+@dataclass(frozen=True)
 class Q5ArticleWordCountBatchMessage(Message):
     """Articles with an abstract and their unique non-stopword count."""
 
@@ -205,6 +225,8 @@ MESSAGE_CLASSES: dict[MessageType, type[Message]] = {
     MessageType.TOKENIZED_ARTICLE_BATCH: TokenizedArticleBatchMessage,
     MessageType.Q3_WORD_PRESENCE_BATCH: Q3WordPresenceBatchMessage,
     MessageType.Q4_WORD_BATCH: Q4WordBatchMessage,
+    MessageType.Q4_PARTIAL_TOP_BATCH: Q4PartialTopBatchMessage,
+    MessageType.Q4_PARTITION_END: Q4PartitionEndMessage,
     MessageType.Q5_ARTICLE_WORD_COUNT_BATCH: Q5ArticleWordCountBatchMessage,
 }
 
