@@ -112,6 +112,20 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  q4-q5-word-projector:
+    build:
+      context: .
+      dockerfile: src/q4_q5/word_projector/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q4_q5_word_projector.input
+      Q4_OUTPUT_QUEUE: q4_word_counter.input.0
+      Q5_OUTPUT_QUEUE: q5_date_router.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   until-2020-filter:
     build:
       context: .

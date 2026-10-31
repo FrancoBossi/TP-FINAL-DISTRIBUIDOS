@@ -12,7 +12,7 @@ El diseño separa tres etapas de evolución:
 2. **Escalabilidad, dentro de este mismo hito:** múltiples réplicas, protocolo de control, `PARTITION_END`, barreras, clientes concurrentes y graceful shutdown completo.
 3. **Tolerancia a fallos, en el hito posterior:** persistencia, recuperación ante caídas, deduplicación e idempotencia frente a reentregas.
 
-Al corte de este documento se encuentran implementados el cliente, el Gateway, el ingreso incremental desde Parquet, el batching por bytes, el preprocesamiento, el fan-out del QueryRouter, las ramas funcionales de Q1, Q2 y Q3 y ResultSink. La rama textual implementada incluye WordExtractor, Q3WordProjector y Q3WordAggregator. Los resultados y finales provisionales de Q1-Q3 ya recorren `result_sink.input -> results.<execution_id> -> Gateway -> Client`; Q4 y Q5 continúan pendientes. Las etapas distribuidas implementadas funcionan actualmente con una réplica cada una y Q3 utiliza una única partición de agregación; por lo tanto, los finales actuales todavía no representan las barreras requeridas para grupos replicados.
+Al corte de este documento se encuentran implementados el cliente, el Gateway, el ingreso incremental desde Parquet, el batching por bytes, el preprocesamiento, el fan-out del QueryRouter, las ramas funcionales de Q1, Q2 y Q3 y ResultSink. La rama textual implementada incluye WordExtractor, Q3WordProjector, Q3WordAggregator y la proyección compartida de Q4/Q5. Los resultados y finales provisionales de Q1-Q3 ya recorren `result_sink.input -> results.<execution_id> -> Gateway -> Client`; los agregadores de Q4 y las etapas posteriores de Q5 continúan pendientes. Las etapas distribuidas implementadas funcionan actualmente con una réplica cada una y Q3 utiliza una única partición de agregación; por lo tanto, los finales actuales todavía no representan las barreras requeridas para grupos replicados.
 
 ---
 
@@ -158,7 +158,7 @@ El siguiente DAG representa el flujo completo de datos de la arquitectura objeti
 | WordExtractor | Tokenización básica compartida | Stateless, replicable | Cola compartida | Implementado, una réplica |
 | Q3WordProjector | Palabras únicas de cada artículo | Stateless, replicable | Cola compartida | Implementado, una réplica |
 | Q3WordAggregator | Presencia por idioma | Stateful y particionado | `(execution_id, word)` | Implementado, una partición |
-| Q4Q5WordProjector | Stopwords, deduplicación y `word_count` | Stateless, replicable | Cola compartida | Pendiente |
+| Q4Q5WordProjector | Stopwords, deduplicación y `word_count` | Stateless, replicable | Cola compartida | Implementado, una réplica |
 | Q4WordCounter | Conteo global distribuido y top local | Stateful y particionado | `(execution_id, word)` | Pendiente |
 | Q4Top20Reducer | Fusionar tops locales | Stateful, reducers replicados | `execution_id` | Pendiente |
 | Q5DateRouter | Separar histórico y candidatos | Stateless, replicable | Cola compartida | Pendiente |
@@ -172,7 +172,7 @@ El siguiente DAG representa el flujo completo de datos de la arquitectura objeti
 
 Actualmente el camino funcional de Q1, Q2 y Q3 atraviesa ResultSink y llega hasta las colas temporales `results.<execution_id>` que consume Gateway.
 
-El QueryRouter publica la proyección textual en `word_extractor.input`. WordExtractor tokeniza los abstracts y alimenta tanto la rama implementada de Q3 como la cola pendiente de Q4/Q5. Q3WordProjector deduplica palabras por artículo y las enruta por `(execution_id, word)`; Q3WordAggregator detecta la presencia en ambos idiomas y publica resultados y un final provisional. ResultSink consume los resultados de Q1, Q2 y Q3 desde `result_sink.input` y los reenvía inmediatamente a `results.<execution_id>`, desde donde Gateway los entrega al cliente mediante el protocolo TCP externo.
+El QueryRouter publica la proyección textual en `word_extractor.input`. WordExtractor tokeniza los abstracts y alimenta las ramas de Q3 y Q4/Q5. Q3WordProjector deduplica palabras por artículo y las enruta por `(execution_id, word)`; Q3WordAggregator detecta la presencia en ambos idiomas y publica resultados y un final provisional. Q4Q5WordProjector elimina stopwords, deduplica por artículo y publica las proyecciones específicas en `q4_word_counter.input.0` y `q5_date_router.input`; allí permanecen hasta implementar sus consumidores. ResultSink consume los resultados de Q1, Q2 y Q3 desde `result_sink.input` y los reenvía inmediatamente a `results.<execution_id>`, desde donde Gateway los entrega al cliente mediante el protocolo TCP externo.
 
 ---
 
@@ -350,11 +350,11 @@ ImageFetcher descarga secuencialmente en la primera versión funcional. La arqui
 
 ## 10. Rama textual Q3/Q4/Q5
 
-Esta sección combina el estado implementado de WordExtractor y Q3 con la arquitectura objetivo todavía pendiente para Q4 y Q5.
+Esta sección combina el estado implementado de WordExtractor, Q3 y Q4Q5WordProjector con la arquitectura objetivo de las etapas posteriores de Q4 y Q5.
 
 ### 10.1 WordExtractor
 
-WordExtractor realiza solamente transformaciones comunes: minúsculas, tokenización y descarte de tokens exclusivamente numéricos. Conserva identidad, idioma, fecha y URL. No elimina stopwords ni filtra por fecha, porque esas reglas no son comunes a las tres consultas. La versión implementada transforma `TextArticleBatchMessage` en `TokenizedArticleBatchMessage`, publica el mismo batch en las colas independientes de Q3 y Q4/Q5 y reenvía `RoutedInputEndMessage` a ambas ramas.
+WordExtractor realiza solamente transformaciones comunes: minúsculas, tokenización y descarte de tokens exclusivamente numéricos. Conserva identidad, idioma, fecha y URL. No elimina stopwords ni filtra por fecha, porque esas reglas no son comunes a las tres consultas. La versión implementada transforma `TextArticleBatchMessage` en `TokenizedArticleBatchMessage`, publica el mismo batch en las colas independientes de Q3 y Q4/Q5 y reenvía `RoutedInputEndMessage` a ambas ramas. Cada artículo tokenizado incluye `has_abstract`, que distingue un abstract ausente (`None`) de uno presente pero vacío; esta diferencia es necesaria para reproducir el denominador de Q5 de la referencia serial.
 
 ### 10.2 Q3: palabras compartidas
 
@@ -372,7 +372,7 @@ Cuando una palabra pasa por primera vez a estar presente en ambos idiomas se emi
 
 ### 10.3 Q4: top 20 global
 
-`Q4Q5WordProjector` elimina stopwords, deduplica palabras dentro del abstract y produce una aparición por palabra y artículo.
+`Q4Q5WordProjector` está implementado con una réplica. Omite los artículos cuyo abstract era `None`, elimina stopwords, deduplica palabras dentro de cada artículo y publica un `Q4WordBatchMessage` con una aparición por palabra y artículo en `q4_word_counter.input.0`. Las repeticiones entre artículos se preservan porque representan apariciones diferentes. La única partición es una decisión temporal de la versión funcional; al escalar, la salida deberá enrutarse por `(execution_id, word)`.
 
 `Q4WordCounter` se particiona por `(execution_id, word)`. Cada partición cuenta un subconjunto disjunto de palabras y, al finalizar, produce su top 20 local.
 
@@ -382,7 +382,7 @@ El reducer se replica físicamente y los parciales se enrutan por `execution_id`
 
 ### 10.4 Q5: promedio y comparación
 
-`Q4Q5WordProjector` calcula también `word_count = len(unique_words)`, garantizando el mismo criterio que Q4.
+`Q4Q5WordProjector` calcula también `word_count = len(unique_words)`, garantizando el mismo criterio que Q4, y publica un `Q5ArticleWordCountBatchMessage` en `q5_date_router.input`. La proyección conserva `article_id`, URL y fecha. Los artículos sin abstract se omiten, mientras que los abstracts presentes pero vacíos se conservan con conteo cero, como en la ejecución serial.
 
 `Q5DateRouter` divide el flujo:
 
@@ -550,6 +550,11 @@ src/
   q2/
     biography_filter/     # filtro funcional de Q2
     image_fetcher/        # I/O HTTP y resultado de Q2
+  word_extractor/         # tokenización compartida de Q3/Q4/Q5
+  q3/                     # proyección y agregación de Q3
+  q4_q5/
+    word_projector/       # proyecciones compartidas de Q4 y Q5
+  result_sink/            # reenvío de resultados hacia cada Gateway
   common/
     message_protocol/     # DTOs, tipos y framing externo
     middleware/           # interfaces y adaptación RabbitMQ
@@ -734,7 +739,7 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 
 ### 22.2 Evidencia disponible al corte
 
-- La suite local completa pasa con 143 tests.
+- La suite local completa pasa con 146 tests.
 - Se verificó el recorrido Q1 hasta `result_sink.input` con RabbitMQ real.
 - Se verificó Q2 desde `until_2020.input` hasta resultados Base64 y `QUERY_END` provisional.
 - Se verificó que un candidato sin URL se registra y se omite.
@@ -742,9 +747,11 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 - Se verificó el recorrido de Q3 con RabbitMQ real desde `word_extractor.input` hasta un resultado compartido y su `QUERY_END` provisional en `result_sink.input`.
 - Se verificó con RabbitMQ real que ResultSink reenvía un resultado hacia una cola exclusiva `results.<execution_id>` ya declarada por Gateway y confirma posteriormente la entrada.
 - Se verificó que ResultSink finaliza con código 0 ante `SIGTERM`.
+- Se verificó con RabbitMQ real que Q4Q5WordProjector consume un batch tokenizado, publica las dos proyecciones con los mismos metadatos de ejecución y propaga el final a ambas ramas.
+- Se verificó dentro de su imagen Docker que Q4Q5WordProjector dispone de las stopwords de NLTK sin depender de una descarga durante el arranque.
 - Se verificó el arranque separado de los containers implementados.
 
-Todavía falta la prueba punta a punta completa porque Q4 y Q5 no están implementados; el cliente espera los cinco `QUERY_END` antes de finalizar.
+Todavía falta la prueba punta a punta completa porque los consumidores posteriores de Q4 y Q5 no están implementados; el cliente espera los cinco `QUERY_END` antes de finalizar.
 
 ---
 
@@ -771,7 +778,7 @@ La demo final deberá ensayarse y ser reproducible. El recorrido previsto es:
 
 ### 24.1 Para completar el pipeline funcional
 
-1. Implementar Q4Q5WordProjector, Q4WordCounter y Q4Top20Reducer.
+1. Implementar Q4WordCounter y Q4Top20Reducer.
 2. Implementar Q5DateRouter, estadísticas, promedio, CandidateBuffer y comparator.
 3. Ejecutar Q1-Q5 desde el cliente y comparar con la referencia.
 

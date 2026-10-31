@@ -41,6 +41,7 @@ class TestWordExtractorController(unittest.TestCase):
                     "url": "https://example.com/a",
                     "language": "en",
                     "modification_date": "2024-01-01T00:00:00",
+                    "has_abstract": True,
                     "words": ["network", "network", "and"],
                 }
             ],

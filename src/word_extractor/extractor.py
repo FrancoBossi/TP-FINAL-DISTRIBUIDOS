@@ -13,6 +13,7 @@ def tokenize_batch(message: TextArticleBatchMessage) -> TokenizedArticleBatchMes
                 "url": article["url"],
                 "language": article["language"],
                 "modification_date": article["modification_date"],
+                "has_abstract": article["abstract"] is not None,
                 "words": list(extract_words(article["abstract"])),
             }
             for article in message.articles
