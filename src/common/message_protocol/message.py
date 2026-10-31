@@ -93,9 +93,10 @@ class ImageCandidateBatchMessage(Message):
 
 @dataclass(frozen=True)
 class TokenizedArticleBatchMessage(Message):
-    """Articles with article_id, url, language, modification_date and words.
+    """Articles with identity, metadata, abstract presence and tokens.
 
-    words is a JSON list of tokens, retaining repetitions and stopwords.
+    words retains repetitions and stopwords. has_abstract distinguishes a missing
+    abstract from an existing abstract that produces no valid tokens.
     """
 
     articles: list[dict[str, Any]]
@@ -116,6 +117,30 @@ class Q3WordPresenceBatchMessage(Message):
     execution_id: str
     reply_queue: str
     type: ClassVar[MessageType] = MessageType.Q3_WORD_PRESENCE_BATCH
+
+
+@dataclass(frozen=True)
+class Q4WordBatchMessage(Message):
+    """Unique non-stopword appearances from individual articles.
+
+    A word occurs at most once per source article, but may occur again for
+    another article in the same or a different batch.
+    """
+
+    words: list[str]
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.Q4_WORD_BATCH
+
+
+@dataclass(frozen=True)
+class Q5ArticleWordCountBatchMessage(Message):
+    """Articles with an abstract and their unique non-stopword count."""
+
+    articles: list[dict[str, Any]]
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.Q5_ARTICLE_WORD_COUNT_BATCH
 
 
 @dataclass(frozen=True)
@@ -179,6 +204,8 @@ MESSAGE_CLASSES: dict[MessageType, type[Message]] = {
     MessageType.TEXT_ARTICLE_BATCH: TextArticleBatchMessage,
     MessageType.TOKENIZED_ARTICLE_BATCH: TokenizedArticleBatchMessage,
     MessageType.Q3_WORD_PRESENCE_BATCH: Q3WordPresenceBatchMessage,
+    MessageType.Q4_WORD_BATCH: Q4WordBatchMessage,
+    MessageType.Q5_ARTICLE_WORD_COUNT_BATCH: Q5ArticleWordCountBatchMessage,
 }
 
 ROUTED_CLASSES: dict[MessageType, type[Message]] = {

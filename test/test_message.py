@@ -14,6 +14,8 @@ from common.message_protocol.message import (
     Q1Q2ArticleBatchMessage,
     Q2CandidateBatchMessage,
     Q3WordPresenceBatchMessage,
+    Q4WordBatchMessage,
+    Q5ArticleWordCountBatchMessage,
     QueryEndMessage,
     ResultMessage,
     RoutedArticleMessage,
@@ -32,6 +34,7 @@ class TestMessage(unittest.TestCase):
                 "url": "https://example.com/école",
                 "language": "fr",
                 "modification_date": "2023-01-01T00:00:00",
+                "has_abstract": True,
                 "words": ["café", "café", "and"],
             },
             {
@@ -39,6 +42,7 @@ class TestMessage(unittest.TestCase):
                 "url": "https://example.com/empty",
                 "language": "en",
                 "modification_date": "2019-01-01T00:00:00",
+                "has_abstract": False,
                 "words": [],
             },
         ]
@@ -47,9 +51,27 @@ class TestMessage(unittest.TestCase):
             {"word": "café", "language": "fr"},
             {"word": "and", "language": "fr"},
         ]
+
+        q4_words = [
+            "café",
+            "system",
+            "café",
+        ]
+
+        q5_articles = [
+            {
+                "article_id": "https://example.com/café",
+                "url": "https://example.com/café",
+                "modification_date": "2023-01-01T00:00:00",
+                "word_count": 2,
+            }
+        ]
+
         for message_class, field, payload in (
             (TokenizedArticleBatchMessage, "articles", articles),
             (Q3WordPresenceBatchMessage, "presences", presences),
+            (Q4WordBatchMessage, "words", q4_words),
+            (Q5ArticleWordCountBatchMessage, "articles", q5_articles),
         ):
             for values in (payload, []):
                 with self.subTest(message_class=message_class, payload=values):
@@ -70,6 +92,8 @@ class TestMessage(unittest.TestCase):
         for kind, payload_field in (
             (MessageType.TOKENIZED_ARTICLE_BATCH, "articles"),
             (MessageType.Q3_WORD_PRESENCE_BATCH, "presences"),
+            (MessageType.Q4_WORD_BATCH, "words"),
+            (MessageType.Q5_ARTICLE_WORD_COUNT_BATCH, "articles"),
         ):
             fields = {
                 "type": kind.value,

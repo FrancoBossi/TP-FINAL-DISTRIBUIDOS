@@ -35,6 +35,7 @@ class TestWordExtractor(unittest.TestCase):
                         "url": "https://example.com/article-1",
                         "language": "fr",
                         "modification_date": "2023-01-01T00:00:00",
+                        "has_abstract": True,
                         "words": ["café", "café", "and", "le", "réseau", "robot2"],
                     }
                 ],
@@ -71,9 +72,14 @@ class TestWordExtractor(unittest.TestCase):
             articles, result.articles, cases, strict=True
         ):
             with self.subTest(article_id=source["article_id"]):
+                expected_metadata = {
+                    key: value for key, value in source.items() if key != "abstract"
+                }
+                expected_metadata["has_abstract"] = source["abstract"] is not None
+
                 self.assertEqual(
-                    {k: v for k, v in source.items() if k != "abstract"},
-                    {k: v for k, v in output.items() if k != "words"},
+                    expected_metadata,
+                    {key: value for key, value in output.items() if key != "words"},
                 )
                 self.assertEqual(expected_words, output["words"])
 
