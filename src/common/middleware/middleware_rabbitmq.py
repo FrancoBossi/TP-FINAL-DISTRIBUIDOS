@@ -93,6 +93,30 @@ class _MessageMiddlewareRabbitMQBase:
             self._connection.close()
 
 
+class MessagePublisherRabbitMQ(_MessageMiddlewareRabbitMQBase):
+    """Publish to existing queues without declaring Gateway's exclusive queues."""
+
+    def __init__(self, host: str) -> None:
+        super().__init__(host)
+        try:
+            with _pika_error_to_middleware_error(
+                "enabling publisher confirms", MessageMiddlewareMessageError
+            ):
+                self._channel.confirm_delivery()
+        except Exception:
+            self.close()
+            raise
+
+    def send_to(self, queue_name: str, message: bytes) -> None:
+        self._check_connection()
+        with _pika_error_to_middleware_error(
+            "publishing result", MessageMiddlewareMessageError
+        ):
+            self._channel.basic_publish(
+                exchange="", routing_key=queue_name, body=message, mandatory=True
+            )
+
+
 class MessageMiddlewareQueueRabbitMQ(
     _MessageMiddlewareRabbitMQBase,
     MessageMiddlewareQueue,
