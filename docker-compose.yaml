@@ -165,6 +165,18 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  result-sink:
+    build:
+      context: .
+      dockerfile: src/result_sink/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: result_sink.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   client:
     build:
       context: .
