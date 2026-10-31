@@ -3,16 +3,19 @@ from common.message_protocol.message import (
     RoutedInputEndMessage,
     TokenizedArticleBatchMessage,
 )
-from q4_q5.word_projector.messaging import (
+from q4_q5_word_projector.messaging import (
     Ack,
     Nack,
     Q4Q5WordProjectorMessaging,
 )
-from q4_q5.word_projector.projector import project_batch
+from q4_q5_word_projector.projector import project_batch
 
 
 class Q4Q5WordProjectorController:
-    def __init__(self, messaging: Q4Q5WordProjectorMessaging) -> None:
+    def __init__(
+        self,
+        messaging: Q4Q5WordProjectorMessaging,
+    ) -> None:
         self._messaging = messaging
 
     def _handle_message(self, message: Message) -> None:

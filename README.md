@@ -2,7 +2,7 @@
 
 Trabajo práctico grupal de Sistemas Distribuidos. El sistema procesa artículos de Wikipedia en inglés y francés y genera los resultados de cinco consultas mediante una arquitectura distribuida basada en RabbitMQ.
 
-> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware, el InputBatcher, el Preprocessor, el QueryRouter, las ramas funcionales de Q1, Q2 y Q3, ResultSink y la proyección compartida de Q4/Q5. Los agregadores de Q4 y las etapas posteriores de Q5 todavía están pendientes.
+> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware, el InputBatcher, el Preprocessor, el QueryRouter, las ramas funcionales de Q1, Q2, Q3 y Q4, ResultSink y la proyección compartida de Q4/Q5. Las etapas posteriores de Q5 todavía están pendientes.
 
 ## Consultas
 
@@ -39,7 +39,8 @@ El sistema debe resolver las siguientes consultas:
 | Tokenización compartida en WordExtractor | Implementado con una réplica |
 | Proyección y agregación de palabras compartidas de Q3 | Implementado con una partición |
 | Proyección compartida de Q4/Q5 | Implementado con una réplica |
-| Agregación y resultados de Q4/Q5 | Pendiente |
+| Agregación y resultados de Q4 | Implementado con contador y reducer |
+| Etapas de Q5 | Pendiente |
 | ResultSink | Implementado para ramas con una sola instancia |
 | Atención concurrente de varios clientes | Pendiente |
 | Graceful shutdown completo para procesos concurrentes | Pendiente |
@@ -142,7 +143,7 @@ RabbitMQ: results.<execution_id>
 query1.jsonl ... query5.jsonl
 ```
 
-El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. `Until2020Filter` consume la primera rama, conserva los artículos hasta 2020 inclusive y publica las proyecciones de Q1 y Q2. Q1 conserva los artículos en inglés y Q2 filtra las secciones biográficas, descarga las imágenes disponibles y codifica sus bytes en Base64. Q1, Q2 y Q3 publican resultados y finales provisionales en `result_sink.input`. La rama textual implementada se detalla a continuación. Como los agregadores de Q4 y las etapas posteriores de Q5 todavía no están implementados, el cliente no puede completar la ejecución de las cinco consultas sin intervención manual.
+El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. `Until2020Filter` consume la primera rama, conserva los artículos hasta 2020 inclusive y publica las proyecciones de Q1 y Q2. Q1 conserva los artículos en inglés y Q2 filtra las secciones biográficas, descarga las imágenes disponibles y codifica sus bytes en Base64. Q1, Q2, Q3 y Q4 publican resultados y finales en `result_sink.input`. La rama textual implementada se detalla a continuación. Como las etapas posteriores de Q5 todavía no están implementadas, el cliente no puede completar la ejecución de las cinco consultas sin intervención manual.
 
 La rama textual implementada continúa desde `word_extractor.input`:
 
@@ -159,16 +160,16 @@ Q3WordProjector                    Q4Q5WordProjector
     v                                     v                               v
 q3_word_aggregator.input.0        q4_word_counter.input.0          q5_date_router.input
     |                                     |                               |
-Q3WordAggregator                    Q4 pendiente                    Q5 pendiente
+Q3WordAggregator                    Q4WordCounter                    Q5 pendiente
     | RESULT / QUERY_END provisional
     v
 result_sink.input -> ResultSink
 ```
 
-`Q4Q5WordProjector` ya consume la salida tokenizada y publica las proyecciones
-específicas de Q4 y Q5. Estas se acumulan en sus colas de salida porque los
-consumidores siguientes todavía no están implementados. ResultSink consume
-`result_sink.input`.
+`Q4Q5WordProjector` consume la salida tokenizada y publica las proyecciones
+específicas de Q4 y Q5. La rama Q4 continúa por un único `Q4WordCounter` y
+`Q4Top20Reducer` hasta `result_sink.input`. La proyección de Q5 se acumula en
+`q5_date_router.input` porque su consumidor todavía no está implementado.
 
 ## Arquitectura objetivo
 
@@ -361,12 +362,23 @@ La afinidad se calcula a partir de:
 `None`, elimina stopwords y repeticiones dentro del mismo abstract y publica un
 `Q4WordBatchMessage` con una aparición por palabra y artículo en
 `q4_word_counter.input.0`. Las repeticiones entre artículos se conservan porque
-representan apariciones distintas. La salida utiliza una única partición hasta
-incorporar el routing por `(execution_id, word)`.
+representan apariciones distintas.
 
-`Q4WordCounter` cuenta apariciones y produce un top 20 local por partición.
+La versión funcional despliega un solo `Q4WordCounter`. Este cuenta las
+apariciones y, al recibir el final, publica su top 20 local y un
+`Q4PartitionEndMessage` con `partition_id=0`.
 
-`Q4Top20Reducer` combina los tops parciales y genera el top 20 global. Los reducers serán replicables y cada ejecución se asignará a una réplica mediante `execution_id`.
+`Q4Top20Reducer` recibe el top parcial y espera la marca de fin de la única
+partición configurada antes de publicar los pares `{word, count}` y el único
+`QUERY_END` de Q4.
+
+El diseño objetivo particionará el conteo por `(execution_id, word)`. Cada
+contador producirá su top 20 local y el reducer esperará los finales de todas
+las particiones. Enviar solamente veinte candidatos por partición es suficiente
+porque una palabra fuera del top local ya tiene veinte palabras de su partición
+que la superan o empatan según el desempate alfabético. El routing, el despliegue
+de múltiples counters y la coordinación con múltiples producers quedan
+pendientes dentro del hito de escalabilidad.
 
 #### Query 5
 
@@ -401,8 +413,8 @@ actuales deben emitir exactamente un final por consulta, después de sus resulta
 
 Gateway y Client comienzan la recepción de resultados después de finalizar la
 subida. Desde ese momento, los resultados se entregan incrementalmente sin
-esperar las demás consultas. Q4 y Q5 siguen pendientes, por lo que el cliente
-continúa esperando sus finales para terminar la ejecución completa.
+esperar las demás consultas. Q5 sigue pendiente, por lo que el cliente
+continúa esperando sus cinco finales para terminar la ejecución completa.
 
 ## Mensajes de finalización
 
@@ -756,7 +768,7 @@ El cliente debe:
 - Confirmar cada resultado.
 - Finalizar después de recibir los cinco `QUERY_END`.
 
-El QueryRouter publica las proyecciones textuales en `word_extractor.input`, consumida por las ramas Q3, Q4 y Q5. `Until2020Filter` alimenta los filtros de Q1 y Q2. ResultSink reenvía los resultados de las tres consultas completas a `results.<execution_id>`; las proyecciones de Q4 y Q5 permanecen en `q4_word_counter.input.0` y `q5_date_router.input` hasta implementar sus consumidores.
+El QueryRouter publica las proyecciones textuales en `word_extractor.input`, consumida por las ramas Q3, Q4 y Q5. `Until2020Filter` alimenta los filtros de Q1 y Q2. ResultSink reenvía los resultados de Q1-Q4 a `results.<execution_id>`; las proyecciones de Q5 permanecen en `q5_date_router.input` hasta implementar sus consumidores.
 
 Detener el entorno:
 
@@ -798,8 +810,13 @@ make down
 | `INPUT_QUEUE` | Q3WordAggregator | `q3_word_aggregator.input.0` | Presencias de palabras |
 | `OUTPUT_QUEUE` | Q3WordAggregator | `result_sink.input` | Resultados y final provisional de Q3 |
 | `INPUT_QUEUE` | Q4Q5WordProjector | `q4_q5_word_projector.input` | Artículos tokenizados para Q4 y Q5 |
-| `Q4_OUTPUT_QUEUE` | Q4Q5WordProjector | `q4_word_counter.input.0` | Apariciones de palabras para Q4; una partición en la versión funcional |
+| `Q4_OUTPUT_QUEUE` | Q4Q5WordProjector | `q4_word_counter.input.0` | Apariciones de palabras para la única partición funcional de Q4 |
 | `Q5_OUTPUT_QUEUE` | Q4Q5WordProjector | `q5_date_router.input` | Artículos y sus conteos para Q5 |
+| `INPUT_QUEUE` | Q4WordCounter | `q4_word_counter.input.0` | Apariciones de palabras de Q4 |
+| `OUTPUT_QUEUE` | Q4WordCounter | `q4_top20_reducer.input` | Top 20 local y final de la partición |
+| `PARTITION_ID` | Q4WordCounter | `0` | Identificador de la única partición funcional |
+| `INPUT_QUEUE` | Q4Top20Reducer | `q4_top20_reducer.input` | Top local y final del counter |
+| `OUTPUT_QUEUE` | Q4Top20Reducer | `result_sink.input` | Resultados y final de Q4 |
 | `INPUT_FILE` | Client | `datasets/wikipedia_sample.parquet` | Dataset de entrada |
 | `OUTPUT_DIR` | Client | `output/distributed` | Directorio de resultados |
 | `LOG_LEVEL` | Todos los procesos | `INFO` | Nivel de logging |
@@ -853,7 +870,7 @@ El desarrollo se divide en tres momentos distintos:
 ## Próximos pasos
 
 1. Incorporar barreras para productores replicados en ResultSink.
-2. Implementar `Q4WordCounter`, `Q4Top20Reducer` y las etapas posteriores de Q5 a partir de las proyecciones ya producidas por `Q4Q5WordProjector`.
+2. Implementar las etapas posteriores de Q5 a partir de las proyecciones ya producidas por `Q4Q5WordProjector`.
 3. Ejecutar y comparar automáticamente Q1-Q5 con la referencia serial.
 4. Implementar los protocolos de `PARTITION_END` y barreras.
 5. Permitir clientes concurrentes y aislados en el Gateway.

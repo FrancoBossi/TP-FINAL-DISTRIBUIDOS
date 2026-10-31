@@ -4,12 +4,12 @@ from functools import partial
 from types import FrameType
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
-from q4_q5.word_projector.config import (
+from q4_q5_word_projector.config import (
     Q4Q5WordProjectorConfig,
     configure_logging,
 )
-from q4_q5.word_projector.controller import Q4Q5WordProjectorController
-from q4_q5.word_projector.messaging import Q4Q5WordProjectorMessaging
+from q4_q5_word_projector.controller import Q4Q5WordProjectorController
+from q4_q5_word_projector.messaging import Q4Q5WordProjectorMessaging
 
 logger = logging.getLogger(__name__)
 

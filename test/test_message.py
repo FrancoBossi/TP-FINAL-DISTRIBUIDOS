@@ -14,6 +14,8 @@ from common.message_protocol.message import (
     Q1Q2ArticleBatchMessage,
     Q2CandidateBatchMessage,
     Q3WordPresenceBatchMessage,
+    Q4PartialTopBatchMessage,
+    Q4PartitionEndMessage,
     Q4WordBatchMessage,
     Q5ArticleWordCountBatchMessage,
     QueryEndMessage,
@@ -219,6 +221,19 @@ class TestMessage(unittest.TestCase):
                         "abstract": normalized_article["abstract"],
                     }
                 ],
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
+            Q4PartialTopBatchMessage(
+                words=[
+                    {"word": "network", "count": 3},
+                    {"word": "system", "count": 2},
+                ],
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
+            Q4PartitionEndMessage(
+                partition_id=0,
                 execution_id=execution_id,
                 reply_queue=f"results.{execution_id}",
             ),
