@@ -4,6 +4,7 @@ from functools import partial
 from types import FrameType
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
+from common.partition_router import PartitionRouter
 from q4_q5.word_projector.config import (
     Q4Q5WordProjectorConfig,
     configure_logging,
@@ -19,15 +20,20 @@ def create_messaging(
     input_queue_name: str,
     q4_output_queue_name: str,
     q5_output_queue_name: str,
+    q4_partition_count: int = 1,
 ) -> Q4Q5WordProjectorMessaging:
     input_queue = MessageMiddlewareQueueRabbitMQ(
         host=mom_host,
         queue_name=input_queue_name,
     )
-    q4_output_queue = MessageMiddlewareQueueRabbitMQ(
-        host=mom_host,
-        queue_name=q4_output_queue_name,
-    )
+    queue_prefix = q4_output_queue_name.rsplit(".", 1)[0]
+    q4_output_queues = {
+        f"{queue_prefix}.{partition}": MessageMiddlewareQueueRabbitMQ(
+            host=mom_host,
+            queue_name=f"{queue_prefix}.{partition}",
+        )
+        for partition in range(q4_partition_count)
+    }
     q5_output_queue = MessageMiddlewareQueueRabbitMQ(
         host=mom_host,
         queue_name=q5_output_queue_name,
@@ -35,8 +41,9 @@ def create_messaging(
 
     return Q4Q5WordProjectorMessaging(
         input_queue=input_queue,
-        q4_output_queue=q4_output_queue,
+        q4_output_queue=next(iter(q4_output_queues.values())),
         q5_output_queue=q5_output_queue,
+        q4_output_queues=q4_output_queues,
     )
 
 
@@ -57,9 +64,14 @@ def main() -> int:
         input_queue_name=config.input_queue,
         q4_output_queue_name=config.q4_output_queue,
         q5_output_queue_name=config.q5_output_queue,
+        q4_partition_count=config.q4_partition_count,
     )
     controller = Q4Q5WordProjectorController(
         messaging=messaging,
+        router=PartitionRouter(
+            config.q4_output_queue.rsplit(".", 1)[0],
+            config.q4_partition_count,
+        ),
     )
 
     signal.signal(

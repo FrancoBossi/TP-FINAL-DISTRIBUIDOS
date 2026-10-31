@@ -14,13 +14,20 @@ class Q4Q5WordProjectorMessaging:
         input_queue: MessageMiddlewareQueue,
         q4_output_queue: MessageMiddlewareQueue,
         q5_output_queue: MessageMiddlewareQueue,
+        q4_output_queues: dict[str, MessageMiddlewareQueue] | None = None,
     ) -> None:
         self._input_queue = input_queue
         self._q4_output_queue = q4_output_queue
+        self._q4_output_queues = q4_output_queues or {}
         self._q5_output_queue = q5_output_queue
 
     def publish_q4(self, message: Message) -> None:
         self._q4_output_queue.send(message.serialize())
+
+    def publish_q4_to(self, queue: str, message: Message) -> None:
+        self._q4_output_queues.get(queue, self._q4_output_queue).send(
+            message.serialize()
+        )
 
     def publish_q5(self, message: Message) -> None:
         self._q5_output_queue.send(message.serialize())
@@ -46,4 +53,7 @@ class Q4Q5WordProjectorMessaging:
             try:
                 self._q4_output_queue.close()
             finally:
+                for queue in self._q4_output_queues.values():
+                    if queue is not self._q4_output_queue:
+                        queue.close()
                 self._q5_output_queue.close()
