@@ -121,7 +121,36 @@ services:
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q4_q5_word_projector.input
       Q4_OUTPUT_QUEUE: q4_word_counter.input.0
+      Q4_COUNTER_PARTITIONS: "${Q4_COUNTER_PARTITIONS:-1}"
       Q5_OUTPUT_QUEUE: q5_date_router.input
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  q4-word-counter:
+    build:
+      context: .
+      dockerfile: src/q4/word_counter/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q4_word_counter.input.0
+      OUTPUT_QUEUE: q4_top20_reducer.input
+      PARTITION_ID: "0"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  q4-top20-reducer:
+    build:
+      context: .
+      dockerfile: src/q4/top20_reducer/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q4_top20_reducer.input
+      OUTPUT_QUEUE: result_sink.input
+      Q4_COUNTER_PARTITIONS: "${Q4_COUNTER_PARTITIONS:-1}"
     depends_on:
       rabbitmq:
         condition: service_healthy
