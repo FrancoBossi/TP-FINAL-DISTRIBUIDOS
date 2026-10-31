@@ -1,10 +1,35 @@
 import unittest
 from unittest.mock import Mock, patch
 
+import pika
+
 from common.middleware import MessageMiddlewareQueueRabbitMQ
+from common.middleware.middleware import MessageMiddlewareDisconnectedError
 
 
 class TestMessageMiddlewareQueueRabbitMQ(unittest.TestCase):
+    @patch("common.middleware.middleware_rabbitmq.pika.BlockingConnection")
+    def test_configures_bounded_startup_retries(self, connect):
+        MessageMiddlewareQueueRabbitMQ(host="rabbitmq", queue_name="input")
+
+        parameters = connect.call_args.args[0]
+        self.assertEqual(parameters.host, "rabbitmq")
+        self.assertEqual(parameters.connection_attempts, 10)
+        self.assertEqual(parameters.retry_delay, 3)
+        self.assertEqual(parameters.socket_timeout, 5)
+        self.assertEqual(parameters.stack_timeout, 10)
+
+    @patch("common.middleware.middleware_rabbitmq.pika.BlockingConnection")
+    def test_exhausted_connection_retries_raise_middleware_error(self, connect):
+        error = pika.exceptions.AMQPConnectionError("broker unavailable")
+        connect.side_effect = error
+
+        with self.assertRaises(MessageMiddlewareDisconnectedError) as raised:
+            MessageMiddlewareQueueRabbitMQ(host="rabbitmq", queue_name="input")
+
+        self.assertIs(raised.exception.__cause__, error)
+        connect.return_value.channel.assert_not_called()
+
     def test_declares_queue_and_sends_message(self):
         connection = Mock()
         connection.is_closed = False

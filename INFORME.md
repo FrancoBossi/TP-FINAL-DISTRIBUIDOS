@@ -12,7 +12,7 @@ El diseño separa tres etapas de evolución:
 2. **Escalabilidad, dentro de este mismo hito:** múltiples réplicas, protocolo de control, `PARTITION_END`, barreras, clientes concurrentes y graceful shutdown completo.
 3. **Tolerancia a fallos, en el hito posterior:** persistencia, recuperación ante caídas, deduplicación e idempotencia frente a reentregas.
 
-Al corte de este documento se encuentran implementados el cliente, el Gateway, el ingreso incremental desde Parquet, el batching por bytes, el preprocesamiento, el fan-out del QueryRouter y las ramas funcionales de Q1, Q2 y Q3 hasta la cola de entrada de ResultSink. La rama textual implementada incluye WordExtractor, Q3WordProjector y Q3WordAggregator. Q4, Q5 y ResultSink continúan pendientes. Las etapas distribuidas implementadas funcionan actualmente con una réplica cada una y Q3 utiliza una única partición de agregación; por lo tanto, los finales actuales son provisionales y todavía no representan las barreras requeridas para grupos replicados.
+Al corte de este documento se encuentran implementados el cliente, el Gateway, el ingreso incremental desde Parquet, el batching por bytes, el preprocesamiento, el fan-out del QueryRouter, las ramas funcionales de Q1, Q2 y Q3 y ResultSink. La rama textual implementada incluye WordExtractor, Q3WordProjector y Q3WordAggregator. Los resultados y finales provisionales de Q1-Q3 ya recorren `result_sink.input -> results.<execution_id> -> Gateway -> Client`; Q4 y Q5 continúan pendientes. Las etapas distribuidas implementadas funcionan actualmente con una réplica cada una y Q3 utiliza una única partición de agregación; por lo tanto, los finales actuales todavía no representan las barreras requeridas para grupos replicados.
 
 ---
 
@@ -165,14 +165,14 @@ El siguiente DAG representa el flujo completo de datos de la arquitectura objeti
 | Q5StatsWorker | Suma y cantidad parciales | Stateful por ejecución local | Distribución de trabajo | Pendiente |
 | Q5AverageReducer | Calcular promedio global | Stateful, reducers replicados | `execution_id` | Pendiente |
 | Q5Comparator | Esperar promedio y comparar candidatos | Stateful y particionado | `(execution_id, article_id)` | Pendiente |
-| ResultSink | Completar barreras y entregar resultados | Stateful y particionado | `execution_id` | Pendiente |
-| MessageMiddleware | Abstraer queues, ACK/NACK y grupos | Infraestructura común | - | Queue implementada; interfaz de exchange definida; implementación RabbitMQ pendiente |
+| ResultSink | Reenviar resultados y finales hacia cada Gateway | Stateless en la versión actual; stateful al incorporar barreras | `execution_id` | Implementado con una instancia y finales provisionales |
+| MessageMiddleware | Abstraer queues, publicación dinámica, ACK/NACK y grupos | Infraestructura común | - | Queue y publisher dinámico implementados sobre RabbitMQ; interfaz de exchange definida e implementación pendiente |
 
 ### 5.3 Estado del flujo implementado
 
-Actualmente el camino funcional llega hasta `result_sink.input` para Q1, Q2 y Q3.
+Actualmente el camino funcional de Q1, Q2 y Q3 atraviesa ResultSink y llega hasta las colas temporales `results.<execution_id>` que consume Gateway.
 
-El QueryRouter publica la proyección textual en `word_extractor.input`. WordExtractor tokeniza los abstracts y alimenta tanto la rama implementada de Q3 como la cola pendiente de Q4/Q5. Q3WordProjector deduplica palabras por artículo y las enruta por `(execution_id, word)`; Q3WordAggregator detecta la presencia en ambos idiomas y publica resultados y un final provisional. Los resultados de Q1, Q2 y Q3 quedan listos para ResultSink. Sin este último componente aún no recorren el tramo `result_sink.input -> results.<execution_id> -> Gateway -> Client`.
+El QueryRouter publica la proyección textual en `word_extractor.input`. WordExtractor tokeniza los abstracts y alimenta tanto la rama implementada de Q3 como la cola pendiente de Q4/Q5. Q3WordProjector deduplica palabras por artículo y las enruta por `(execution_id, word)`; Q3WordAggregator detecta la presencia en ambos idiomas y publica resultados y un final provisional. ResultSink consume los resultados de Q1, Q2 y Q3 desde `result_sink.input` y los reenvía inmediatamente a `results.<execution_id>`, desde donde Gateway los entrega al cliente mediante el protocolo TCP externo.
 
 ---
 
@@ -414,11 +414,13 @@ Antes del promedio persiste candidatos; después del promedio compara directamen
 
 ## 11. ResultSink y entrega al cliente
 
-ResultSink recibirá resultados y señales de finalización de Q1-Q5. Se particionará por `execution_id` para que toda la salida de una ejecución converja en una única réplica lógica.
+La implementación actual de ResultSink consume `result_sink.input` y reenvía cada `ResultMessage` o `QueryEndMessage` a `results.<execution_id>`. No acumula resultados ni espera que termine una consulta. Publica mediante el exchange por defecto de RabbitMQ con enrutamiento obligatorio y publisher confirms; recién después de confirmar esa publicación ejecuta el ACK del mensaje de entrada.
 
-Sus responsabilidades serán:
+ResultSink no declara las colas de salida. Cada cola `results.<execution_id>` es exclusiva, temporal y pertenece a la conexión de Gateway que inició la ejecución. El publicador dinámico solamente la utiliza como destino; si la cola no existe, la publicación falla y el mensaje de entrada no se confirma.
 
-- Reenviar cada resultado a `results.<execution_id>` sin esperar a que termine la query.
+En la versión funcional actual, una sola instancia reenvía los finales provisionales producidos por Q1, Q2 y Q3. Al incorporar múltiples réplicas, ResultSink se particionará por `execution_id` y agregará estado de barrera para que toda la salida de una ejecución converja en una única réplica lógica. Sus responsabilidades objetivo serán:
+
+- Reenviar cada resultado a `results.<execution_id>` sin esperar a que termine la query, ya implementado.
 - Mantener las barreras necesarias por consulta.
 - Producir exactamente un `QUERY_END` por query.
 - Limpiar el estado de barrera cuando finalicen las cinco consultas o falle la ejecución.
@@ -732,15 +734,17 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 
 ### 22.2 Evidencia disponible al corte
 
-- La suite local completa pasa con 132 tests.
+- La suite local completa pasa con 143 tests.
 - Se verificó el recorrido Q1 hasta `result_sink.input` con RabbitMQ real.
 - Se verificó Q2 desde `until_2020.input` hasta resultados Base64 y `QUERY_END` provisional.
 - Se verificó que un candidato sin URL se registra y se omite.
 - Se verificó que HTTP 404 no reintenta y que errores transitorios sí lo hacen de forma acotada.
 - Se verificó el recorrido de Q3 con RabbitMQ real desde `word_extractor.input` hasta un resultado compartido y su `QUERY_END` provisional en `result_sink.input`.
+- Se verificó con RabbitMQ real que ResultSink reenvía un resultado hacia una cola exclusiva `results.<execution_id>` ya declarada por Gateway y confirma posteriormente la entrada.
+- Se verificó que ResultSink finaliza con código 0 ante `SIGTERM`.
 - Se verificó el arranque separado de los containers implementados.
 
-Todavía falta la prueba punta a punta completa porque ResultSink, Q4 y Q5 no están implementados.
+Todavía falta la prueba punta a punta completa porque Q4 y Q5 no están implementados; el cliente espera los cinco `QUERY_END` antes de finalizar.
 
 ---
 
@@ -767,10 +771,9 @@ La demo final deberá ensayarse y ser reproducible. El recorrido previsto es:
 
 ### 24.1 Para completar el pipeline funcional
 
-1. Implementar ResultSink.
-2. Implementar Q4Q5WordProjector, Q4WordCounter y Q4Top20Reducer.
-3. Implementar Q5DateRouter, estadísticas, promedio, CandidateBuffer y comparator.
-4. Ejecutar Q1-Q5 desde el cliente y comparar con la referencia.
+1. Implementar Q4Q5WordProjector, Q4WordCounter y Q4Top20Reducer.
+2. Implementar Q5DateRouter, estadísticas, promedio, CandidateBuffer y comparator.
+3. Ejecutar Q1-Q5 desde el cliente y comparar con la referencia.
 
 ### 24.2 Para completar el hito de escalabilidad
 

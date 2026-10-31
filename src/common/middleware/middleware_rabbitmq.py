@@ -7,6 +7,7 @@ from common.middleware.middleware import (
     MessageMiddlewareCloseError,
     MessageMiddlewareDisconnectedError,
     MessageMiddlewareMessageError,
+    MessageMiddlewarePublisher,
     MessageMiddlewareQueue,
 )
 
@@ -34,7 +35,14 @@ class _MessageMiddlewareRabbitMQBase:
             MessageMiddlewareMessageError,
         ):
             self._connection = pika.BlockingConnection(
-                pika.ConnectionParameters(host=host)
+                pika.ConnectionParameters(
+                    host=host,
+                    # Health checks do not guarantee every startup connection succeeds.
+                    connection_attempts=10,
+                    retry_delay=3,
+                    socket_timeout=5,
+                    stack_timeout=10,
+                )
             )
             self._channel = self._connection.channel()
 
@@ -91,6 +99,38 @@ class _MessageMiddlewareRabbitMQBase:
             MessageMiddlewareCloseError,
         ):
             self._connection.close()
+
+
+class MessagePublisherRabbitMQ(
+    _MessageMiddlewareRabbitMQBase,
+    MessageMiddlewarePublisher,
+):
+    """Publish to existing queues without declaring Gateway's exclusive queues."""
+
+    def __init__(self, host: str) -> None:
+        super().__init__(host)
+        try:
+            with _pika_error_to_middleware_error(
+                "enabling publisher confirms", MessageMiddlewareMessageError
+            ):
+                self._channel.confirm_delivery()
+        except Exception:
+            self.close()
+            raise
+
+    def send_to(self, destination: str, message: bytes) -> None:
+        self._check_connection()
+
+        with _pika_error_to_middleware_error(
+            "publishing result",
+            MessageMiddlewareMessageError,
+        ):
+            self._channel.basic_publish(
+                exchange="",
+                routing_key=destination,
+                body=message,
+                mandatory=True,
+            )
 
 
 class MessageMiddlewareQueueRabbitMQ(
