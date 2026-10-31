@@ -14,6 +14,7 @@ class TestMessageMiddlewareQueueRabbitMQ(unittest.TestCase):
 
         parameters = connect.call_args.args[0]
         self.assertEqual(parameters.host, "rabbitmq")
+        self.assertEqual(parameters.heartbeat, 0)
         self.assertEqual(parameters.connection_attempts, 10)
         self.assertEqual(parameters.retry_delay, 3)
         self.assertEqual(parameters.socket_timeout, 5)

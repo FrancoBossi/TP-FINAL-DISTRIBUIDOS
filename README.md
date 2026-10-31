@@ -2,7 +2,7 @@
 
 Trabajo práctico grupal de Sistemas Distribuidos. El sistema procesa artículos de Wikipedia en inglés y francés y genera los resultados de cinco consultas mediante una arquitectura distribuida basada en RabbitMQ.
 
-> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware, el InputBatcher, el Preprocessor, el QueryRouter, las ramas funcionales de Q1, Q2, Q3 y Q4, ResultSink y la proyección compartida de Q4/Q5. Las etapas posteriores de Q5 todavía están pendientes.
+> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware, el InputBatcher, el Preprocessor, el QueryRouter, las ramas funcionales de Q1-Q5 y ResultSink. Q5 incluye separación temporal, estadísticas parciales, reducción del promedio, comparación y buffering temporal en disco. El pipeline funcional completo fue validado con 50.000 artículos y sus cinco archivos coinciden con la referencia serial. Todavía faltan las capacidades de escalabilidad descriptas más abajo.
 
 ## Consultas
 
@@ -40,7 +40,8 @@ El sistema debe resolver las siguientes consultas:
 | Proyección y agregación de palabras compartidas de Q3 | Implementado con una partición |
 | Proyección compartida de Q4/Q5 | Implementado con una réplica |
 | Agregación y resultados de Q4 | Implementado con contador y reducer |
-| Etapas de Q5 | Pendiente |
+| Separación temporal de Q5 en Q5DateRouter | Implementado con una réplica |
+| Estadísticas, promedio y comparación de Q5 | Implementado con una partición y buffer JSONL en volumen Docker |
 | ResultSink | Implementado para ramas con una sola instancia |
 | Atención concurrente de varios clientes | Pendiente |
 | Graceful shutdown completo para procesos concurrentes | Pendiente |
@@ -128,8 +129,6 @@ q1_english_filter.input   q2_biography_filter.input
                       v
               ResultSink
 
-      ... etapas posteriores pendientes ...
-
 RabbitMQ: results.<execution_id>
       |
       | RESULT / QUERY_END
@@ -143,7 +142,7 @@ RabbitMQ: results.<execution_id>
 query1.jsonl ... query5.jsonl
 ```
 
-El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. `Until2020Filter` consume la primera rama, conserva los artículos hasta 2020 inclusive y publica las proyecciones de Q1 y Q2. Q1 conserva los artículos en inglés y Q2 filtra las secciones biográficas, descarga las imágenes disponibles y codifica sus bytes en Base64. Q1, Q2, Q3 y Q4 publican resultados y finales en `result_sink.input`. La rama textual implementada se detalla a continuación. Como las etapas posteriores de Q5 todavía no están implementadas, el cliente no puede completar la ejecución de las cinco consultas sin intervención manual.
+El `InputBatcher` consume los artículos, construye batches de hasta `MAX_BATCH_BYTES` y los publica en `preprocessor.input` antes del mensaje de fin. El `Preprocessor` valida y normaliza esos artículos y publica los batches resultantes en `query_router.input`. El `QueryRouter` proyecta cada batch hacia `until_2020.input` y `word_extractor.input`. `Until2020Filter` consume la primera rama, conserva los artículos hasta 2020 inclusive y publica las proyecciones de Q1 y Q2. Q1 conserva los artículos en inglés y Q2 filtra las secciones biográficas, descarga las imágenes disponibles y codifica sus bytes en Base64. Las cinco consultas publican resultados y finales en `result_sink.input`. La rama textual implementada se detalla a continuación.
 
 La rama textual implementada continúa desde `word_extractor.input`:
 
@@ -160,16 +159,24 @@ Q3WordProjector                    Q4Q5WordProjector
     v                                     v                               v
 q3_word_aggregator.input.0        q4_word_counter.input.0          q5_date_router.input
     |                                     |                               |
-Q3WordAggregator                    Q4WordCounter                    Q5 pendiente
-    | RESULT / QUERY_END provisional
-    v
-result_sink.input -> ResultSink
+Q3WordAggregator                    Q4WordCounter                    Q5DateRouter
+    | RESULT / QUERY_END provisional       |                    |--------------------|
+    v                                      v                    v                    v
+result_sink.input                  Q4Top20Reducer          Q5StatsWorker       Q5Comparator
+                                           |                    |                    ^
+                                           v                    v                    |
+                                   result_sink.input       Q5AverageReducer --------|
+                                                                                |
+                                                                                v
+                                                                        result_sink.input
 ```
 
 `Q4Q5WordProjector` consume la salida tokenizada y publica las proyecciones
 específicas de Q4 y Q5. La rama Q4 continúa por un único `Q4WordCounter` y
-`Q4Top20Reducer` hasta `result_sink.input`. La proyección de Q5 se acumula en
-`q5_date_router.input` porque su consumidor todavía no está implementado.
+`Q4Top20Reducer` hasta `result_sink.input`. Q5DateRouter separa histórico y
+candidatos. Q5StatsWorker y Q5AverageReducer calculan el promedio histórico;
+Q5Comparator conserva en disco los candidatos que llegan antes del promedio y
+publica los resultados de Q5 en `result_sink.input`.
 
 ## Arquitectura objetivo
 
@@ -387,16 +394,43 @@ El mismo `Q4Q5WordProjector` publica en `q5_date_router.input` un
 Los artículos sin abstract se omiten; un abstract presente pero vacío se
 conserva con conteo cero, de acuerdo con la referencia serial.
 
-`Q5DateRouter` separa:
+`Q5DateRouter` está implementado con una réplica. Consume
+`Q5ArticleWordCountBatchMessage`, no publica batches vacíos y separa:
 
-- Artículos hasta 2020 para calcular suma y cantidad.
-- Artículos desde 2021 como candidatos.
+- Conteos de artículos hasta 2020 en `q5_stats_worker.input`, mediante
+  `Q5HistoricalWordCountBatchMessage`.
+- `article_id`, URL y conteo de artículos desde 2021 en
+  `q5_comparator.input`, mediante `Q5CandidateBatchMessage`.
 
-`Q5AverageReducer` calcula el promedio global.
+El mensaje de fin se reenvía siempre a ambas ramas. La implementación actual
+utiliza una sola réplica hasta incorporar el protocolo de control y barreras.
 
-`Q5Comparator` conserva temporalmente los candidatos hasta conocer el promedio y luego emite aquellos cuyo conteo sea estrictamente mayor.
+`Q5StatsWorker` acumula por ejecución la suma de los conteos históricos y la
+cantidad de abstracts. Al recibir el final publica `Q5PartialStatsMessage` y
+`Q5StatsPartitionEndMessage`. La versión funcional despliega la partición `0`.
 
-RabbitMQ se utiliza como transporte, no como almacenamiento de largo plazo para candidatos. El estado temporal pertenecerá a la aplicación mediante un `CandidateBuffer`.
+`Q5AverageReducer` suma los parciales y espera una barrera configurable de
+particiones. Actualmente espera una sola; luego calcula
+`total_word_count / abstract_count` y publica `Q5AverageMessage` en la misma
+cola donde el comparator recibe los candidatos.
+
+`Q5Comparator` acepta tanto candidatos antes del promedio como el orden
+inverso. Antes de conocerlo persiste cada candidato en un archivo JSONL
+append-only separado por `execution_id`; el nombre se deriva con SHA-256 para
+que datos de un mensaje no puedan formar una ruta. Los archivos residen en el
+volumen Docker `q5_candidate_buffer`. Después del promedio drena el archivo
+línea por línea, compara directamente los candidatos posteriores y emite solo
+aquellos cuyo conteo sea estrictamente mayor.
+
+Q5 finaliza únicamente después de conocer el promedio, recibir el cierre de la
+rama de candidatos y procesar el buffer. Entonces publica un único
+`QUERY_END` y elimina el archivo de esa ejecución. RabbitMQ se utiliza como
+transporte, no como almacenamiento prolongado de candidatos.
+
+El volumen limita el uso de memoria y conserva los archivos al recrear el
+container, pero todavía no implementa recuperación completa: el promedio, la
+señal de cierre y la idempotencia frente a publicaciones parciales pertenecen
+al hito de tolerancia a fallos.
 
 ### ResultSink
 
@@ -413,8 +447,8 @@ actuales deben emitir exactamente un final por consulta, después de sus resulta
 
 Gateway y Client comienzan la recepción de resultados después de finalizar la
 subida. Desde ese momento, los resultados se entregan incrementalmente sin
-esperar las demás consultas. Q5 sigue pendiente, por lo que el cliente
-continúa esperando sus cinco finales para terminar la ejecución completa.
+esperar las demás consultas. El cliente termina después de recibir los cinco
+finales.
 
 ## Mensajes de finalización
 
@@ -500,8 +534,18 @@ La implementación actual incluye:
 - `prefetch_count=1`.
 - Inicio y detención del consumo.
 - Cierre explícito de conexiones.
+- Heartbeats AMQP deshabilitados en las conexiones bloqueantes actuales.
 
 Los componentes de negocio no utilizan Pika directamente.
+
+Cada módulo de mensajería mantiene conexiones bloqueantes separadas para entrada
+y salida. Pika solo procesa heartbeats de una `BlockingConnection` cuando su
+loop recibe eventos; una conexión publicadora inactiva puede permanecer sin ese
+loop durante toda una agregación. En una prueba con 50.000 artículos RabbitMQ
+cerró esas conexiones después de 60 segundos y los agregadores no pudieron
+publicar al finalizar. Por eso la configuración actual utiliza `heartbeat=0`.
+La detección rápida de conexiones zombis, la reconexión y la idempotencia ante
+una publicación ambigua se resolverán en el hito de tolerancia a fallos.
 
 La interfaz `MessageMiddlewareExchange` ya está definida, pero todavía no tiene una implementación concreta sobre RabbitMQ. `MessageMiddlewareExchangeRabbitMQ` se basará en la utilizada en el TP de Coordinación y se adaptará al protocolo de este sistema. Cada réplica consumirá el control desde su propia cola exclusiva vinculada al exchange, de modo que una publicación llegue a todas las réplicas del grupo.
 
@@ -727,7 +771,8 @@ En otra terminal, ejecutar el cliente:
 docker compose --profile client run --build --rm client
 ```
 
-Actualmente el cliente enviará todos los artículos y luego quedará esperando resultados, ya que el DAG distribuido todavía no está implementado.
+El cliente envía todos los artículos, recibe resultados incrementalmente y
+termina después de los cinco `QUERY_END`.
 
 ### Prueba manual temporal
 
@@ -768,7 +813,7 @@ El cliente debe:
 - Confirmar cada resultado.
 - Finalizar después de recibir los cinco `QUERY_END`.
 
-El QueryRouter publica las proyecciones textuales en `word_extractor.input`, consumida por las ramas Q3, Q4 y Q5. `Until2020Filter` alimenta los filtros de Q1 y Q2. ResultSink reenvía los resultados de Q1-Q4 a `results.<execution_id>`; las proyecciones de Q5 permanecen en `q5_date_router.input` hasta implementar sus consumidores.
+El QueryRouter publica las proyecciones textuales en `word_extractor.input`, consumida por las ramas Q3, Q4 y Q5. `Until2020Filter` alimenta los filtros de Q1 y Q2. ResultSink reenvía los resultados de Q1-Q5 a `results.<execution_id>`.
 
 Detener el entorno:
 
@@ -782,6 +827,7 @@ make down
 |---|---|---:|---|
 | `SERVER_HOST` | Gateway | `0.0.0.0` | Dirección en la que escucha |
 | `SERVER_PORT` | Gateway/Client | `5000` | Puerto TCP |
+| `GATEWAY_HOST_PORT` | Docker Compose | `5001` | Puerto del host publicado hacia el puerto 5000 del Gateway; evita el puerto 5000 que macOS puede reservar para AirPlay |
 | `MOM_HOST` | Todos los componentes conectados a RabbitMQ | `localhost` | Host de RabbitMQ |
 | `INPUT_BATCHER_QUEUE_PREFIX` | Gateway/InputBatcher | `input_batcher.input` | Prefijo de las colas de entrada |
 | `INPUT_BATCHER_PARTITIONS` | Gateway | `1` | Cantidad de particiones de InputBatcher |
@@ -817,6 +863,18 @@ make down
 | `PARTITION_ID` | Q4WordCounter | `0` | Identificador de la única partición funcional |
 | `INPUT_QUEUE` | Q4Top20Reducer | `q4_top20_reducer.input` | Top local y final del counter |
 | `OUTPUT_QUEUE` | Q4Top20Reducer | `result_sink.input` | Resultados y final de Q4 |
+| `INPUT_QUEUE` | Q5DateRouter | `q5_date_router.input` | Artículos con conteo para Q5 |
+| `HISTORICAL_OUTPUT_QUEUE` | Q5DateRouter | `q5_stats_worker.input` | Conteos de artículos hasta 2020 |
+| `CANDIDATE_OUTPUT_QUEUE` | Q5DateRouter | `q5_comparator.input` | Candidatos desde 2021 |
+| `INPUT_QUEUE` | Q5StatsWorker | `q5_stats_worker.input` | Conteos históricos de Q5 |
+| `OUTPUT_QUEUE` | Q5StatsWorker | `q5_average_reducer.input` | Estadísticas parciales y final de partición |
+| `PARTITION_ID` | Q5StatsWorker | `0` | Identificador de la partición funcional |
+| `INPUT_QUEUE` | Q5AverageReducer | `q5_average_reducer.input` | Parciales históricos de Q5 |
+| `OUTPUT_QUEUE` | Q5AverageReducer | `q5_comparator.input` | Promedio global para el comparator |
+| `PARTITION_COUNT` | Q5AverageReducer | `1` | Cantidad de particiones de estadísticas esperadas |
+| `INPUT_QUEUE` | Q5Comparator | `q5_comparator.input` | Candidatos, final de candidatos y promedio |
+| `OUTPUT_QUEUE` | Q5Comparator | `result_sink.input` | Resultados y final de Q5 |
+| `Q5_BUFFER_DIRECTORY` | Q5Comparator | `/tmp/q5-candidates` | Directorio del buffer JSONL; Compose usa `/var/lib/q5-candidates` sobre un volumen |
 | `INPUT_FILE` | Client | `datasets/wikipedia_sample.parquet` | Dataset de entrada |
 | `OUTPUT_DIR` | Client | `output/distributed` | Directorio de resultados |
 | `LOG_LEVEL` | Todos los procesos | `INFO` | Nivel de logging |
@@ -837,10 +895,10 @@ RESULT_SINK_PARTITIONS
 IMAGE_FETCH_TIMEOUT
 IMAGE_FETCH_RETRIES
 IMAGE_FETCH_CONCURRENCY
-Q5_BUFFER_DIRECTORY
 ```
 
-Estas variables todavía no están implementadas.
+Estas variables todavía no están implementadas. `Q5_BUFFER_DIRECTORY`, que
+antes estaba previsto en esta lista, ya forma parte de la configuración actual.
 
 ## Invariantes principales
 
@@ -870,13 +928,11 @@ El desarrollo se divide en tres momentos distintos:
 ## Próximos pasos
 
 1. Incorporar barreras para productores replicados en ResultSink.
-2. Implementar las etapas posteriores de Q5 a partir de las proyecciones ya producidas por `Q4Q5WordProjector`.
-3. Ejecutar y comparar automáticamente Q1-Q5 con la referencia serial.
-4. Implementar los protocolos de `PARTITION_END` y barreras.
-5. Permitir clientes concurrentes y aislados en el Gateway.
-6. Completar graceful shutdown de todos los procesos.
-7. Completar la propagación de errores y los límites para entradas no confiables.
-8. Incorporar tolerancia a fallos, persistencia e idempotencia en el siguiente hito.
+2. Implementar los protocolos de `PARTITION_END` y barreras restantes.
+3. Permitir clientes concurrentes y aislados en el Gateway.
+4. Completar graceful shutdown de todos los procesos.
+5. Completar la propagación de errores y los límites para entradas no confiables.
+6. Incorporar recuperación, persistencia coordinada e idempotencia en el siguiente hito.
 
 ## Monitoreo
 

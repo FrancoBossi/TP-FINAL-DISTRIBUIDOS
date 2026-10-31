@@ -37,6 +37,8 @@ class _MessageMiddlewareRabbitMQBase:
             self._connection = pika.BlockingConnection(
                 pika.ConnectionParameters(
                     host=host,
+                    # BlockingConnection does not service heartbeats on idle publisher connections.
+                    heartbeat=0,
                     # Health checks do not guarantee every startup connection succeeds.
                     connection_attempts=10,
                     retry_delay=3,
