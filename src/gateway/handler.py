@@ -1,6 +1,8 @@
 import logging
 import socket
 from collections.abc import Callable
+from dataclasses import dataclass, field
+from functools import partial
 from uuid import uuid4
 
 from common.message_protocol.external import (
@@ -14,6 +16,7 @@ from common.message_protocol.message import (
     ArticleMessage,
     ErrorMessage,
     InputEndMessage,
+    Message,
     QueryEndMessage,
     ResultMessage,
     RoutedArticleMessage,
@@ -62,7 +65,11 @@ def forward_message(
         execution_id,
         routed.type,
     )
-    send_msg(client_socket, AckMessage())
+    try:
+        send_msg(client_socket, AckMessage())
+    except OSError:
+        if not input_finished:
+            raise
 
     if input_finished:
         logger.info(
@@ -94,12 +101,80 @@ def send_error_message(
         )
 
 
+@dataclass
+class ResultForwardingState:
+    discard: bool = False
+    completed: set[int] = field(default_factory=set)
+
+
+def validate_execution_result(
+    message: Message, execution_id: str, completed: set[int]
+) -> int:
+    if not isinstance(message, (ResultMessage, QueryEndMessage)):
+        raise ValueError("Expected RESULT or QUERY_END")
+    if message.execution_id != execution_id:
+        raise ValueError("Result belongs to a different execution")
+    return validate_result(message, completed)
+
+
+def deliver_result(
+    client_socket: socket.socket,
+    message: Message,
+    execution_id: str,
+    state: ResultForwardingState,
+) -> None:
+    if state.discard:
+        return
+    try:
+        send_msg(client_socket, message)
+        if not isinstance(recv_msg(client_socket), AckMessage):
+            raise ValueError("Expected ACK for result")
+    except (EOFError, OSError):
+        state.discard = True
+        logger.info("Execution %s: discarding remaining results", execution_id)
+
+
+def on_result(
+    message: Message,
+    ack: Acknowledgement,
+    nack: Acknowledgement,
+    *,
+    client_socket: socket.socket,
+    messaging: GatewayMessaging,
+    execution_id: str,
+    state: ResultForwardingState,
+) -> None:
+    try:
+        query_id = validate_execution_result(message, execution_id, state.completed)
+        deliver_result(client_socket, message, execution_id, state)
+    except Exception:
+        nack()
+        messaging.stop_consuming_results()
+        raise
+
+    ack()
+
+    if isinstance(message, QueryEndMessage):
+        state.completed.add(query_id)
+        logger.info(
+            "Execution %s: query %d complete (%d/5)",
+            execution_id,
+            query_id,
+            len(state.completed),
+        )
+
+    if state.completed == QUERY_IDS:
+        messaging.stop_consuming_results()
+
+
 def forward_results(
     client_socket: socket.socket,
     messaging: GatewayMessaging,
     execution_id: str,
+    *,
+    discard: bool = False,
 ) -> None:
-    completed: set[int] = set()
+    state = ResultForwardingState(discard=discard)
 
     logger.info(
         "Execution %s: waiting for results on queue %s",
@@ -107,45 +182,17 @@ def forward_results(
         messaging.result_queue_name,
     )
 
-    def on_result(
-        message,
-        ack: Acknowledgement,
-        nack: Acknowledgement,
-    ) -> None:
-        try:
-            if not isinstance(message, (ResultMessage, QueryEndMessage)):
-                raise ValueError("Expected RESULT or QUERY_END")
+    callback = partial(
+        on_result,
+        client_socket=client_socket,
+        messaging=messaging,
+        execution_id=execution_id,
+        state=state,
+    )
 
-            if message.execution_id != execution_id:
-                raise ValueError("Result belongs to a different execution")
+    messaging.start_consuming_results(callback)
 
-            query_id = validate_result(message, completed)
-            send_msg(client_socket, message)
-
-            if not isinstance(recv_msg(client_socket), AckMessage):
-                raise ValueError("Expected ACK for result")
-        except Exception:
-            nack()
-            messaging.stop_consuming_results()
-            raise
-
-        ack()
-
-        if isinstance(message, QueryEndMessage):
-            completed.add(query_id)
-            logger.info(
-                "Execution %s: query %d complete (%d/5)",
-                execution_id,
-                query_id,
-                len(completed),
-            )
-
-        if completed == QUERY_IDS:
-            messaging.stop_consuming_results()
-
-    messaging.start_consuming_results(on_result)
-
-    if completed != QUERY_IDS:
+    if state.completed != QUERY_IDS:
         raise EOFError("Results ended before all queries completed")
 
 
@@ -156,6 +203,7 @@ def handle_client(
     execution_id = uuid4().hex
     messaging = None
     published = 0
+    input_finished = False
 
     logger.info("Execution %s: starting upload", execution_id)
 
@@ -166,21 +214,28 @@ def handle_client(
             execution_id,
         )
 
-        input_finished = False
-
-        while not input_finished:
-            published, input_finished = forward_message(
-                client_socket,
-                messaging,
-                execution_id,
-                published,
+        discard = False
+        try:
+            while not input_finished:
+                published, input_finished = forward_message(
+                    client_socket,
+                    messaging,
+                    execution_id,
+                    published,
+                )
+        except (EOFError, OSError):
+            messaging.publish(
+                RoutedInputEndMessage(
+                    execution_id=execution_id,
+                    reply_queue=messaging.result_queue_name,
+                )
+            )
+            discard = True
+            logger.info(
+                "Execution %s: client disconnected; finishing input", execution_id
             )
 
-        forward_results(
-            client_socket,
-            messaging,
-            execution_id,
-        )
+        forward_results(client_socket, messaging, execution_id, discard=discard)
     except Exception as error:
         logger.exception(
             "Execution %s: failed after %d articles published",

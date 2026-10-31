@@ -168,6 +168,46 @@ class TestClientGateway(unittest.TestCase):
                     )
                     self.assertEqual(sent.article, article)
 
+    def test_disconnect_during_upload_ends_input_and_discards_results(self):
+        messaging = FakeMessaging()
+        with (
+            patch("gateway.handler.recv_msg", side_effect=EOFError("disconnected")),
+            patch("gateway.handler.send_msg") as send,
+        ):
+            handle_client(Mock(), lambda _: messaging)
+        self.assertEqual(len(messaging.published), 1)
+        self.assertIsInstance(messaging.published[0], RoutedInputEndMessage)
+        self.assertEqual(len(messaging.acks), 6)
+        self.assertEqual(messaging.nacks, [])
+        self.assertTrue(messaging.closed)
+        send.assert_not_called()
+
+    def test_disconnect_during_results_discards_remaining_results(self):
+        messaging = FakeMessaging()
+        with (
+            patch("gateway.handler.recv_msg", return_value=InputEndMessage()),
+            patch(
+                "gateway.handler.send_msg", side_effect=[None, BrokenPipeError]
+            ) as send,
+        ):
+            handle_client(Mock(), lambda _: messaging)
+        self.assertEqual(len(messaging.published), 1)
+        self.assertEqual(len(messaging.acks), 6)
+        self.assertEqual(messaging.nacks, [])
+        self.assertEqual(send.call_count, 2)
+        self.assertTrue(messaging.closed)
+
+    def test_disconnect_during_end_ack_does_not_duplicate_end(self):
+        messaging = FakeMessaging()
+        with (
+            patch("gateway.handler.recv_msg", return_value=InputEndMessage()),
+            patch("gateway.handler.send_msg", side_effect=BrokenPipeError),
+        ):
+            handle_client(Mock(), lambda _: messaging)
+        self.assertEqual(len(messaging.published), 1)
+        self.assertEqual(len(messaging.acks), 6)
+        self.assertTrue(messaging.closed)
+
     def test_client_rejects_wrong_upload_ack(self):
         with patch("client.client.recv_msg", return_value=InputEndMessage()):
             with self.assertRaisesRegex(ValueError, "ACK"):
@@ -208,18 +248,6 @@ class TestClientGateway(unittest.TestCase):
                     handle_client(Mock(), lambda _: messaging)
 
         messaging.publish.assert_not_called()
-
-    def test_gateway_closes_messaging_on_disconnect(self):
-        messaging = Mock()
-
-        with (
-            patch("gateway.handler.recv_msg", side_effect=EOFError("disconnected")),
-            patch("gateway.handler.send_msg", side_effect=BrokenPipeError),
-        ):
-            with self.assertRaises(EOFError):
-                handle_client(Mock(), lambda _: messaging)
-
-        messaging.close.assert_called_once()
 
 
 if __name__ == "__main__":
