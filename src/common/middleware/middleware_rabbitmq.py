@@ -9,6 +9,7 @@ from common.middleware.middleware import (
     MessageMiddlewareMessageError,
     MessageMiddlewarePublisher,
     MessageMiddlewareQueue,
+    MessageMiddlewareUnroutableError,
 )
 
 
@@ -20,6 +21,10 @@ def _pika_error_to_middleware_error(
 ):
     try:
         yield
+    except pika.exceptions.UnroutableError as error:
+        raise MessageMiddlewareUnroutableError(
+            f"Unroutable message during {operation} in RabbitMQ: {error}"
+        ) from error
     except pika.exceptions.AMQPConnectionError as error:
         raise connection_error(
             f"Error connecting to RabbitMQ during {operation}: {error}"

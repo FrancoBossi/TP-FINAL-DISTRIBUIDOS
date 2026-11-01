@@ -43,15 +43,15 @@ El sistema debe resolver las siguientes consultas:
 | Separación temporal de Q5 en Q5DateRouter | Implementado con una réplica |
 | Estadísticas, promedio y comparación de Q5 | Implementado con una partición y buffer JSONL en volumen Docker |
 | ResultSink | Implementado para ramas con una sola instancia |
-| Atención concurrente de varios clientes | Pendiente |
+| Atención concurrente de varios clientes | Implementada con una sesión por thread |
 | Graceful shutdown completo para procesos concurrentes | Pendiente |
 | Estrategia de tolerancia a fallos y persistencia | Pendiente |
 
-### Limitación actual de clientes
+### Concurrencia actual de clientes
 
-El Gateway actualmente atiende una única conexión por vez. Una ejecución debe finalizar antes de que el servidor comience a atender al siguiente cliente.
+El Gateway acepta conexiones concurrentes y ejecuta cada sesión en un thread independiente. Cada sesión crea su propio `execution_id`, sus conexiones al middleware y una cola exclusiva `results.<execution_id>`, por lo que el upload o la espera de resultados de un cliente no bloquean la aceptación de otro.
 
-La arquitectura objetivo requiere ejecuciones aisladas y concurrentes entre varios clientes. Para alcanzarla, el servidor deberá ejecutar cada sesión en un thread o proceso independiente, mantener separados sus recursos y realizar el cierre ordenado de sockets y tareas activas.
+Si un cliente se desconecta durante el upload, Gateway publica `INPUT_END` para que el pipeline cierre la ejecución parcial y luego termina la sesión sin esperar resultados. Al cerrar su conexión se elimina la cola exclusiva. Los resultados tardíos se descartan de forma explícita en ResultSink porque su destino ya no existe. Si Q5 no recibió abstracts históricos, representa el promedio inexistente con `null`, no produce candidatos y emite igualmente su `QUERY_END`.
 
 ### Estado actual de Query 2
 
@@ -212,7 +212,7 @@ Todos los mensajes internos de una ejecución incluyen este identificador. Esto 
 
 El Gateway:
 
-- Acepta una ejecución del cliente.
+- Acepta conexiones concurrentes y crea una sesión independiente por cliente.
 - Genera un `execution_id`.
 - Recibe artículos como stream.
 - Adjunta el identificador de ejecución.
@@ -440,6 +440,10 @@ final de una consulta. También reenvía los `QueryEndMessage` producidos por la
 ramas actuales (una instancia por rama). La publicación usa confirmaciones de
 RabbitMQ y enrutamiento obligatorio antes de confirmar el mensaje de entrada.
 No declara las colas de respuesta: son exclusivas y pertenecen al Gateway.
+Si una sesión ya cerró y la cola fue eliminada, RabbitMQ informa que la
+publicación obligatoria no tiene destino. ResultSink registra el descarte y
+confirma el mensaje de entrada para que una ejecución abandonada no bloquee las
+demás.
 
 Esta versión utiliza una sola instancia de ResultSink. Las barreras para ramas
 replicadas y la deduplicación persistente quedan pendientes; los productores
@@ -567,7 +571,7 @@ Cliente responde ACK
 Gateway ejecuta ACK en RabbitMQ
 ```
 
-Si el resultado es inválido o el cliente no confirma la recepción, el Gateway ejecuta NACK y detiene el consumo de esa sesión.
+Si el resultado es inválido, Gateway ejecuta NACK y detiene el consumo de esa sesión. Si el cliente se desconecta durante la fase de resultados, Gateway deja de enviarlos por TCP pero continúa drenando y confirmando esa cola hasta recibir los cinco finales, tras lo cual libera sus recursos.
 
 ## Durabilidad actual
 
@@ -929,10 +933,9 @@ El desarrollo se divide en tres momentos distintos:
 
 1. Incorporar barreras para productores replicados en ResultSink.
 2. Implementar los protocolos de `PARTITION_END` y barreras restantes.
-3. Permitir clientes concurrentes y aislados en el Gateway.
-4. Completar graceful shutdown de todos los procesos.
-5. Completar la propagación de errores y los límites para entradas no confiables.
-6. Incorporar recuperación, persistencia coordinada e idempotencia en el siguiente hito.
+3. Completar graceful shutdown de todos los procesos.
+4. Completar la propagación de errores y los límites para entradas no confiables.
+5. Incorporar recuperación, persistencia coordinada e idempotencia en el siguiente hito.
 
 ## Monitoreo
 
@@ -987,11 +990,10 @@ correspondientes:
 - Relacionar los cambios de carga con el tamaño de las colas para detectar el
   componente que actúa como cuello de botella.
 
-Este guion describe la demo objetivo, no el estado funcional actual. En
-particular, la concurrencia de clientes, la recuperación ante la caída de uno de
-ellos y el manejo completo de recursos temporales continúan pendientes. Las
-pruebas concretas, la carga utilizada y el comportamiento esperado de cada caída
-se definirán cuando el pipeline y esas capacidades estén implementados.
+La concurrencia de clientes y la desconexión durante el upload ya están
+implementadas. Todavía deben ensayarse con la carga definitiva de la demo y
+completarse el graceful shutdown general, las barreras para múltiples réplicas y
+la recuperación ante la caída de procesos internos.
 
 cAdvisor accede al daemon de Docker mediante el socket
 `/var/run/docker.sock`, montado dentro del contenedor, y al runtime containerd

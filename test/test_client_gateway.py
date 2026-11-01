@@ -168,17 +168,19 @@ class TestClientGateway(unittest.TestCase):
                     )
                     self.assertEqual(sent.article, article)
 
-    def test_disconnect_during_upload_ends_input_and_discards_results(self):
+    def test_disconnect_during_upload_ends_input_without_waiting_for_results(self):
         messaging = FakeMessaging()
         with (
             patch("gateway.handler.recv_msg", side_effect=EOFError("disconnected")),
             patch("gateway.handler.send_msg") as send,
         ):
             handle_client(Mock(), lambda _: messaging)
+
         self.assertEqual(len(messaging.published), 1)
         self.assertIsInstance(messaging.published[0], RoutedInputEndMessage)
-        self.assertEqual(len(messaging.acks), 6)
+        self.assertEqual(messaging.acks, [])
         self.assertEqual(messaging.nacks, [])
+        self.assertFalse(messaging.consumption_stopped)
         self.assertTrue(messaging.closed)
         send.assert_not_called()
 

@@ -16,6 +16,7 @@ from q5.comparator.messaging import Ack, Nack, Q5ComparatorMessaging
 
 @dataclass
 class ExecutionState:
+    average_received: bool = False
     average_word_count: float | None = None
     candidate_input_ended: bool = False
 
@@ -48,12 +49,12 @@ class Q5ComparatorController:
         if isinstance(message, Q5CandidateBatchMessage):
             state = self._state_for(message.execution_id)
 
-            if state.average_word_count is None:
+            if not state.average_received:
                 self._candidate_buffer.append(
                     message.execution_id,
                     message.articles,
                 )
-            else:
+            elif state.average_word_count is not None:
                 self._publish_matches(
                     message.execution_id,
                     message.articles,
@@ -69,13 +70,16 @@ class Q5ComparatorController:
 
         if isinstance(message, Q5AverageMessage):
             state = self._state_for(message.execution_id)
+            state.average_received = True
             state.average_word_count = message.average_word_count
 
-            self._publish_matches(
-                message.execution_id,
-                self._candidate_buffer.iterate(message.execution_id),
-                message.average_word_count,
-            )
+            if message.average_word_count is not None:
+                self._publish_matches(
+                    message.execution_id,
+                    self._candidate_buffer.iterate(message.execution_id),
+                    message.average_word_count,
+                )
+
             self._candidate_buffer.clear(message.execution_id)
             self._try_finish(message.execution_id)
             return
@@ -114,7 +118,7 @@ class Q5ComparatorController:
     def _try_finish(self, execution_id: str) -> None:
         state = self._executions[execution_id]
 
-        if state.average_word_count is None or not state.candidate_input_ended:
+        if not state.average_received or not state.candidate_input_ended:
             return
 
         self._messaging.publish(

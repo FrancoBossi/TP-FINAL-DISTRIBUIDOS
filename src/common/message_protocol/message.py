@@ -208,7 +208,7 @@ class Q5StatsPartitionEndMessage(Message):
 class Q5AverageMessage(Message):
     """Global historical word-count average for one execution."""
 
-    average_word_count: float
+    average_word_count: float | None
     execution_id: str
     reply_queue: str
     type: ClassVar[MessageType] = MessageType.Q5_AVERAGE

@@ -62,6 +62,41 @@ class TestQ5AverageReducerController(unittest.TestCase):
         nack.assert_not_called()
         self.assertNotIn("execution-123", controller._executions)
 
+    def test_publishes_missing_average_without_historical_abstracts(self):
+        messaging = Mock()
+        controller = Q5AverageReducerController(
+            messaging=messaging,
+            partition_count=1,
+        )
+        ack = Mock()
+        nack = Mock()
+
+        partial = Q5PartialStatsMessage(
+            total_word_count=0,
+            abstract_count=0,
+            execution_id="execution-empty",
+            reply_queue="results.execution-empty",
+        )
+        end = Q5StatsPartitionEndMessage(
+            partition_id=0,
+            execution_id="execution-empty",
+            reply_queue="results.execution-empty",
+        )
+
+        controller.process_message(partial, ack, nack)
+        controller.process_message(end, ack, nack)
+
+        messaging.publish.assert_called_once_with(
+            Q5AverageMessage(
+                average_word_count=None,
+                execution_id="execution-empty",
+                reply_queue="results.execution-empty",
+            )
+        )
+        self.assertEqual(ack.call_count, 2)
+        nack.assert_not_called()
+        self.assertNotIn("execution-empty", controller._executions)
+
     def test_rejects_partition_outside_configured_range(self):
         messaging = Mock()
         controller = Q5AverageReducerController(

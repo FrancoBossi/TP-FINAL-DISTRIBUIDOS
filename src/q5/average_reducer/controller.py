@@ -70,14 +70,13 @@ class Q5AverageReducerController:
             if len(state.ended_partitions) != self._partition_count:
                 return
 
-            if state.abstract_count == 0:
-                raise ValueError(
-                    "Cannot calculate Q5 average without historical abstracts"
-                )
+            average_word_count = None
+            if state.abstract_count > 0:
+                average_word_count = state.total_word_count / state.abstract_count
 
             self._messaging.publish(
                 Q5AverageMessage(
-                    average_word_count=(state.total_word_count / state.abstract_count),
+                    average_word_count=average_word_count,
                     execution_id=message.execution_id,
                     reply_queue=message.reply_queue,
                 )
