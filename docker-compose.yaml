@@ -23,7 +23,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_BATCHER_QUEUE_PREFIX: ${INPUT_BATCHER_QUEUE_PREFIX:-input_batcher.input}
-      INPUT_BATCHER_PARTITIONS: "${INPUT_BATCHER_PARTITIONS:-1}"
+      INPUT_BATCHER_PARTITIONS: "${INPUT_BATCHER_PARTITIONS:-3}"
     ports:
       - "${GATEWAY_HOST_PORT:-5001}:5000"
     depends_on:
@@ -45,7 +45,37 @@ services:
       rabbitmq:
         condition: service_healthy
 
-  preprocessor:
+  input-batcher-1:
+    build:
+      context: .
+      dockerfile: src/input_batcher/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_BATCHER_QUEUE_PREFIX: ${INPUT_BATCHER_QUEUE_PREFIX:-input_batcher.input}
+      INPUT_BATCHER_PARTITION_ID: "1"
+      OUTPUT_QUEUE: preprocessor.input
+      MAX_BATCH_BYTES: "${MAX_BATCH_BYTES:-1048576}"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  input-batcher-2:
+    build:
+      context: .
+      dockerfile: src/input_batcher/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_BATCHER_QUEUE_PREFIX: ${INPUT_BATCHER_QUEUE_PREFIX:-input_batcher.input}
+      INPUT_BATCHER_PARTITION_ID: "2"
+      OUTPUT_QUEUE: preprocessor.input
+      MAX_BATCH_BYTES: "${MAX_BATCH_BYTES:-1048576}"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  preprocessor-0:
     build:
       context: .
       dockerfile: src/preprocessor/Dockerfile
@@ -54,11 +84,43 @@ services:
       MOM_HOST: rabbitmq
       INPUT_QUEUE: preprocessor.input
       OUTPUT_QUEUE: query_router.input
+      CONTROL_EXCHANGE: preprocessor.control
+      PARTITION_ID: "0"
     depends_on:
       rabbitmq:
         condition: service_healthy
 
-  query-router:
+  preprocessor-1:
+    build:
+      context: .
+      dockerfile: src/preprocessor/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: preprocessor.input
+      OUTPUT_QUEUE: query_router.input
+      CONTROL_EXCHANGE: preprocessor.control
+      PARTITION_ID: "1"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  preprocessor-2:
+    build:
+      context: .
+      dockerfile: src/preprocessor/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: preprocessor.input
+      OUTPUT_QUEUE: query_router.input
+      CONTROL_EXCHANGE: preprocessor.control
+      PARTITION_ID: "2"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  query-router-0:
     build:
       context: .
       dockerfile: src/query_router/Dockerfile
@@ -68,6 +130,43 @@ services:
       INPUT_QUEUE: query_router.input
       Q1_Q2_OUTPUT_QUEUE: until_2020.input
       TEXT_OUTPUT_QUEUE: word_extractor.input
+      CONTROL_EXCHANGE: query_router.control
+      PARTITION_ID: "0"
+      PREPROCESSOR_PARTITION_COUNT: "3"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  query-router-1:
+    build:
+      context: .
+      dockerfile: src/query_router/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: query_router.input
+      Q1_Q2_OUTPUT_QUEUE: until_2020.input
+      TEXT_OUTPUT_QUEUE: word_extractor.input
+      CONTROL_EXCHANGE: query_router.control
+      PARTITION_ID: "1"
+      PREPROCESSOR_PARTITION_COUNT: "3"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  query-router-2:
+    build:
+      context: .
+      dockerfile: src/query_router/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: query_router.input
+      Q1_Q2_OUTPUT_QUEUE: until_2020.input
+      TEXT_OUTPUT_QUEUE: word_extractor.input
+      CONTROL_EXCHANGE: query_router.control
+      PARTITION_ID: "2"
+      PREPROCESSOR_PARTITION_COUNT: "3"
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -108,6 +207,7 @@ services:
       INPUT_QUEUE: word_extractor.input
       Q3_OUTPUT_QUEUE: q3_word_projector.input
       Q4_Q5_OUTPUT_QUEUE: q4_q5_word_projector.input
+      QUERY_ROUTER_PARTITION_COUNT: "3"
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -221,6 +321,7 @@ services:
       INPUT_QUEUE: until_2020.input
       Q1_OUTPUT_QUEUE: q1_english_filter.input
       Q2_OUTPUT_QUEUE: q2_biography_filter.input
+      QUERY_ROUTER_PARTITION_COUNT: "3"
     depends_on:
       rabbitmq:
         condition: service_healthy

@@ -60,6 +60,7 @@ def main() -> int:
     )
     controller = WordExtractorController(
         messaging=messaging,
+        query_router_partition_count=config.query_router_partition_count,
     )
 
     signal.signal(
@@ -68,8 +69,10 @@ def main() -> int:
     )
 
     logger.info(
-        "WordExtractor consuming from %s and publishing to %s and %s",
+        "WordExtractor consuming from %s, awaiting %s QueryRouter "
+        "partitions and publishing to %s and %s",
         config.input_queue,
+        config.query_router_partition_count,
         config.q3_output_queue,
         config.q4_q5_output_queue,
     )

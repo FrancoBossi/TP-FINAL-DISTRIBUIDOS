@@ -33,3 +33,6 @@ class Until2020FilterConfig:
             "q2_biography_filter.input",
         )
     )
+    query_router_partition_count: int = field(
+        default_factory=lambda: int(os.environ.get("QUERY_ROUTER_PARTITION_COUNT", "1"))
+    )

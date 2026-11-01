@@ -234,6 +234,17 @@ class RoutedInputEndMessage(InputEndMessage):
 
 
 @dataclass(frozen=True)
+class PartitionEndMessage(Message):
+    """End marker emitted by one replica of a pipeline stage."""
+
+    stage: str
+    partition_id: int
+    execution_id: str
+    reply_queue: str
+    type: ClassVar[MessageType] = MessageType.PARTITION_END
+
+
+@dataclass(frozen=True)
 class AckMessage(Message):
     type: ClassVar[MessageType] = MessageType.ACK
 
@@ -284,6 +295,7 @@ MESSAGE_CLASSES: dict[MessageType, type[Message]] = {
     MessageType.Q5_PARTIAL_STATS: Q5PartialStatsMessage,
     MessageType.Q5_STATS_PARTITION_END: Q5StatsPartitionEndMessage,
     MessageType.Q5_AVERAGE: Q5AverageMessage,
+    MessageType.PARTITION_END: PartitionEndMessage,
 }
 
 ROUTED_CLASSES: dict[MessageType, type[Message]] = {

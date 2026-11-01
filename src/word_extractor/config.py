@@ -33,3 +33,6 @@ class WordExtractorConfig:
             "q4_q5_word_projector.input",
         )
     )
+    query_router_partition_count: int = field(
+        default_factory=lambda: int(os.environ.get("QUERY_ROUTER_PARTITION_COUNT", "1"))
+    )

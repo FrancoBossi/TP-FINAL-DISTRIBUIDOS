@@ -27,3 +27,12 @@ class PreprocessorConfig:
             "query_router.input",
         )
     )
+    control_exchange: str = field(
+        default_factory=lambda: os.environ.get(
+            "CONTROL_EXCHANGE",
+            "preprocessor.control",
+        )
+    )
+    partition_id: int = field(
+        default_factory=lambda: int(os.environ.get("PARTITION_ID", "0"))
+    )

@@ -29,7 +29,7 @@ El sistema debe resolver las siguientes consultas:
 | Particionado estable Gateway → InputBatcher | Implementado |
 | Middleware común sobre RabbitMQ | Implementado |
 | Cola temporal de resultados por ejecución | Implementado |
-| InputBatcher con batches limitados por bytes | Implementado |
+| InputBatcher con batches limitados por bytes | Implementado con tres particiones |
 | Validación y normalización de artículos en Preprocessor | Implementado |
 | Fan-out y proyecciones mínimas en QueryRouter | Implementado |
 | Filtro temporal compartido de Q1 y Q2 | Implementado con una réplica |
@@ -245,9 +245,9 @@ Cuando llega un artículo:
 4. Al recibir `INPUT_END`, publica el último batch parcial.
 5. Después publica el mensaje de fin en la misma cola de salida que los batches.
 
-La primera implementación utiliza una única réplica de la etapa siguiente. De esta manera, los batches y el mensaje de fin se consumen en el mismo orden en que fueron publicados. No se habilitarán múltiples réplicas consumidoras hasta implementar el protocolo de control y las barreras descritos en la sección de mensajes de finalización.
+InputBatcher se escala mediante particiones: todos los mensajes de una ejecución se asignan a una única cola `input_batcher.input.<partition>`, con un consumidor activo por partición lógica. Compose despliega actualmente las particiones `0`, `1` y `2`, y Gateway utiliza SHA-256 sobre `execution_id` para elegir una de ellas. Así, distintas ejecuciones pueden construir sus batches en paralelo sin repartir el estado incompleto de una misma ejecución entre procesos.
 
-InputBatcher se escala mediante particiones: todos los mensajes de una ejecución se asignan a una única cola `input_batcher.input.<partition>`, con un consumidor activo por partición lógica. No se deben colocar consumidores competidores sobre una misma partición porque dividirían entre procesos el batch pendiente de una ejecución.
+No se deben colocar consumidores competidores sobre una misma partición porque dividirían entre procesos el batch pendiente de una ejecución. Las tres particiones publican en la cola compartida `preprocessor.input`. El final de cada ejecución proviene de una sola partición y el protocolo de control de Preprocessor lo difunde después a sus tres réplicas.
 
 #### Límites y entradas sobredimensionadas
 
@@ -266,9 +266,9 @@ El Preprocessor es una etapa sin estado encargada de:
 - Preparar la representación básica del abstract.
 - Construir un artículo normalizado para las siguientes etapas.
 
-Recibe `ArticleBatchMessage`, publica `NormalizedArticleBatchMessage` y reenvía el mensaje de fin después de los batches anteriores. No aplica reglas específicas de ninguna query.
+Recibe `ArticleBatchMessage`, publica `NormalizedArticleBatchMessage` y no aplica reglas específicas de ninguna query.
 
-La implementación actual utiliza una sola réplica. La normalización de cada batch es independiente y permite escalar horizontalmente la etapa, pero antes de habilitar consumidores competidores se debe implementar una barrera que impida publicar el fin mientras otra réplica todavía procesa un batch.
+La implementación actual despliega tres réplicas como consumidores competidores de `preprocessor.input`. La réplica que recibe `INPUT_END` lo difunde mediante `preprocessor.control`; cada instancia pausa ordenadamente su consumidor, termina el batch en vuelo y publica un `PARTITION_END` con su identificador. La pausa es temporal: después de serializar el control con su salida, la réplica continúa atendiendo otras ejecuciones.
 
 ### QueryRouter
 
@@ -285,7 +285,7 @@ Publica solamente los campos requeridos por cada rama y no realiza filtros propi
 
 `word_extractor.input` recibe `TextArticleBatchMessage`. Cada artículo contiene `article_id`, `url`, `language`, `modification_date` y `abstract`. Mientras el dataset no provea un identificador independiente, `article_id` utiliza la URL como identidad estable.
 
-El mensaje de fin se publica en ambas salidas después de los batches anteriores. La implementación actual utiliza una sola réplica hasta incorporar el protocolo de control y las barreras.
+La implementación despliega tres QueryRouters como consumidores competidores. La instancia que recibe un `PARTITION_END` de Preprocessor lo difunde mediante `query_router.control`; cada réplica mantiene por `execution_id` el conjunto de Preprocessors finalizados. Después de completar `{0, 1, 2}`, cada QueryRouter publica su propio `PARTITION_END(stage="query_router")` en ambas ramas. Until2020Filter y WordExtractor mantienen barreras independientes y convierten los tres finales en un único `RoutedInputEndMessage` para sus respectivas salidas.
 
 El fan-out tiene semántica at-least-once. El mensaje de entrada se confirma solamente después de publicar ambas salidas. Si la primera publicación funciona y la segunda falla, se rechaza la entrada y una reentrega puede duplicar el mensaje en la primera rama. La idempotencia de las etapas posteriores queda pendiente para el hito de tolerancia a fallos.
 
@@ -465,7 +465,7 @@ Los finales tienen significados diferentes:
 
 `INPUT_END` no significa que las consultas hayan terminado.
 
-En la primera ejecución de punta a punta habrá una sola réplica por etapa. El último batch y el mensaje de fin viajarán por la misma cola, por lo que el consumidor único procesará primero todos los batches y luego el final.
+La primera versión de punta a punta utilizó una sola réplica por etapa. El último batch y el mensaje de fin viajaban por la misma cola, por lo que el consumidor único procesaba primero todos los batches y luego el final.
 
 Antes de habilitar consumidores competidores en una etapa se implementará el siguiente protocolo, basado en el patrón utilizado en el TP de Coordinación:
 
@@ -474,9 +474,9 @@ Antes de habilitar consumidores competidores en una etapa se implementará el si
 3. Cada réplica recibe una copia del control, termina cualquier mensaje que tenga en procesamiento y publica exactamente un `PARTITION_END`.
 4. La etapa siguiente mantiene una barrera por `execution_id` y espera un `PARTITION_END` de cada partición o réplica configurada antes de considerar completa la entrada.
 
-El `prefetch_count=1` limita a uno los mensajes en vuelo por réplica cuando se recibe el control. El estado compartido entre el consumidor de datos y el consumidor de control deberá protegerse con sincronización.
+El `prefetch_count=1` limita a uno los mensajes en vuelo por réplica cuando se recibe el control. En Preprocessor, el hilo de control coloca el final en una cola local segura y pausa el consumidor; el hilo principal publica luego `PARTITION_END` por la misma conexión que los datos y reanuda el consumo. Esto conserva el orden por réplica y permite procesar varias ejecuciones.
 
-No se debe asumir orden entre una cola de datos y una cola o exchange de control diferentes. Por eso el primer mensaje de fin atraviesa la misma cola que los datos antes de ser difundido. `MessageMiddlewareExchangeRabbitMQ` ya implementa el exchange `direct`, las colas exclusivas por consumidor y el modo publicador sin cola. Queda pendiente integrarlo en los grupos, identificar las particiones y conocer la cantidad esperada de finales para completar cada barrera.
+No se debe asumir orden entre una cola de datos y una cola o exchange de control diferentes. Por eso el primer mensaje de fin atraviesa la misma cola que los datos antes de ser difundido. `MessageMiddlewareExchangeRabbitMQ` implementa el exchange `direct`, las colas exclusivas por consumidor y el modo publicador sin cola. El patrón ya está integrado en los grupos de tres Preprocessors y tres QueryRouters; Until2020Filter y WordExtractor completan las barreras posteriores. Queda extenderlo a los demás grupos replicables.
 
 ## Comunicación
 
@@ -835,18 +835,24 @@ make down
 | `GATEWAY_HOST_PORT` | Docker Compose | `5001` | Puerto del host publicado hacia el puerto 5000 del Gateway; evita el puerto 5000 que macOS puede reservar para AirPlay |
 | `MOM_HOST` | Todos los componentes conectados a RabbitMQ | `localhost` | Host de RabbitMQ |
 | `INPUT_BATCHER_QUEUE_PREFIX` | Gateway/InputBatcher | `input_batcher.input` | Prefijo de las colas de entrada |
-| `INPUT_BATCHER_PARTITIONS` | Gateway | `1` | Cantidad de particiones de InputBatcher |
+| `INPUT_BATCHER_PARTITIONS` | Gateway | `1` en Python; `3` en Compose | Cantidad de particiones de InputBatcher; debe coincidir con las instancias declaradas |
 | `INPUT_BATCHER_PARTITION_ID` | InputBatcher | `0` | Partición consumida por la instancia |
 | `OUTPUT_QUEUE` | InputBatcher | `preprocessor.input` | Cola de salida hacia Preprocessor |
 | `MAX_BATCH_BYTES` | InputBatcher | `1048576` | Tamaño serializado máximo de cada batch |
 | `INPUT_QUEUE` | Preprocessor | `preprocessor.input` | Cola de batches crudos |
 | `OUTPUT_QUEUE` | Preprocessor | `query_router.input` | Cola de batches normalizados |
+| `CONTROL_EXCHANGE` | Preprocessor | `preprocessor.control` | Exchange que difunde el final a todas las réplicas |
+| `PARTITION_ID` | Preprocessor | `0` | Identificador de la réplica dentro de la barrera |
 | `INPUT_QUEUE` | QueryRouter | `query_router.input` | Cola de batches normalizados |
 | `Q1_Q2_OUTPUT_QUEUE` | QueryRouter | `until_2020.input` | Cola de la rama Q1/Q2 |
 | `TEXT_OUTPUT_QUEUE` | QueryRouter | `word_extractor.input` | Cola de la rama Q3/Q4/Q5 |
+| `CONTROL_EXCHANGE` | QueryRouter | `query_router.control` | Exchange que difunde los finales de Preprocessor al grupo |
+| `PARTITION_ID` | QueryRouter | `0` | Identificador de la réplica dentro de la barrera posterior |
+| `PREPROCESSOR_PARTITION_COUNT` | QueryRouter | `1` | Cantidad de finales distintos de Preprocessor esperados; Compose configura `3` |
 | `INPUT_QUEUE` | Until2020Filter | `until_2020.input` | Cola compartida de Q1 y Q2 |
 | `Q1_OUTPUT_QUEUE` | Until2020Filter | `q1_english_filter.input` | Cola de candidatos para Q1 |
 | `Q2_OUTPUT_QUEUE` | Until2020Filter | `q2_biography_filter.input` | Cola de candidatos para Q2 |
+| `QUERY_ROUTER_PARTITION_COUNT` | Until2020Filter/WordExtractor | `1` | Cantidad de finales distintos de QueryRouter esperados; Compose configura `3` |
 | `INPUT_QUEUE` | Q1 | `q1_english_filter.input` | Cola de candidatos de Q1 |
 | `OUTPUT_QUEUE` | Q1 | `result_sink.input` | Cola de resultados y final provisional de Q1 |
 | `INPUT_QUEUE` | Q2BiographyFilter | `q2_biography_filter.input` | Cola de candidatos de Q2 |
@@ -937,6 +943,8 @@ El desarrollo se divide en tres momentos distintos:
 3. Completar graceful shutdown de todos los procesos.
 4. Completar la propagación de errores y los límites para entradas no confiables.
 5. Incorporar recuperación, persistencia coordinada e idempotencia en el siguiente hito.
+
+Para la demo de escalabilidad se parte de tres instancias en los grupos ya coordinados y de tres particiones de InputBatcher. Se comparan configuraciones de una, tres y, cuando las métricas lo justifiquen, hasta cinco réplicas. La cantidad no se replica mecánicamente entre componentes: las etapas stateless usan consumidores competidores, las stateful requieren particiones y routing estable, y los reducers se distribuyen por ejecución. CPU, consumidores y profundidad de colas se utilizan para justificar dónde aumentar la cantidad.
 
 ## Monitoreo
 

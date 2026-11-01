@@ -4,6 +4,7 @@ from unittest.mock import Mock
 from common.message_protocol.message import (
     ArticleBatchMessage,
     NormalizedArticleBatchMessage,
+    PartitionEndMessage,
     RoutedArticleMessage,
     RoutedInputEndMessage,
 )
@@ -18,6 +19,7 @@ class TestPreprocessorController(unittest.TestCase):
 
         self.controller = PreprocessorController(
             messaging=self.messaging,
+            partition_id=1,
         )
 
         self.batch = ArticleBatchMessage(
@@ -68,16 +70,28 @@ class TestPreprocessorController(unittest.TestCase):
         self.ack.assert_called_once()
         self.nack.assert_not_called()
 
-    def test_forwards_input_end(self):
+    def test_broadcasts_input_end_through_control_exchange(self):
         self.controller.process_message(
             self.input_end,
             self.ack,
             self.nack,
         )
 
-        self.messaging.publish.assert_called_once_with(self.input_end)
+        self.messaging.broadcast_control.assert_called_once_with(self.input_end)
+        self.messaging.publish.assert_not_called()
         self.ack.assert_called_once()
         self.nack.assert_not_called()
+
+    def test_publishes_partition_end_after_receiving_control_end(self):
+        self.controller.process_control_message(self.input_end)
+
+        expected = PartitionEndMessage(
+            stage="preprocessor",
+            partition_id=1,
+            execution_id="execution-123",
+            reply_queue="results.execution-123",
+        )
+        self.messaging.publish.assert_called_once_with(expected)
 
     def test_nacks_and_propagates_publication_error(self):
         error = RuntimeError("middleware unavailable")

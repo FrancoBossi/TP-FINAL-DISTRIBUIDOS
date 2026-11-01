@@ -10,6 +10,7 @@ from common.message_protocol.message import (
     InputEndMessage,
     Message,
     NormalizedArticleBatchMessage,
+    PartitionEndMessage,
     Q1CandidateBatchMessage,
     Q1Q2ArticleBatchMessage,
     Q2CandidateBatchMessage,
@@ -156,6 +157,12 @@ class TestMessage(unittest.TestCase):
             ),
             InputEndMessage(),
             RoutedInputEndMessage(
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
+            PartitionEndMessage(
+                stage="preprocessor",
+                partition_id=0,
                 execution_id=execution_id,
                 reply_queue=f"results.{execution_id}",
             ),

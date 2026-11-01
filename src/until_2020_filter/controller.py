@@ -1,5 +1,6 @@
 from common.message_protocol.message import (
     Message,
+    PartitionEndMessage,
     Q1Q2ArticleBatchMessage,
     RoutedInputEndMessage,
 )
@@ -15,8 +16,47 @@ class Until2020FilterController:
     def __init__(
         self,
         messaging: Until2020FilterMessaging,
+        query_router_partition_count: int,
     ) -> None:
+        if query_router_partition_count <= 0:
+            raise ValueError("QueryRouter partition count must be positive")
+
         self._messaging = messaging
+        self._query_router_partition_count = query_router_partition_count
+        self._finished_query_router_partitions: dict[str, set[int]] = {}
+
+    def _process_partition_end(
+        self,
+        message: PartitionEndMessage,
+    ) -> None:
+        if message.stage != "query_router":
+            raise ValueError(
+                f"Until2020Filter expected query_router partition end, "
+                f"got {message.stage}"
+            )
+
+        if not 0 <= message.partition_id < self._query_router_partition_count:
+            raise ValueError(
+                f"Invalid QueryRouter partition id: {message.partition_id}"
+            )
+
+        finished_partitions = self._finished_query_router_partitions.setdefault(
+            message.execution_id,
+            set(),
+        )
+        finished_partitions.add(message.partition_id)
+
+        if len(finished_partitions) < self._query_router_partition_count:
+            return
+
+        input_end = RoutedInputEndMessage(
+            execution_id=message.execution_id,
+            reply_queue=message.reply_queue,
+        )
+
+        self._messaging.publish_q1(input_end)
+        self._messaging.publish_q2(input_end)
+        self._finished_query_router_partitions.pop(message.execution_id)
 
     def process_message(
         self,
@@ -35,14 +75,12 @@ class Until2020FilterController:
                     if q2_batch.articles:
                         self._messaging.publish_q2(q2_batch)
 
-                case RoutedInputEndMessage():
-                    self._messaging.publish_q1(message)
-                    self._messaging.publish_q2(message)
+                case PartitionEndMessage():
+                    self._process_partition_end(message)
 
                 case _:
                     raise ValueError(
-                        "Until2020Filter expected "
-                        "Q1_Q2_ARTICLE_BATCH or ROUTED_INPUT_END"
+                        "Until2020Filter expected Q1_Q2_ARTICLE_BATCH or PARTITION_END"
                     )
         except Exception:
             nack()
