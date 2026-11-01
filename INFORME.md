@@ -422,15 +422,15 @@ Antes del promedio persiste candidatos; después del promedio compara directamen
 
 ## 11. ResultSink y entrega al cliente
 
-La implementación actual de ResultSink consume `result_sink.input` y reenvía cada `ResultMessage` o `QueryEndMessage` a `results.<execution_id>`. No acumula resultados ni espera que termine una consulta. Publica mediante el exchange por defecto de RabbitMQ con enrutamiento obligatorio y publisher confirms; recién después de confirmar esa publicación ejecuta el ACK del mensaje de entrada.
+La implementación actual de ResultSink consume `result_sink.input` y reenvía cada `ResultMessage` a `results.<execution_id>` sin acumular resultados. Para el cierre mantiene una barrera genérica por `(execution_id, query_id)`: cada `QueryPartitionEndMessage` agrega un `partition_id` a un conjunto y, al alcanzar la cantidad configurada para esa query, ResultSink publica exactamente un `QueryEndMessage`. Los duplicados recibidos antes de completar la barrera no incrementan el conjunto. Durante la migración también acepta y reenvía los `QueryEndMessage` directos de las ramas todavía no replicadas. Publica mediante el exchange por defecto de RabbitMQ con enrutamiento obligatorio y publisher confirms; recién después de confirmar esa publicación ejecuta el ACK del mensaje de entrada.
 
 ResultSink no declara las colas de salida. Cada cola `results.<execution_id>` es exclusiva, temporal y pertenece a la conexión de Gateway que inició la ejecución. El publicador dinámico solamente la utiliza como destino. Si la cola no existe porque el cliente se desconectó, la publicación obligatoria produce un error de mensaje no enrutable: ResultSink registra el descarte y confirma la entrada. Los demás errores de publicación continúan produciendo NACK.
 
-En la versión funcional actual, una sola instancia reenvía los finales producidos por Q1-Q5. Al incorporar múltiples réplicas, ResultSink se particionará por `execution_id` y agregará estado de barrera para que toda la salida de una ejecución converja en una única réplica lógica. Sus responsabilidades objetivo serán:
+La versión actual utiliza una sola instancia, por lo que toda la salida converge en el mismo estado de barrera. Al replicar ResultSink se lo particionará por `execution_id` para conservar esa propiedad. Sus responsabilidades son:
 
 - Reenviar cada resultado a `results.<execution_id>` sin esperar a que termine la query, ya implementado.
-- Mantener las barreras necesarias por consulta.
-- Producir exactamente un `QUERY_END` por query.
+- Mantener las barreras necesarias por consulta, ya implementado en la instancia única.
+- Producir exactamente un `QUERY_END` por query, ya implementado para productores que adopten `QUERY_PARTITION_END`.
 - Limpiar el estado de barrera cuando finalicen las cinco consultas o falle la ejecución.
 
 Gateway consume la cola temporal de la ejecución y aplica el siguiente ACK encadenado:
@@ -504,6 +504,7 @@ Un mensaje se confirma solamente después de aplicar su efecto y publicar todas 
 
 - `INPUT_END`: el cliente no enviará más artículos.
 - `PARTITION_END`: una réplica o partición terminó una etapa determinada.
+- `QUERY_PARTITION_END`: una partición terminó de producir resultados de una query.
 - `QUERY_END`: una consulta completa no producirá más resultados.
 - `QUERY_FAILED`: una consulta o ejecución no puede completarse.
 
@@ -775,7 +776,7 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 
 ### 22.2 Evidencia disponible al corte
 
-- La suite local completa pasa con 192 tests.
+- La suite local completa pasa con 197 tests.
 - Se conectaron doce clientes mínimos al Gateway con los InputBatcher detenidos. Sus 24 mensajes —un artículo y un final por ejecución— quedaron distribuidos entre `input_batcher.input.0`, `.1` y `.2` sin dividir una ejecución. Al iniciar las tres particiones, cada cola tuvo un único consumidor, las tres quedaron vacías y `preprocessor.input` recibió los 24 mensajes esperados.
 - Se validaron con RabbitMQ real tres réplicas de Preprocessor y tres de QueryRouter, con tres bindings exclusivos en cada exchange de control. Nueve batches produjeron nueve mensajes y un único final en cada una de las cuatro salidas posteriores a Until2020Filter y WordExtractor. Una segunda ejecución confirmó que ambos grupos reanudan el consumo después de sus barreras.
 - Se verificó el recorrido Q1 hasta `result_sink.input` con RabbitMQ real.
@@ -784,6 +785,7 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 - Se verificó que HTTP 404 no reintenta y que errores transitorios sí lo hacen de forma acotada.
 - Se verificó el recorrido de Q3 con RabbitMQ real desde `word_extractor.input` hasta un resultado compartido y su `QUERY_END` provisional en `result_sink.input`.
 - Se verificó con RabbitMQ real que ResultSink reenvía un resultado hacia una cola exclusiva `results.<execution_id>` ya declarada por Gateway y confirma posteriormente la entrada.
+- Se verificó con RabbitMQ real la barrera genérica de ResultSink: para Q1 configurada con tres particiones recibió los finales `0`, `1`, `1` y `2`, ignoró el duplicado y entregó un único `QUERY_END` después del resultado previo.
 - Se verificó que ResultSink finaliza con código 0 ante `SIGTERM`.
 - Se verificó con RabbitMQ real que dos consumidores con colas exclusivas vinculadas a la misma routing key reciben una copia del mismo control y que ambas colas se eliminan al cerrar sus conexiones.
 - Se verificó con RabbitMQ real que Q4Q5WordProjector consume un batch tokenizado, publica las dos proyecciones con los mismos metadatos de ejecución y propaga el final a ambas ramas.
@@ -830,7 +832,7 @@ El pipeline funcional está completo y fue comparado con la referencia serial so
 
 1. Extender `MessageMiddlewareExchangeRabbitMQ` a los grupos de control restantes.
 2. Reutilizar `PARTITION_END` y completar las barreras por etapa.
-3. Reemplazar los `QUERY_END` provisionales de Q1/Q2/Q3.
+3. Reemplazar los `QUERY_END` provisionales de Q1/Q2/Q3 por `QUERY_PARTITION_END` y adoptar el mismo contrato en Q4/Q5 al replicar sus productores finales.
 4. Configurar múltiples réplicas y particiones.
 5. Limitar concurrencia HTTP de ImageFetcher.
 6. Completar graceful shutdown.

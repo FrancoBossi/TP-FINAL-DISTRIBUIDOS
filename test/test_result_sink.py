@@ -6,10 +6,12 @@ import pika
 from common.message_protocol.message import (
     AckMessage,
     QueryEndMessage,
+    QueryPartitionEndMessage,
     ResultMessage,
 )
 from common.middleware.middleware import MessageMiddlewareUnroutableError
 from common.middleware.middleware_rabbitmq import MessagePublisherRabbitMQ
+from result_sink.config import ResultSinkConfig
 from result_sink.controller import ResultSinkController
 from result_sink.messaging import ResultSinkMessaging
 
@@ -19,7 +21,11 @@ class TestResultSink(unittest.TestCase):
         self.input_queue = Mock()
         self.publisher = Mock()
         self.messaging = ResultSinkMessaging(self.input_queue, self.publisher)
-        self.controller = ResultSinkController(self.messaging)
+        self.partition_counts = {1: 3, 2: 2, 3: 1, 4: 1, 5: 1}
+        self.controller = ResultSinkController(
+            self.messaging,
+            self.partition_counts,
+        )
         self.ack = Mock()
         self.nack = Mock()
         self.controller.start()
@@ -67,6 +73,74 @@ class TestResultSink(unittest.TestCase):
         self.publisher.send_to.side_effect = None
         self.deliver(message.serialize(), self.ack, self.nack)
         self.ack.assert_called_once()
+
+    def test_query_end_is_published_after_all_query_partitions_finish(self):
+        ends = [
+            QueryPartitionEndMessage(1, partition_id, "execution-a")
+            for partition_id in (0, 1, 1, 2)
+        ]
+
+        for end in ends[:-1]:
+            self.deliver(end.serialize(), self.ack, self.nack)
+            self.publisher.send_to.assert_not_called()
+
+        self.deliver(ends[-1].serialize(), self.ack, self.nack)
+
+        query_end = QueryEndMessage(1, "execution-a")
+        self.publisher.send_to.assert_called_once_with(
+            "results.execution-a",
+            query_end.serialize(),
+        )
+        self.assertEqual(self.ack.call_count, 4)
+        self.nack.assert_not_called()
+
+    def test_query_barriers_are_isolated_by_execution_and_query(self):
+        messages = [
+            QueryPartitionEndMessage(1, 0, "execution-a"),
+            QueryPartitionEndMessage(1, 0, "execution-b"),
+            QueryPartitionEndMessage(2, 0, "execution-a"),
+            QueryPartitionEndMessage(1, 1, "execution-a"),
+            QueryPartitionEndMessage(2, 1, "execution-a"),
+        ]
+
+        for message in messages:
+            self.deliver(message.serialize(), self.ack, self.nack)
+
+        query_end = QueryEndMessage(2, "execution-a")
+        self.publisher.send_to.assert_called_once_with(
+            "results.execution-a",
+            query_end.serialize(),
+        )
+
+    def test_completed_barrier_retries_query_end_after_publish_failure(self):
+        message = QueryPartitionEndMessage(3, 0, "execution-a")
+        self.publisher.send_to.side_effect = RuntimeError("unavailable")
+
+        with self.assertRaises(RuntimeError):
+            self.deliver(message.serialize(), self.ack, self.nack)
+
+        self.ack.assert_not_called()
+        self.nack.assert_called_once()
+
+        self.publisher.send_to.side_effect = None
+        self.deliver(message.serialize(), self.ack, self.nack)
+
+        query_end = QueryEndMessage(3, "execution-a")
+        self.publisher.send_to.assert_called_with(
+            "results.execution-a",
+            query_end.serialize(),
+        )
+        self.ack.assert_called_once()
+
+    def test_rejects_query_partition_outside_configured_range(self):
+        message = QueryPartitionEndMessage(2, 2, "execution-a")
+
+        with self.assertRaisesRegex(ValueError, "outside configured range"):
+            self.deliver(message.serialize(), self.ack, self.nack)
+
+        self.publisher.send_to.assert_not_called()
+        self.ack.assert_not_called()
+        self.nack.assert_called_once()
 
     def test_rejects_invalid_input(self):
         for body in (
@@ -129,3 +203,22 @@ class TestResultPublisher(unittest.TestCase):
         channel.basic_publish.side_effect = pika.exceptions.UnroutableError([])
         with self.assertRaises(MessageMiddlewareUnroutableError):
             publisher.send_to("results.missing", b"result")
+
+
+class TestResultSinkConfig(unittest.TestCase):
+    def test_reads_partition_count_for_each_query(self):
+        environment = {
+            "Q1_PARTITION_COUNT": "3",
+            "Q2_PARTITION_COUNT": "4",
+            "Q3_PARTITION_COUNT": "5",
+            "Q4_PARTITION_COUNT": "2",
+            "Q5_PARTITION_COUNT": "1",
+        }
+
+        with patch.dict("os.environ", environment, clear=True):
+            config = ResultSinkConfig()
+
+        self.assertEqual(
+            config.partition_counts,
+            {1: 3, 2: 4, 3: 5, 4: 2, 5: 1},
+        )

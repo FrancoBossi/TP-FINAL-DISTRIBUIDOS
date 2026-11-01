@@ -50,6 +50,7 @@ def main() -> int:
     )
     controller = ResultSinkController(
         messaging=messaging,
+        partition_counts=config.partition_counts,
     )
 
     signal.signal(

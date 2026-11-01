@@ -373,6 +373,11 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: result_sink.input
+      Q1_PARTITION_COUNT: "${Q1_PARTITION_COUNT:-1}"
+      Q2_PARTITION_COUNT: "${Q2_PARTITION_COUNT:-1}"
+      Q3_PARTITION_COUNT: "${Q3_PARTITION_COUNT:-1}"
+      Q4_PARTITION_COUNT: "${Q4_PARTITION_COUNT:-1}"
+      Q5_PARTITION_COUNT: "${Q5_PARTITION_COUNT:-1}"
     depends_on:
       rabbitmq:
         condition: service_healthy

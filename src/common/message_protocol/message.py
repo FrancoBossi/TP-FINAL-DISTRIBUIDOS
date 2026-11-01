@@ -245,6 +245,16 @@ class PartitionEndMessage(Message):
 
 
 @dataclass(frozen=True)
+class QueryPartitionEndMessage(Message):
+    """End marker emitted by one partition producing query results."""
+
+    query_id: int
+    partition_id: int
+    execution_id: str
+    type: ClassVar[MessageType] = MessageType.QUERY_PARTITION_END
+
+
+@dataclass(frozen=True)
 class AckMessage(Message):
     type: ClassVar[MessageType] = MessageType.ACK
 
@@ -296,6 +306,7 @@ MESSAGE_CLASSES: dict[MessageType, type[Message]] = {
     MessageType.Q5_STATS_PARTITION_END: Q5StatsPartitionEndMessage,
     MessageType.Q5_AVERAGE: Q5AverageMessage,
     MessageType.PARTITION_END: PartitionEndMessage,
+    MessageType.QUERY_PARTITION_END: QueryPartitionEndMessage,
 }
 
 ROUTED_CLASSES: dict[MessageType, type[Message]] = {

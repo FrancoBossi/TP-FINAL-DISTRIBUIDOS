@@ -436,8 +436,11 @@ al hito de tolerancia a fallos.
 
 El servicio `result-sink` consume `result_sink.input` y reenvía cada `ResultMessage`
 inmediatamente a `results.<execution_id>`, sin acumular registros ni esperar al
-final de una consulta. También reenvía los `QueryEndMessage` producidos por las
-ramas actuales (una instancia por rama). La publicación usa confirmaciones de
+final de una consulta. También mantiene una barrera genérica por
+`(execution_id, query_id)` para los `QueryPartitionEndMessage`: espera los IDs
+distintos configurados para esa query y recién entonces publica un único
+`QueryEndMessage`. Durante la migración también reenvía los `QueryEndMessage`
+producidos directamente por las ramas actuales. La publicación usa confirmaciones de
 RabbitMQ y enrutamiento obligatorio antes de confirmar el mensaje de entrada.
 No declara las colas de respuesta: son exclusivas y pertenecen al Gateway.
 Si una sesión ya cerró y la cola fue eliminada, RabbitMQ informa que la
@@ -445,9 +448,11 @@ publicación obligatoria no tiene destino. ResultSink registra el descarte y
 confirma el mensaje de entrada para que una ejecución abandonada no bloquee las
 demás.
 
-Esta versión utiliza una sola instancia de ResultSink. Las barreras para ramas
-replicadas y la deduplicación persistente quedan pendientes; los productores
-actuales deben emitir exactamente un final por consulta, después de sus resultados.
+Esta versión utiliza una sola instancia de ResultSink, por lo que todos los finales
+de una ejecución convergen en el mismo estado de barrera. Particionar ResultSink y
+persistir la deduplicación quedan pendientes. Cada rama replicada debe migrar su
+cierre para emitir un `QueryPartitionEndMessage` por partición después de sus
+resultados.
 
 Gateway y Client comienzan la recepción de resultados después de finalizar la
 subida. Desde ese momento, los resultados se entregan incrementalmente sin
@@ -460,6 +465,7 @@ Los finales tienen significados diferentes:
 
 - `INPUT_END`: el cliente terminó de enviar artículos.
 - `PARTITION_END`: una partición terminó una etapa determinada.
+- `QUERY_PARTITION_END`: una partición terminó de producir resultados de una query.
 - `QUERY_END`: una consulta completa terminó y no producirá más resultados.
 - `QUERY_FAILED`: una consulta o ejecución no puede completarse correctamente.
 
@@ -938,8 +944,8 @@ El desarrollo se divide en tres momentos distintos:
 
 ## Próximos pasos
 
-1. Incorporar barreras para productores replicados en ResultSink.
-2. Implementar los protocolos de `PARTITION_END` y barreras restantes.
+1. Migrar los productores de resultados al contrato `QUERY_PARTITION_END` de ResultSink.
+2. Implementar los protocolos de `PARTITION_END` y barreras intermedias restantes.
 3. Completar graceful shutdown de todos los procesos.
 4. Completar la propagación de errores y los límites para entradas no confiables.
 5. Incorporar recuperación, persistencia coordinada e idempotencia en el siguiente hito.
