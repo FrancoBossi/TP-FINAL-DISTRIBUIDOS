@@ -1,3 +1,4 @@
+import json
 from typing import Optional
 
 from common.message_protocol.message import (
@@ -5,6 +6,8 @@ from common.message_protocol.message import (
     RoutedArticleMessage,
     RoutedInputEndMessage,
 )
+
+SEPARATOR_LENGTH = 2  # ", " in JSON encoding
 
 
 class BatchAccumulator:
@@ -15,6 +18,8 @@ class BatchAccumulator:
 
         self.batch_size = batch_size
         self.current_batch: dict[str, ArticleBatchMessage] = {}
+        self._batch_sizes: dict[str, int] = {}
+        self._envelope_sizes: dict[str, int] = {}
 
     def add_article(
         self, message: RoutedArticleMessage
@@ -28,34 +33,62 @@ class BatchAccumulator:
                 f"{current.reply_queue} and {message.reply_queue}"
             )
 
-        articles = [message.article]
+        article_size, envelope_size = self._measure_article(message)
 
-        if current is not None:
-            articles = [*current.articles, message.article]
-
-        candidate = ArticleBatchMessage(
-            articles=articles,
-            execution_id=message.execution_id,
-            reply_queue=message.reply_queue,
-        )
-
-        if len(candidate.serialize()) <= self.batch_size:
-            self.current_batch[message.execution_id] = candidate
-            return None
-
-        single_article_batch = ArticleBatchMessage(
-            articles=[message.article],
-            execution_id=message.execution_id,
-            reply_queue=message.reply_queue,
-        )
-
-        if len(single_article_batch.serialize()) > self.batch_size:
+        single_size = envelope_size + article_size
+        if single_size > self.batch_size:
             raise ValueError(
                 f"Single article exceeds batch size limit of {self.batch_size} bytes"
             )
 
-        self.current_batch[message.execution_id] = single_article_batch
+        if current is not None:
+            candidate_size = (
+                self._batch_sizes[message.execution_id]
+                + SEPARATOR_LENGTH
+                + article_size
+            )
+            if candidate_size <= self.batch_size:
+                current.articles.append(message.article)
+                self._batch_sizes[message.execution_id] = candidate_size
+                return None
+
+        self._start_batch(message, single_size, envelope_size)
         return current
+
+    def _measure_article(self, message: RoutedArticleMessage) -> tuple[int, int]:
+        # Match Message.serialize's JSON encoding, including UTF-8 and the
+        # default comma-space separator, without re-encoding earlier articles.
+        article_size = len(
+            json.dumps(message.article, ensure_ascii=False, allow_nan=False).encode(
+                "utf-8"
+            )
+        )
+        if message.execution_id not in self.current_batch:
+            envelope_size = len(
+                ArticleBatchMessage(
+                    articles=[],
+                    execution_id=message.execution_id,
+                    reply_queue=message.reply_queue,
+                ).serialize()
+            )
+        else:
+            envelope_size = self._envelope_sizes[message.execution_id]
+
+        return article_size, envelope_size
+
+    def _start_batch(
+        self,
+        message: RoutedArticleMessage,
+        single_size: int,
+        envelope_size: int,
+    ) -> None:
+        self.current_batch[message.execution_id] = ArticleBatchMessage(
+            articles=[message.article],
+            execution_id=message.execution_id,
+            reply_queue=message.reply_queue,
+        )
+        self._batch_sizes[message.execution_id] = single_size
+        self._envelope_sizes[message.execution_id] = envelope_size
 
     def flush(self, message: RoutedInputEndMessage) -> Optional[ArticleBatchMessage]:
 
@@ -70,4 +103,6 @@ class BatchAccumulator:
                 f"{current.reply_queue} and {message.reply_queue}"
             )
 
+        del self._batch_sizes[message.execution_id]
+        del self._envelope_sizes[message.execution_id]
         return self.current_batch.pop(message.execution_id)

@@ -96,6 +96,47 @@ class TestBatchAccumulator(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exceeds batch size"):
             accumulator.add_article(article)
 
+    def test_nested_unicode_articles_match_exact_wire_size_at_boundary(self):
+        first = RoutedArticleMessage(
+            article={"name": 'Café "東京"', "sections": [{"text": "a\\b\n😀"}]},
+            execution_id='exécution"1',
+            reply_queue='results.é"1',
+        )
+        second = RoutedArticleMessage(
+            article={"name": "Deux", "image": None, "values": [True, 3.25]},
+            execution_id=first.execution_id,
+            reply_queue=first.reply_queue,
+        )
+        expected = ArticleBatchMessage(
+            [first.article, second.article], first.execution_id, first.reply_queue
+        )
+        for delta in (0, -1):
+            with self.subTest(delta=delta):
+                limit = len(expected.serialize()) + delta
+                accumulator = BatchAccumulator(limit)
+                self.assertIsNone(accumulator.add_article(first))
+                published = accumulator.add_article(second)
+                end = RoutedInputEndMessage(first.execution_id, first.reply_queue)
+                remaining = accumulator.flush(end)
+                if delta == 0:
+                    self.assertIsNone(published)
+                    self.assertEqual(remaining, expected)
+                else:
+                    self.assertEqual(published.articles, [first.article])
+                    self.assertEqual(remaining.articles, [second.article])
+                    self.assertLessEqual(len(published.serialize()), limit)
+                self.assertLessEqual(len(remaining.serialize()), limit)
+
+    def test_oversized_article_does_not_change_pending_batch(self):
+        first = self._article("A")
+        accumulator = BatchAccumulator(256)
+        accumulator.add_article(first)
+        with self.assertRaisesRegex(ValueError, "exceeds batch size"):
+            accumulator.add_article(self._article("X" * 1024))
+        accumulator.add_article(self._article("B"))
+        batch = accumulator.flush(self._end(first.execution_id))
+        self.assertEqual(batch.articles, [{"name": "A"}, {"name": "B"}])
+
 
 if __name__ == "__main__":
     unittest.main()
