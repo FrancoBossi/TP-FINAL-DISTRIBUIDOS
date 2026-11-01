@@ -699,9 +699,9 @@ El monitoreo es opcional y está aislado mediante el profile `monitoring`. La so
 - cAdvisor para métricas de containers
 - Prometheus para scraping y almacenamiento temporal de métricas
 - el plugin nativo de RabbitMQ para métricas del broker
-- Grafana con datasource y dashboard aprovisionados
+- Grafana con datasource y dos dashboards aprovisionados
 
-El dashboard permite observar CPU, memoria, red, mensajes pendientes y no confirmados, consumidores, publicaciones, confirmaciones y reentregas. Esto servirá para justificar dónde agregar réplicas y comprobar que el cuello de botella se desplaza al escalar una etapa.
+**System Overview** presenta el estado general de containers, scrapes y RabbitMQ. **Pipeline Details** organiza CPU, memoria, disco, red, mensajes pendientes y consumidores por componente y por rama Q1-Q5. Ambas vistas incluyen filtros de proyecto, servicio y cola. Esta separación permite relacionar la acumulación de mensajes con el consumo del componente correspondiente, justificar dónde agregar réplicas y comprobar si el cuello de botella se desplaza al escalar una etapa.
 
 El monitoreo no participa del flujo funcional y su caída no debe impedir el procesamiento.
 

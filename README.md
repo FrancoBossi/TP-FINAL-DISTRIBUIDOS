@@ -956,13 +956,15 @@ El arranque habitual mediante `make up` no inicia los componentes de monitoreo.
 - Prometheus: <http://localhost:9090>. En `/targets` deben aparecer `prometheus`,
   `cadvisor`, `rabbitmq` y `rabbitmq-queues` con estado `UP`.
 
-El datasource y el dashboard **System Overview** se aprovisionan automáticamente
-en Grafana.
+El datasource y los dashboards **System Overview** y **Pipeline Details** se
+aprovisionan automáticamente en Grafana.
 
-El dashboard incluye el estado de los scrapes, CPU, memoria y tráfico de red por
-servicio, mensajes pendientes y sin confirmar, consumidores por cola, tasas de
-publicación, confirmación y reentrega, y recursos del broker. Sus filtros permiten
-seleccionar el proyecto de Compose, el servicio y la cola.
+**System Overview** resume el estado de los scrapes, los recursos de los
+containers y la actividad global de RabbitMQ. **Pipeline Details** separa CPU,
+memoria, disco, red, mensajes y consumidores por componente y por rama Q1-Q5.
+Sus filtros permiten seleccionar el proyecto de Compose, el servicio, el vhost y
+la cola. Esta segunda vista facilita identificar el cuello de botella de cada
+query durante las pruebas de escalabilidad.
 
 ### Observaciones previstas para la demo
 
