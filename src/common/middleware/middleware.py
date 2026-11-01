@@ -5,6 +5,10 @@ class MessageMiddlewareMessageError(Exception):
     pass
 
 
+class MessageMiddlewareUnroutableError(MessageMiddlewareMessageError):
+    """The broker could not route a mandatory publication to a queue."""
+
+
 class MessageMiddlewareDisconnectedError(Exception):
     pass
 

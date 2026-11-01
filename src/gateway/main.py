@@ -24,12 +24,16 @@ def create_messaging(
         host=mom_host,
         queue_name=input_queue_name,
     )
-    result_queue = MessageMiddlewareQueueRabbitMQ(
-        host=mom_host,
-        queue_name=result_queue_name,
-        exclusive=True,
-        auto_delete=True,
-    )
+    try:
+        result_queue = MessageMiddlewareQueueRabbitMQ(
+            host=mom_host,
+            queue_name=result_queue_name,
+            exclusive=True,
+            auto_delete=True,
+        )
+    except Exception:
+        input_queue.close()
+        raise
 
     return GatewayMessaging(
         input_queue=input_queue,

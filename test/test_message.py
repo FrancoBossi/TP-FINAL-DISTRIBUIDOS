@@ -276,6 +276,11 @@ class TestMessage(unittest.TestCase):
                 execution_id=execution_id,
                 reply_queue=f"results.{execution_id}",
             ),
+            Q5AverageMessage(
+                average_word_count=None,
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
         ]
 
         for message in messages:
