@@ -22,15 +22,19 @@ def iter_article_records(
     path: Union[str, Path],
     batch_size: int = DEFAULT_READ_BATCH_SIZE,
 ) -> Iterator[dict[str, Any]]:
-    parquet_file = parquet.ParquetFile(path)
-
-    for batch in parquet_file.iter_batches(
-        batch_size=batch_size,
-        columns=PARQUET_COLUMNS,
-    ):
-        for row in batch.to_pylist():
-            row["date_modified"] = row["date_modified"].isoformat()
-            yield row
+    with parquet.ParquetFile(path) as parquet_file:
+        # perf(memory): Bound decoder lifetime to one row group to avoid retaining
+        # buffers across the entire file. Sequential decoding also limits memory peaks.
+        for row_group in range(parquet_file.num_row_groups):
+            for batch in parquet_file.iter_batches(
+                batch_size=batch_size,
+                columns=PARQUET_COLUMNS,
+                row_groups=[row_group],
+                use_threads=False,
+            ):
+                for row in batch.to_pylist():
+                    row["date_modified"] = row["date_modified"].isoformat()
+                    yield row
 
 
 def iter_articles(  # Uso exclusivo de ejecucion serial, no se usa en el resto del proyecto
