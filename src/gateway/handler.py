@@ -171,10 +171,8 @@ def forward_results(
     client_socket: socket.socket,
     messaging: GatewayMessaging,
     execution_id: str,
-    *,
-    discard: bool = False,
 ) -> None:
-    state = ResultForwardingState(discard=discard)
+    state = ResultForwardingState()
 
     logger.info(
         "Execution %s: waiting for results on queue %s",
@@ -214,7 +212,6 @@ def handle_client(
             execution_id,
         )
 
-        discard = False
         try:
             while not input_finished:
                 published, input_finished = forward_message(
@@ -230,12 +227,13 @@ def handle_client(
                     reply_queue=messaging.result_queue_name,
                 )
             )
-            discard = True
             logger.info(
-                "Execution %s: client disconnected; finishing input", execution_id
+                "Execution %s: client disconnected; finishing input",
+                execution_id,
             )
+            return
 
-        forward_results(client_socket, messaging, execution_id, discard=discard)
+        forward_results(client_socket, messaging, execution_id)
     except Exception as error:
         logger.exception(
             "Execution %s: failed after %d articles published",

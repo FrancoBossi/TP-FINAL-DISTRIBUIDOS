@@ -12,7 +12,7 @@ El diseño separa tres etapas de evolución:
 2. **Escalabilidad, dentro de este mismo hito:** múltiples réplicas, protocolo de control, `PARTITION_END`, barreras, clientes concurrentes y graceful shutdown completo.
 3. **Tolerancia a fallos, en el hito posterior:** persistencia, recuperación ante caídas, deduplicación e idempotencia frente a reentregas.
 
-Al corte de este documento se encuentran implementados el cliente, el Gateway, el ingreso incremental desde Parquet, el batching por bytes, el preprocesamiento, el fan-out del QueryRouter, las ramas funcionales de Q1-Q5 y ResultSink. La rama textual incluye WordExtractor, Q3WordProjector, Q3WordAggregator, Q4WordCounter, Q4Top20Reducer, la proyección compartida de Q4/Q5, Q5DateRouter, Q5StatsWorker, Q5AverageReducer y Q5Comparator con almacenamiento temporal JSONL en un volumen Docker. El recorrido punta a punta se validó con 50.000 artículos: el cliente recibió los cinco finales y los cinco archivos coincidieron con la referencia serial. Q4 y Q5 funcionan actualmente con una partición y Q1-Q3 todavía utilizan finales provisionales; las barreras para grupos replicados continúan pendientes dentro del hito de escalabilidad.
+Al corte de este documento se encuentran implementados el cliente, el Gateway concurrente, el ingreso incremental desde Parquet, el batching por bytes, el preprocesamiento, el fan-out del QueryRouter, las ramas funcionales de Q1-Q5 y ResultSink. La rama textual incluye WordExtractor, Q3WordProjector, Q3WordAggregator, Q4WordCounter, Q4Top20Reducer, la proyección compartida de Q4/Q5, Q5DateRouter, Q5StatsWorker, Q5AverageReducer y Q5Comparator con almacenamiento temporal JSONL en un volumen Docker. El recorrido punta a punta se validó con 50.000 artículos: el cliente recibió los cinco finales y los cinco archivos coincidieron con la referencia serial. Q4 y Q5 funcionan actualmente con una partición y Q1-Q3 todavía utilizan finales provisionales; las barreras para grupos replicados continúan pendientes dentro del hito de escalabilidad.
 
 ---
 
@@ -147,7 +147,7 @@ El siguiente DAG representa el flujo completo de datos de la arquitectura objeti
 | Componente | Responsabilidad | Naturaleza objetivo | Clave de distribución | Estado actual |
 |---|---|---|---|---|
 | Client | Leer Parquet, enviar artículos y escribir Q1-Q5 | Externo, uno por ejecución | - | Implementado |
-| Gateway | Crear ejecución, adaptar TCP/MOM y devolver resultados | Replicable por conexión | `execution_id` | Implementado, atiende un cliente por vez |
+| Gateway | Crear ejecución, adaptar TCP/MOM y devolver resultados | Una sesión concurrente por conexión | `execution_id` | Implementado con un thread y recursos aislados por cliente |
 | InputBatcher | Agrupar registros sin superar el límite de bytes | Stateful por ejecución | `execution_id` | Implementado, una partición |
 | Preprocessor | Validar y normalizar artículos | Stateless, replicable | Cola compartida | Implementado, una réplica |
 | QueryRouter | Proyectar y bifurcar el flujo | Stateless, replicable | Cola compartida | Implementado, una réplica |
@@ -248,7 +248,7 @@ Gateway adapta el protocolo externo a mensajes internos:
 
 La conexión tiene entonces dos fases. Primero el cliente envía artículos y Gateway los publica en RabbitMQ. Después de `INPUT_END`, el flujo se invierte: Gateway recibe los resultados producidos por el sistema distribuido y los transmite al cliente. Por cada resultado, espera el ACK del cliente antes de confirmarlo en RabbitMQ.
 
-La implementación actual procesa una conexión completa antes de aceptar la siguiente. La arquitectura objetivo ejecutará cada sesión en un thread o proceso separado, con conexiones RabbitMQ y recursos aislados.
+La implementación actual acepta conexiones concurrentes y ejecuta cada sesión en un thread independiente, con conexiones RabbitMQ y una cola exclusiva de resultados propias. Si un cliente se desconecta durante el upload, Gateway publica `INPUT_END` y cierra inmediatamente la sesión sin esperar su salida. El cierre elimina `results.<execution_id>`; los resultados que lleguen posteriormente se descartan de forma ordenada en ResultSink.
 
 ### 7.3 InputBatcher limitado por bytes
 
@@ -424,7 +424,7 @@ Antes del promedio persiste candidatos; después del promedio compara directamen
 
 La implementación actual de ResultSink consume `result_sink.input` y reenvía cada `ResultMessage` o `QueryEndMessage` a `results.<execution_id>`. No acumula resultados ni espera que termine una consulta. Publica mediante el exchange por defecto de RabbitMQ con enrutamiento obligatorio y publisher confirms; recién después de confirmar esa publicación ejecuta el ACK del mensaje de entrada.
 
-ResultSink no declara las colas de salida. Cada cola `results.<execution_id>` es exclusiva, temporal y pertenece a la conexión de Gateway que inició la ejecución. El publicador dinámico solamente la utiliza como destino; si la cola no existe, la publicación falla y el mensaje de entrada no se confirma.
+ResultSink no declara las colas de salida. Cada cola `results.<execution_id>` es exclusiva, temporal y pertenece a la conexión de Gateway que inició la ejecución. El publicador dinámico solamente la utiliza como destino. Si la cola no existe porque el cliente se desconectó, la publicación obligatoria produce un error de mensaje no enrutable: ResultSink registra el descarte y confirma la entrada. Los demás errores de publicación continúan produciendo NACK.
 
 En la versión funcional actual, una sola instancia reenvía los finales producidos por Q1-Q5. Al incorporar múltiples réplicas, ResultSink se particionará por `execution_id` y agregará estado de barrera para que toda la salida de una ejecución converja en una única réplica lógica. Sus responsabilidades objetivo serán:
 
@@ -544,7 +544,7 @@ De este modo, más del 50 % de los tipos de controllers de la arquitectura objet
 
 ### 14.2 Escalamiento por clientes
 
-`execution_id` aísla los mensajes y estados. Para atender clientes concurrentes falta hacer concurrente el Gateway y mantener una sesión independiente por conexión. El pipeline interno ya transporta el identificador necesario para separar corridas.
+`execution_id` aísla los mensajes y estados. Gateway mantiene una sesión independiente por conexión y puede atender varios clientes concurrentemente. Cada thread posee su socket, conexiones RabbitMQ y cola temporal, mientras el pipeline separa los estados de las corridas mediante el identificador.
 
 ### 14.3 Límites del escalamiento actual
 
@@ -773,7 +773,7 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 
 ### 22.2 Evidencia disponible al corte
 
-- La suite local completa pasa con 163 tests.
+- La suite local completa pasa con 169 tests.
 - Se verificó el recorrido Q1 hasta `result_sink.input` con RabbitMQ real.
 - Se verificó Q2 desde `until_2020.input` hasta resultados Base64 y `QUERY_END` provisional.
 - Se verificó que un candidato sin URL se registra y se omite.
@@ -792,7 +792,7 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 - Después de deshabilitar los heartbeats de las conexiones bloqueantes no volvieron a registrarse cierres por `missed heartbeats` y todos los componentes funcionales permanecieron activos.
 - Se verificó el arranque separado de los containers implementados.
 
-El pipeline funcional queda validado. Las pruebas siguientes deben concentrarse en múltiples réplicas, clientes concurrentes, barreras y comportamiento ante cierres o caídas.
+El pipeline funcional queda validado. También se verificó una desconexión antes del primer artículo: Gateway eliminó su cola temporal, Q1-Q5 completaron la ejecución vacía, ResultSink descartó los cinco finales sin destino, no quedaron mensajes ni archivos temporales y todos los componentes permanecieron activos. Las pruebas siguientes deben concentrarse en múltiples réplicas, barreras y comportamiento ante cierres o caídas de procesos internos.
 
 ---
 
@@ -827,11 +827,10 @@ El pipeline funcional está completo y fue comparado con la referencia serial so
 2. Definir `PARTITION_END` y barreras por etapa.
 3. Reemplazar los `QUERY_END` provisionales de Q1/Q2/Q3.
 4. Configurar múltiples réplicas y particiones.
-5. Permitir clientes concurrentes en Gateway.
-6. Limitar concurrencia HTTP de ImageFetcher.
-7. Completar graceful shutdown.
-8. Medir el sistema y justificar cantidades de réplicas.
-9. Actualizar y exportar todos los diagramas 4+1.
+5. Limitar concurrencia HTTP de ImageFetcher.
+6. Completar graceful shutdown.
+7. Medir el sistema y justificar cantidades de réplicas.
+8. Actualizar y exportar todos los diagramas 4+1.
 
 ### 24.3 Mejoras posteriores al pipeline funcional
 

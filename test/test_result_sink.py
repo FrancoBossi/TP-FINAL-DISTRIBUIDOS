@@ -84,15 +84,24 @@ class TestResultSink(unittest.TestCase):
 
     def test_missing_destination_is_discarded_and_next_execution_continues(self):
         self.publisher.send_to.side_effect = MessageMiddlewareUnroutableError("gone")
-        for message in (ResultMessage(1, {}, "old"), QueryEndMessage(1, "old")):
+
+        for message in (
+            ResultMessage(1, {}, "old"),
+            QueryEndMessage(1, "old"),
+        ):
             self.deliver(message.serialize(), self.ack, self.nack)
+
         self.assertEqual(self.ack.call_count, 2)
         self.nack.assert_not_called()
 
         self.publisher.send_to.side_effect = None
         message = ResultMessage(1, {}, "new")
         self.deliver(message.serialize(), self.ack, self.nack)
-        self.publisher.send_to.assert_called_with("results.new", message.serialize())
+
+        self.publisher.send_to.assert_called_with(
+            "results.new",
+            message.serialize(),
+        )
         self.assertEqual(self.ack.call_count, 3)
 
     def test_shutdown_closes_publisher_even_if_input_close_fails(self):
