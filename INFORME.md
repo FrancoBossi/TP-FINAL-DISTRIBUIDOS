@@ -166,7 +166,7 @@ El siguiente DAG representa el flujo completo de datos de la arquitectura objeti
 | Q5AverageReducer | Calcular promedio global | Stateful, reducers replicados | `execution_id` | Implementado, una instancia y barrera configurable |
 | Q5Comparator | Esperar promedio y comparar candidatos | Stateful y particionado | `(execution_id, article_id)` | Implementado, una instancia y buffer JSONL |
 | ResultSink | Reenviar resultados y finales hacia cada Gateway | Stateless en la versión actual; stateful al incorporar barreras | `execution_id` | Implementado con una instancia y finales provisionales |
-| MessageMiddleware | Abstraer queues, publicación dinámica, ACK/NACK y grupos | Infraestructura común | - | Queue y publisher dinámico implementados sobre RabbitMQ; interfaz de exchange definida e implementación pendiente |
+| MessageMiddleware | Abstraer queues, publicación dinámica, ACK/NACK y grupos | Infraestructura común | - | Queue, publisher dinámico y exchange directo implementados sobre RabbitMQ |
 
 ### 5.3 Estado del flujo implementado
 
@@ -486,9 +486,9 @@ para evitar falsos positivos. El costo es que una partición de red puede tardar
 más en detectarse; reconexión, detección de conexiones zombis e idempotencia
 quedan para tolerancia a fallos.
 
-### 12.3 Capacidad pendiente: comunicación por grupos
+### 12.3 Comunicación por grupos
 
-La abstracción `MessageMiddlewareExchange` ya está definida. Queda pendiente implementar `MessageMiddlewareExchangeRabbitMQ`, tomando como base la versión utilizada en el TP de Coordinación y adaptándola al protocolo de este sistema. Cada réplica tendrá su propia cola exclusiva vinculada al exchange, de modo que una publicación de control llegue a todas las réplicas del grupo. El negocio no deberá conocer bindings ni detalles de RabbitMQ. DATA continuará usando colas compartidas o particionadas; el control de finalización utilizará broadcast al grupo.
+`MessageMiddlewareExchangeRabbitMQ` toma como base la versión utilizada en el TP de Coordinación. Declara un exchange `direct`; cada instancia consumidora crea su propia cola exclusiva y la vincula con las routing keys configuradas. Una instancia usada solamente para publicar declara el exchange sin crear una cola innecesaria. Cuando varias réplicas vinculan sus colas con la misma clave, una publicación de control llega a todas ellas. El negocio no conoce bindings ni detalles de RabbitMQ. DATA continuará usando colas compartidas o particionadas; el control de finalización utilizará este broadcast al grupo. Queda pendiente integrar el exchange en cada etapa replicada y completar sus barreras.
 
 ### 12.4 ACK, NACK y prefetch
 
@@ -773,7 +773,7 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 
 ### 22.2 Evidencia disponible al corte
 
-- La suite local completa pasa con 169 tests.
+- La suite local completa pasa con 173 tests.
 - Se verificó el recorrido Q1 hasta `result_sink.input` con RabbitMQ real.
 - Se verificó Q2 desde `until_2020.input` hasta resultados Base64 y `QUERY_END` provisional.
 - Se verificó que un candidato sin URL se registra y se omite.
@@ -781,6 +781,7 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 - Se verificó el recorrido de Q3 con RabbitMQ real desde `word_extractor.input` hasta un resultado compartido y su `QUERY_END` provisional en `result_sink.input`.
 - Se verificó con RabbitMQ real que ResultSink reenvía un resultado hacia una cola exclusiva `results.<execution_id>` ya declarada por Gateway y confirma posteriormente la entrada.
 - Se verificó que ResultSink finaliza con código 0 ante `SIGTERM`.
+- Se verificó con RabbitMQ real que dos consumidores con colas exclusivas vinculadas a la misma routing key reciben una copia del mismo control y que ambas colas se eliminan al cerrar sus conexiones.
 - Se verificó con RabbitMQ real que Q4Q5WordProjector consume un batch tokenizado, publica las dos proyecciones con los mismos metadatos de ejecución y propaga el final a ambas ramas.
 - Se verificó dentro de su imagen Docker que Q4Q5WordProjector dispone de las stopwords de NLTK sin depender de una descarga durante el arranque.
 - Se verificó con RabbitMQ real el recorrido funcional de Q4 desde `q4_q5_word_projector.input` hasta sus resultados ordenados y un único `QUERY_END` en `result_sink.input`.
@@ -823,7 +824,7 @@ El pipeline funcional está completo y fue comparado con la referencia serial so
 
 ### 24.2 Para completar el hito de escalabilidad
 
-1. Implementar `MessageMiddlewareExchangeRabbitMQ` e integrarlo con los grupos de control.
+1. Integrar `MessageMiddlewareExchangeRabbitMQ` con los grupos de control.
 2. Definir `PARTITION_END` y barreras por etapa.
 3. Reemplazar los `QUERY_END` provisionales de Q1/Q2/Q3.
 4. Configurar múltiples réplicas y particiones.

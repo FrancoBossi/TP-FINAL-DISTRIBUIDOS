@@ -6,6 +6,7 @@ import pika
 from common.middleware.middleware import (
     MessageMiddlewareCloseError,
     MessageMiddlewareDisconnectedError,
+    MessageMiddlewareExchange,
     MessageMiddlewareMessageError,
     MessageMiddlewarePublisher,
     MessageMiddlewareQueue,
@@ -138,6 +139,61 @@ class MessagePublisherRabbitMQ(
                 body=message,
                 mandatory=True,
             )
+
+
+class MessageMiddlewareExchangeRabbitMQ(
+    _MessageMiddlewareRabbitMQBase,
+    MessageMiddlewareExchange,
+):
+    def __init__(
+        self,
+        host: str,
+        exchange_name: str,
+        routing_keys: list[str],
+        create_queue: bool = True,
+    ) -> None:
+        self._exchange_name = exchange_name
+        self._routing_keys = routing_keys
+
+        super().__init__(host)
+
+        with _pika_error_to_middleware_error(
+            "exchange initialization",
+            MessageMiddlewareMessageError,
+        ):
+            self._channel.exchange_declare(
+                exchange=exchange_name,
+                exchange_type="direct",
+                durable=False,
+            )
+
+            if create_queue:
+                queue = self._channel.queue_declare(
+                    queue="",
+                    exclusive=True,
+                )
+                self._queue_name = queue.method.queue
+
+                for routing_key in routing_keys:
+                    self._channel.queue_bind(
+                        exchange=exchange_name,
+                        queue=self._queue_name,
+                        routing_key=routing_key,
+                    )
+
+    def send(self, message: bytes) -> None:
+        self._check_connection()
+
+        with _pika_error_to_middleware_error(
+            "sending message",
+            MessageMiddlewareMessageError,
+        ):
+            for routing_key in self._routing_keys:
+                self._channel.basic_publish(
+                    exchange=self._exchange_name,
+                    routing_key=routing_key,
+                    body=message,
+                )
 
 
 class MessageMiddlewareQueueRabbitMQ(

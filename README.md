@@ -476,7 +476,7 @@ Antes de habilitar consumidores competidores en una etapa se implementará el si
 
 El `prefetch_count=1` limita a uno los mensajes en vuelo por réplica cuando se recibe el control. El estado compartido entre el consumidor de datos y el consumidor de control deberá protegerse con sincronización.
 
-No se debe asumir orden entre una cola de datos y una cola o exchange de control diferentes. Por eso el primer mensaje de fin atraviesa la misma cola que los datos antes de ser difundido. La interfaz abstracta `MessageMiddlewareExchange` ya está definida. Queda pendiente implementar `MessageMiddlewareExchangeRabbitMQ`, identificar las particiones y conocer la cantidad esperada de finales para completar cada barrera.
+No se debe asumir orden entre una cola de datos y una cola o exchange de control diferentes. Por eso el primer mensaje de fin atraviesa la misma cola que los datos antes de ser difundido. `MessageMiddlewareExchangeRabbitMQ` ya implementa el exchange `direct`, las colas exclusivas por consumidor y el modo publicador sin cola. Queda pendiente integrarlo en los grupos, identificar las particiones y conocer la cantidad esperada de finales para completar cada barrera.
 
 ## Comunicación
 
@@ -534,6 +534,7 @@ La implementación actual incluye:
 
 - `MessageMiddlewareQueue`
 - `MessageMiddlewareQueueRabbitMQ`
+- `MessageMiddlewareExchangeRabbitMQ`
 - ACK y NACK manuales.
 - `prefetch_count=1`.
 - Inicio y detención del consumo.
@@ -551,7 +552,7 @@ publicar al finalizar. Por eso la configuración actual utiliza `heartbeat=0`.
 La detección rápida de conexiones zombis, la reconexión y la idempotencia ante
 una publicación ambigua se resolverán en el hito de tolerancia a fallos.
 
-La interfaz `MessageMiddlewareExchange` ya está definida, pero todavía no tiene una implementación concreta sobre RabbitMQ. `MessageMiddlewareExchangeRabbitMQ` se basará en la utilizada en el TP de Coordinación y se adaptará al protocolo de este sistema. Cada réplica consumirá el control desde su propia cola exclusiva vinculada al exchange, de modo que una publicación llegue a todas las réplicas del grupo.
+`MessageMiddlewareExchangeRabbitMQ` adapta la implementación del TP de Coordinación. Utiliza un exchange `direct`: cada réplica consumidora declara una cola exclusiva y la vincula con las routing keys del grupo, mientras una instancia publicadora puede omitir la creación de cola. Varias colas vinculadas con la misma clave reciben una copia de cada control. Las conexiones de publicación y consumo permanecen separadas porque `BlockingConnection.start_consuming()` bloquea su thread.
 
 ### ACK de resultados
 

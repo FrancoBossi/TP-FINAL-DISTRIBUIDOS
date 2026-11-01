@@ -58,5 +58,6 @@ class MessageMiddlewareExchange(MessageMiddleware):
         host: str,
         exchange_name: str,
         routing_keys: list[str],
+        create_queue: bool = True,
     ) -> None:
         pass
