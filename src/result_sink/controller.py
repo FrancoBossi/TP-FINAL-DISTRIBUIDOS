@@ -1,6 +1,11 @@
+import logging
+
 from common.message_protocol.external import validate_result
 from common.message_protocol.message import Message
+from common.middleware.middleware import MessageMiddlewareUnroutableError
 from result_sink.messaging import Ack, Nack, ResultSinkMessaging
+
+logger = logging.getLogger(__name__)
 
 
 class ResultSinkController:
@@ -15,6 +20,12 @@ class ResultSinkController:
             if not isinstance(message.execution_id, str) or not message.execution_id:
                 raise ValueError("Result requires a nonempty execution_id")
             self._messaging.publish(message)
+        except MessageMiddlewareUnroutableError:
+            logger.warning(
+                "Discarding result for execution %s: destination results.%s is gone",
+                message.execution_id,
+                message.execution_id,
+            )
         except Exception:
             nack()
             raise

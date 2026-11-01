@@ -8,7 +8,7 @@ from common.message_protocol.message import (
     QueryEndMessage,
     ResultMessage,
 )
-from common.middleware.middleware import MessageMiddlewareMessageError
+from common.middleware.middleware import MessageMiddlewareUnroutableError
 from common.middleware.middleware_rabbitmq import MessagePublisherRabbitMQ
 from result_sink.controller import ResultSinkController
 from result_sink.messaging import ResultSinkMessaging
@@ -82,6 +82,19 @@ class TestResultSink(unittest.TestCase):
         self.ack.assert_not_called()
         self.assertEqual(self.nack.call_count, 5)
 
+    def test_missing_destination_is_discarded_and_next_execution_continues(self):
+        self.publisher.send_to.side_effect = MessageMiddlewareUnroutableError("gone")
+        for message in (ResultMessage(1, {}, "old"), QueryEndMessage(1, "old")):
+            self.deliver(message.serialize(), self.ack, self.nack)
+        self.assertEqual(self.ack.call_count, 2)
+        self.nack.assert_not_called()
+
+        self.publisher.send_to.side_effect = None
+        message = ResultMessage(1, {}, "new")
+        self.deliver(message.serialize(), self.ack, self.nack)
+        self.publisher.send_to.assert_called_with("results.new", message.serialize())
+        self.assertEqual(self.ack.call_count, 3)
+
     def test_shutdown_closes_publisher_even_if_input_close_fails(self):
         self.controller.stop()
         self.input_queue.stop_consuming.assert_called_once()
@@ -105,5 +118,5 @@ class TestResultPublisher(unittest.TestCase):
             exchange="", routing_key="results.a", body=b"result", mandatory=True
         )
         channel.basic_publish.side_effect = pika.exceptions.UnroutableError([])
-        with self.assertRaises(MessageMiddlewareMessageError):
+        with self.assertRaises(MessageMiddlewareUnroutableError):
             publisher.send_to("results.missing", b"result")
