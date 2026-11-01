@@ -162,6 +162,60 @@ class TestQ5ComparatorController(unittest.TestCase):
         self.assertEqual(self.ack.call_count, 3)
         self.nack.assert_not_called()
 
+    def test_missing_average_discards_candidates_and_finishes(self):
+        candidates = Q5CandidateBatchMessage(
+            articles=[
+                {
+                    "article_id": "candidate",
+                    "url": "https://example.com/candidate",
+                    "word_count": 5,
+                }
+            ],
+            execution_id="execution-empty",
+            reply_queue="results.execution-empty",
+        )
+        end = RoutedInputEndMessage(
+            execution_id="execution-empty",
+            reply_queue="results.execution-empty",
+        )
+        missing_average = Q5AverageMessage(
+            average_word_count=None,
+            execution_id="execution-empty",
+            reply_queue="results.execution-empty",
+        )
+
+        self.controller.process_message(candidates, self.ack, self.nack)
+        self.controller.process_message(end, self.ack, self.nack)
+
+        self.messaging.publish.assert_not_called()
+        self.assertEqual(
+            list(self.buffer.iterate("execution-empty")),
+            candidates.articles,
+        )
+
+        self.controller.process_message(
+            missing_average,
+            self.ack,
+            self.nack,
+        )
+
+        self.messaging.publish.assert_called_once_with(
+            QueryEndMessage(
+                query_id=5,
+                execution_id="execution-empty",
+            )
+        )
+        self.assertEqual(
+            list(self.buffer.iterate("execution-empty")),
+            [],
+        )
+        self.assertNotIn(
+            "execution-empty",
+            self.controller._executions,
+        )
+        self.assertEqual(self.ack.call_count, 3)
+        self.nack.assert_not_called()
+
     def test_keeps_buffer_when_publishing_a_buffered_result_fails(self):
         candidates = Q5CandidateBatchMessage(
             articles=[

@@ -29,6 +29,7 @@ class ResultSinkController:
         except Exception:
             nack()
             raise
+
         ack()
 
     def start(self) -> None:
