@@ -4,7 +4,6 @@ from unittest.mock import Mock, call
 from common.message_protocol.message import (
     PartitionEndMessage,
     Q1Q2ArticleBatchMessage,
-    RoutedInputEndMessage,
     TextArticleBatchMessage,
 )
 from until_2020_filter.controller import Until2020FilterController
@@ -18,6 +17,7 @@ class TestUntil2020FilterController(unittest.TestCase):
         self.nack = Mock()
         self.controller = Until2020FilterController(
             messaging=self.messaging,
+            partition_id=1,
             query_router_partition_count=2,
         )
         self.batch = Q1Q2ArticleBatchMessage(
@@ -85,30 +85,32 @@ class TestUntil2020FilterController(unittest.TestCase):
         self.ack.assert_called_once()
         self.nack.assert_not_called()
 
-    def test_waits_for_all_query_router_partitions(self):
+    def test_broadcasts_query_router_partition_end(self):
         self.controller.process_message(
             self.partition_end_0,
             self.ack,
             self.nack,
         )
 
+        self.messaging.broadcast_control.assert_called_once_with(self.partition_end_0)
         self.messaging.publish_q1.assert_not_called()
         self.messaging.publish_q2.assert_not_called()
         self.ack.assert_called_once()
+        self.nack.assert_not_called()
 
-    def test_forwards_one_input_end_after_barrier(self):
-        self.controller.process_message(
-            self.partition_end_0,
-            self.ack,
-            self.nack,
-        )
-        self.controller.process_message(
-            self.partition_end_1,
-            self.ack,
-            self.nack,
-        )
+    def test_waits_for_all_query_router_partitions_on_control(self):
+        self.controller.process_control_message(self.partition_end_0)
 
-        expected = RoutedInputEndMessage(
+        self.messaging.publish_q1.assert_not_called()
+        self.messaging.publish_q2.assert_not_called()
+
+    def test_emits_own_partition_end_after_control_barrier(self):
+        self.controller.process_control_message(self.partition_end_0)
+        self.controller.process_control_message(self.partition_end_1)
+
+        expected = PartitionEndMessage(
+            stage="until_2020_filter",
+            partition_id=1,
             execution_id="execution-123",
             reply_queue="results.execution-123",
         )
@@ -119,20 +121,10 @@ class TestUntil2020FilterController(unittest.TestCase):
                 call.publish_q2(expected),
             ],
         )
-        self.assertEqual(self.ack.call_count, 2)
-        self.nack.assert_not_called()
 
-    def test_does_not_count_same_partition_twice(self):
-        self.controller.process_message(
-            self.partition_end_0,
-            self.ack,
-            self.nack,
-        )
-        self.controller.process_message(
-            self.partition_end_0,
-            self.ack,
-            self.nack,
-        )
+    def test_does_not_count_same_control_partition_twice(self):
+        self.controller.process_control_message(self.partition_end_0)
+        self.controller.process_control_message(self.partition_end_0)
 
         self.messaging.publish_q1.assert_not_called()
         self.messaging.publish_q2.assert_not_called()
@@ -143,6 +135,21 @@ class TestUntil2020FilterController(unittest.TestCase):
 
         with self.assertRaises(RuntimeError) as raised:
             self.controller.process_message(self.batch, self.ack, self.nack)
+
+        self.assertIs(raised.exception, error)
+        self.nack.assert_called_once()
+        self.ack.assert_not_called()
+
+    def test_nacks_when_control_broadcast_fails(self):
+        error = RuntimeError("control unavailable")
+        self.messaging.broadcast_control.side_effect = error
+
+        with self.assertRaises(RuntimeError) as raised:
+            self.controller.process_message(
+                self.partition_end_0,
+                self.ack,
+                self.nack,
+            )
 
         self.assertIs(raised.exception, error)
         self.nack.assert_called_once()

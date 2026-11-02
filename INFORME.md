@@ -12,7 +12,7 @@ El diseño separa tres etapas de evolución:
 2. **Escalabilidad, dentro de este mismo hito:** múltiples réplicas, protocolo de control, `PARTITION_END`, barreras, clientes concurrentes y graceful shutdown completo.
 3. **Tolerancia a fallos, en el hito posterior:** persistencia, recuperación ante caídas, deduplicación e idempotencia frente a reentregas.
 
-Al corte de este documento se encuentran implementados el cliente, el Gateway concurrente, el ingreso incremental desde Parquet, el batching por bytes, el preprocesamiento, el fan-out del QueryRouter, las ramas funcionales de Q1-Q5 y ResultSink. La rama textual incluye WordExtractor, Q3WordProjector, Q3WordAggregator, Q4WordCounter, Q4Top20Reducer, la proyección compartida de Q4/Q5, Q5DateRouter, Q5StatsWorker, Q5AverageReducer y Q5Comparator con almacenamiento temporal JSONL en un volumen Docker. El recorrido punta a punta se validó con 50.000 artículos: el cliente recibió los cinco finales y los cinco archivos coincidieron con la referencia serial. El ingreso stateful despliega tres particiones de InputBatcher con routing estable por ejecución. Los dos primeros grupos stateless escalados despliegan tres Preprocessors y tres QueryRouters coordinados mediante exchanges de control; Until2020Filter y WordExtractor completan las barreras de las dos ramas. Q4 y Q5 funcionan actualmente con una partición y Q1-Q3 todavía utilizan finales provisionales; las barreras de los grupos restantes continúan pendientes dentro del hito de escalabilidad.
+Al corte de este documento se encuentran implementados el cliente, el Gateway concurrente, el ingreso incremental desde Parquet, el batching por bytes, el preprocesamiento, el fan-out del QueryRouter, las ramas funcionales de Q1-Q5 y ResultSink. La rama textual incluye WordExtractor, Q3WordProjector, Q3WordAggregator, Q4WordCounter, Q4Top20Reducer, la proyección compartida de Q4/Q5, Q5DateRouter, Q5StatsWorker, Q5AverageReducer y Q5Comparator con almacenamiento temporal JSONL en un volumen Docker. El recorrido punta a punta se validó con 50.000 artículos: el cliente recibió los cinco finales y los cinco archivos coincidieron con la referencia serial. El ingreso stateful despliega tres particiones de InputBatcher con routing estable por ejecución. Preprocessor, QueryRouter, Until2020Filter, Q1EnglishFilter, Q2BiographyFilter e ImageFetcher despliegan tres réplicas coordinadas mediante exchanges de control. Q1 y Q2 entregan tres finales de partición a la barrera genérica de ResultSink. Q4 y Q5 funcionan actualmente con una partición y las barreras de los grupos restantes continúan pendientes dentro del hito de escalabilidad.
 
 ---
 
@@ -151,10 +151,10 @@ El siguiente DAG representa el flujo completo de datos de la arquitectura objeti
 | InputBatcher | Agrupar registros sin superar el límite de bytes | Stateful por ejecución | `execution_id` | Implementado, tres particiones con routing estable |
 | Preprocessor | Validar y normalizar artículos | Stateless, replicable | Cola compartida | Implementado, tres réplicas con control distribuido |
 | QueryRouter | Proyectar y bifurcar el flujo | Stateless, replicable | Cola compartida | Implementado, tres réplicas con control distribuido |
-| Until2020Filter | Aplicar una vez `fecha <= 2020` | Stateless, replicable | Cola compartida | Implementado, una réplica y barrera para tres QueryRouters |
-| Q1EnglishFilter | Filtrar inglés y producir Q1 | Stateless, replicable | Cola compartida | Implementado, una réplica |
-| Q2BiographyFilter | Detectar sección biográfica | Stateless, replicable | Cola compartida | Implementado, una réplica |
-| ImageFetcher | Descargar imagen y producir Q2 | Replicable, I/O-bound | Cola compartida | Implementado secuencialmente, una réplica |
+| Until2020Filter | Aplicar una vez `fecha <= 2020` | Stateless, replicable | Cola compartida | Implementado, tres réplicas con control distribuido |
+| Q1EnglishFilter | Filtrar inglés y producir Q1 | Stateless, replicable | Cola compartida | Implementado, tres réplicas con control distribuido |
+| Q2BiographyFilter | Detectar sección biográfica | Stateless, replicable | Cola compartida | Implementado, tres réplicas con control distribuido |
+| ImageFetcher | Descargar imagen y producir Q2 | Replicable, I/O-bound | Cola compartida | Implementado, tres réplicas con descarga secuencial por instancia |
 | WordExtractor | Tokenización básica compartida | Stateless, replicable | Cola compartida | Implementado, una réplica y barrera para tres QueryRouters |
 | Q3WordProjector | Palabras únicas de cada artículo | Stateless, replicable | Cola compartida | Implementado, una réplica |
 | Q3WordAggregator | Presencia por idioma | Stateful y particionado | `(execution_id, word)` | Implementado, tres particiones con `QUERY_PARTITION_END` |
@@ -307,7 +307,7 @@ El fan-out actual tiene semántica at-least-once: si una publicación funciona y
 
 Q1 y Q2 requieren `fecha <= 2020`. Aplicar el filtro por separado duplicaría trabajo y podría introducir interpretaciones diferentes. `Until2020Filter` evalúa la condición una sola vez y proyecta los artículos elegibles hacia ambas consultas.
 
-Los batches vacíos no se publican, pero el final sí se propaga a ambas ramas. Esto permite que una consulta sin candidatos termine correctamente.
+Los batches vacíos no se publican. Tres réplicas consumen la cola compartida y coordinan el cierre mediante `until_2020.control`. Cada una emite su propio final después de observar los tres QueryRouters. Q1 y Q2BiographyFilter despliegan a su vez tres consumidores competidores y difunden esos finales mediante sus propios exchanges de control. Esto permite que una consulta sin candidatos termine correctamente.
 
 ### 9.2 Query 1
 
@@ -320,13 +320,15 @@ Q1 conserva únicamente artículos con idioma normalizado `en` y produce:
 }
 ```
 
-La fecha conserva el formato ISO de la referencia serial. Q1 es stateless y, una vez incorporado el protocolo de fin, podrá escalar con consumidores competidores.
+La fecha conserva el formato ISO de la referencia serial. Tres réplicas stateless compiten por los batches de candidatos. El primer final de Until2020Filter que atraviesa la cola compartida se difunde mediante `q1.control`; cada réplica espera los tres IDs de origen y emite su propio `QUERY_PARTITION_END`. ResultSink completa la barrera de Q1 al recibir los IDs `{0, 1, 2}` y publica un único `QUERY_END`.
 
 ### 9.3 Query 2: filtro biográfico
 
 `Q2BiographyFilter` compara el nombre completo de cada sección con `biography` o `biographie`, ignorando mayúsculas. No realiza búsquedas parciales: una sección cuyo nombre solamente contenga la palabra no cumple necesariamente la condición.
 
 El filtro conserva candidatos sin `image_url`. La decisión de omitirlos y registrarlos pertenece a ImageFetcher, que es el componente responsable de la interacción externa.
+
+Tres réplicas compiten por los batches biográficos. La que recibe un final de Until2020Filter lo difunde mediante `q2_biography_filter.control`; después de observar los tres IDs de origen, cada réplica publica su propio `PARTITION_END(stage="q2_biography_filter")`. Tres ImageFetchers compiten por los candidatos y difunden esos finales mediante `image_fetcher.control`. Cada uno espera los IDs biográficos `{0, 1, 2}` y emite su propio `QUERY_PARTITION_END`; ResultSink completa Q2 al recibir los tres IDs de ImageFetcher.
 
 ### 9.4 Query 2: descarga de imágenes
 
@@ -344,7 +346,7 @@ La API REST se descartó porque no agrega información cuando la página no pose
 
 Como los mensajes internos de RabbitMQ y el archivo `query2.jsonl` utilizan JSON, los bytes se codifican en Base64 para formar un string transportable y escribible. Base64 aumenta el tamaño aproximadamente un 33 %. Aunque el protocolo externo admite bytes, el resultado ya llega al Gateway representado como Base64; cambiar solamente el último tramo no elimina ese overhead dentro del pipeline.
 
-ImageFetcher descarga secuencialmente en la primera versión funcional. La arquitectura prevé múltiples réplicas y, si una réplica realiza concurrencia interna, un límite explícito para no generar carga descontrolada sobre Wikimedia.
+Cada ImageFetcher descarga secuencialmente. Las tres réplicas permiten procesar hasta tres batches de descarga simultáneamente y funcionan como límite explícito de concurrencia, evitando agregar un pool interno que podría generar carga descontrolada sobre Wikimedia. La cantidad puede ajustarse a partir de las métricas de cola, CPU y latencia observadas en la demo.
 
 ---
 
@@ -488,7 +490,7 @@ quedan para tolerancia a fallos.
 
 ### 12.3 Comunicación por grupos
 
-`MessageMiddlewareExchangeRabbitMQ` toma como base la versión utilizada en el TP de Coordinación. Declara un exchange `direct`; cada instancia consumidora crea su propia cola exclusiva y la vincula con las routing keys configuradas. Una instancia usada solamente para publicar declara el exchange sin crear una cola innecesaria. Cuando varias réplicas vinculan sus colas con la misma clave, una publicación de control llega a todas ellas. El negocio no conoce bindings ni detalles de RabbitMQ. DATA continúa usando colas compartidas o particionadas y el control de finalización utiliza este broadcast al grupo. El patrón ya está integrado en Preprocessor mediante `preprocessor.control` y en QueryRouter mediante `query_router.control`; queda extenderlo a los demás grupos replicados.
+`MessageMiddlewareExchangeRabbitMQ` toma como base la versión utilizada en el TP de Coordinación. Declara un exchange `direct`; cada instancia consumidora crea su propia cola exclusiva y la vincula con las routing keys configuradas. Una instancia usada solamente para publicar declara el exchange sin crear una cola innecesaria. Cuando varias réplicas vinculan sus colas con la misma clave, una publicación de control llega a todas ellas. El negocio no conoce bindings ni detalles de RabbitMQ. DATA continúa usando colas compartidas o particionadas y el control de finalización utiliza este broadcast al grupo. El patrón ya está integrado en Preprocessor, QueryRouter, Until2020Filter y Q1EnglishFilter mediante sus respectivos exchanges de control; queda extenderlo a los demás grupos replicados.
 
 ### 12.4 ACK, NACK y prefetch
 
@@ -512,7 +514,7 @@ Confundir `INPUT_END` con `QUERY_END` produciría finales anticipados mientras t
 
 ### 13.2 Evolución desde la versión funcional
 
-La primera versión utilizó una sola réplica por etapa: DATA y `INPUT_END` pasaban por la misma cola, por lo que el consumidor único procesaba los batches anteriores y después reenviaba el final. Q1 e ImageFetcher todavía producen `QUERY_END` provisionales.
+La primera versión utilizó una sola réplica por etapa: DATA y `INPUT_END` pasaban por la misma cola, por lo que el consumidor único procesaba los batches anteriores y después reenviaba el final. Los productores finales de Q1 e ImageFetcher ya emiten `QUERY_PARTITION_END` desde tres réplicas y ResultSink completa ambas consultas mediante barreras configuradas con tres particiones.
 
 Esa solución permitió comprobar el recorrido funcional, pero no era correcta al agregar consumidores competidores. Preprocessor ya fue migrado al protocolo distribuido; las etapas restantes se migrarán reutilizando el mismo patrón.
 
@@ -527,7 +529,7 @@ El diseño, basado en el patrón del TP de Coordinación, es:
 5. La etapa responsable mantiene una barrera con la cantidad configurada de particiones.
 6. Solamente al completar la barrera propaga el cierre o produce `QUERY_END`.
 
-No se asume orden entre colas distintas. Tampoco se fabrican finales durante `SIGTERM`. `CoordinatedConsumer` encapsula el hilo de control, la cola local segura y la pausa temporal del loop de DATA. Preprocessor y QueryRouter lo reutilizan para terminar el batch en vuelo, publicar `PARTITION_END` por la misma conexión que DATA y reanudar el consumo. Cada QueryRouter espera los tres finales de Preprocessor y emite su propio final en ambas ramas; Until2020Filter y WordExtractor esperan los tres IDs de QueryRouter antes de propagar un único cierre.
+No se asume orden entre colas distintas. Tampoco se fabrican finales durante `SIGTERM`. `CoordinatedConsumer` encapsula el hilo de control, la cola local segura y la pausa temporal del loop de DATA. Preprocessor, QueryRouter, Until2020Filter, Q1EnglishFilter, Q2BiographyFilter e ImageFetcher lo reutilizan para terminar el batch en vuelo, publicar su final por la misma conexión que DATA y reanudar el consumo. Cada QueryRouter espera los tres finales de Preprocessor y emite su propio final en ambas ramas; cada Until2020Filter espera los tres IDs de QueryRouter; y las etapas finales de Q1/Q2 completan sucesivamente sus barreras de tres particiones. WordExtractor conserva por ahora una barrera singleton.
 
 ---
 
@@ -551,7 +553,7 @@ Para la demo se utiliza tres como cantidad inicial en los grupos coordinados y s
 
 ### 14.3 Límites del escalamiento actual
 
-Docker Compose despliega tres particiones de InputBatcher, tres instancias de Preprocessor, tres de QueryRouter y una instancia de los demás componentes funcionales. InputBatcher demuestra particionado stateful con afinidad por ejecución; los dos grupos siguientes demuestran consumidores competidores, broadcast de control y barreras efectivas en ambas ramas. Todavía falta extender el protocolo a los demás componentes replicables y particionados.
+Docker Compose despliega tres particiones de InputBatcher y tres instancias de Preprocessor, QueryRouter, Until2020Filter, Q1EnglishFilter, Q2BiographyFilter e ImageFetcher. Los demás componentes funcionales conservan una instancia. InputBatcher demuestra particionado stateful con afinidad por ejecución; los seis grupos stateless siguientes demuestran consumidores competidores, broadcast de control y barreras efectivas. Todavía falta extender el protocolo a los demás componentes replicables y particionados.
 
 La cantidad de particiones de una etapa stateful deberá permanecer fija mientras existan ejecuciones activas, salvo que se implemente migración explícita de estado.
 
@@ -623,7 +625,7 @@ Docker Compose contiene:
 - InputBatcher particiones 0, 1 y 2
 - Preprocessor réplicas 0, 1 y 2
 - QueryRouter réplicas 0, 1 y 2
-- Until2020Filter
+- Until2020Filter réplicas 0, 1 y 2
 - Q1
 - Q2BiographyFilter
 - ImageFetcher
@@ -776,9 +778,12 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 
 ### 22.2 Evidencia disponible al corte
 
-- La suite local completa pasa con 197 tests.
+- La suite local completa pasa con 216 tests.
 - Se conectaron doce clientes mínimos al Gateway con los InputBatcher detenidos. Sus 24 mensajes —un artículo y un final por ejecución— quedaron distribuidos entre `input_batcher.input.0`, `.1` y `.2` sin dividir una ejecución. Al iniciar las tres particiones, cada cola tuvo un único consumidor, las tres quedaron vacías y `preprocessor.input` recibió los 24 mensajes esperados.
 - Se validaron con RabbitMQ real tres réplicas de Preprocessor y tres de QueryRouter, con tres bindings exclusivos en cada exchange de control. Nueve batches produjeron nueve mensajes y un único final en cada una de las cuatro salidas posteriores a Until2020Filter y WordExtractor. Una segunda ejecución confirmó que ambos grupos reanudan el consumo después de sus barreras.
+- Se validaron tres réplicas de Until2020Filter con tres bindings exclusivos. Seis batches y tres finales de QueryRouter produjeron tres resultados Q1, ningún resultado Q2 y un único `QUERY_END` por consulta. Una segunda ejecución vacía sin reiniciar containers confirmó la reanudación y limpieza de las barreras.
+- Se validaron tres réplicas de Q1EnglishFilter con tres bindings exclusivos en `q1.control`. Una ejecución distribuyó sus candidatos entre las réplicas y completó la barrera de tres particiones en ResultSink; una segunda ejecución vacía, sin reiniciar containers, produjo exactamente un `QUERY_END`, confirmando la limpieza del estado y la reanudación del consumo.
+- Se validaron tres réplicas de Q2BiographyFilter y tres de ImageFetcher, con tres consumidores en cada cola y tres bindings exclusivos en cada exchange de control. Seis candidatos sin URL atravesaron ambas etapas; los tres ImageFetchers completaron sus barreras y ResultSink entregó un único `QUERY_END` de Q2. No hubo mensajes duplicados ni pendientes, y una segunda ejecución vacía sin reiniciar containers confirmó la limpieza del estado.
 - Se verificó el recorrido Q1 hasta `result_sink.input` con RabbitMQ real.
 - Se verificó Q2 desde `until_2020.input` hasta resultados Base64 y `QUERY_END` provisional.
 - Se verificó que un candidato sin URL se registra y se omite.
@@ -832,9 +837,9 @@ El pipeline funcional está completo y fue comparado con la referencia serial so
 
 1. Extender `MessageMiddlewareExchangeRabbitMQ` a los grupos de control restantes.
 2. Reutilizar `PARTITION_END` y completar las barreras por etapa.
-3. Reemplazar los `QUERY_END` provisionales de Q1/Q2/Q3 por `QUERY_PARTITION_END` y adoptar el mismo contrato en Q4/Q5 al replicar sus productores finales.
+3. Extender `QUERY_PARTITION_END`, ya utilizado por Q1 y Q2, a Q3-Q5 al replicar sus productores finales.
 4. Configurar múltiples réplicas y particiones.
-5. Limitar concurrencia HTTP de ImageFetcher.
+5. Medir la concurrencia HTTP limitada por las tres réplicas de ImageFetcher y ajustar su cantidad si las métricas lo justifican.
 6. Completar graceful shutdown.
 7. Medir el sistema y justificar cantidades de réplicas.
 8. Actualizar y exportar todos los diagramas 4+1.

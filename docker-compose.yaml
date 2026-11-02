@@ -405,7 +405,7 @@ services:
       rabbitmq:
         condition: service_healthy
 
-  until-2020-filter:
+  until-2020-filter-0:
     build:
       context: .
       dockerfile: src/until_2020_filter/Dockerfile
@@ -415,12 +415,48 @@ services:
       INPUT_QUEUE: until_2020.input
       Q1_OUTPUT_QUEUE: q1_english_filter.input
       Q2_OUTPUT_QUEUE: q2_biography_filter.input
+      CONTROL_EXCHANGE: until_2020.control
+      PARTITION_ID: "0"
       QUERY_ROUTER_PARTITION_COUNT: "3"
     depends_on:
       rabbitmq:
         condition: service_healthy
 
-  q1:
+  until-2020-filter-1:
+    build:
+      context: .
+      dockerfile: src/until_2020_filter/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: until_2020.input
+      Q1_OUTPUT_QUEUE: q1_english_filter.input
+      Q2_OUTPUT_QUEUE: q2_biography_filter.input
+      CONTROL_EXCHANGE: until_2020.control
+      PARTITION_ID: "1"
+      QUERY_ROUTER_PARTITION_COUNT: "3"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  until-2020-filter-2:
+    build:
+      context: .
+      dockerfile: src/until_2020_filter/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: until_2020.input
+      Q1_OUTPUT_QUEUE: q1_english_filter.input
+      Q2_OUTPUT_QUEUE: q2_biography_filter.input
+      CONTROL_EXCHANGE: until_2020.control
+      PARTITION_ID: "2"
+      QUERY_ROUTER_PARTITION_COUNT: "3"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  q1-0:
     build:
       context: .
       dockerfile: src/q1/Dockerfile
@@ -429,11 +465,46 @@ services:
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q1_english_filter.input
       OUTPUT_QUEUE: result_sink.input
+      CONTROL_EXCHANGE: q1.control
+      PARTITION_ID: "0"
+      UNTIL_2020_PARTITION_COUNT: "3"
     depends_on:
       rabbitmq:
         condition: service_healthy
 
-  q2-biography-filter:
+  q1-1:
+    build:
+      context: .
+      dockerfile: src/q1/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q1_english_filter.input
+      OUTPUT_QUEUE: result_sink.input
+      CONTROL_EXCHANGE: q1.control
+      PARTITION_ID: "1"
+      UNTIL_2020_PARTITION_COUNT: "3"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  q1-2:
+    build:
+      context: .
+      dockerfile: src/q1/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q1_english_filter.input
+      OUTPUT_QUEUE: result_sink.input
+      CONTROL_EXCHANGE: q1.control
+      PARTITION_ID: "2"
+      UNTIL_2020_PARTITION_COUNT: "3"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  q2-biography-filter-0:
     build:
       context: .
       dockerfile: src/q2/biography_filter/Dockerfile
@@ -442,11 +513,46 @@ services:
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q2_biography_filter.input
       OUTPUT_QUEUE: image_fetcher.input
+      CONTROL_EXCHANGE: q2_biography_filter.control
+      PARTITION_ID: "0"
+      UNTIL_2020_PARTITION_COUNT: "3"
     depends_on:
       rabbitmq:
         condition: service_healthy
 
-  image-fetcher:
+  q2-biography-filter-1:
+    build:
+      context: .
+      dockerfile: src/q2/biography_filter/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q2_biography_filter.input
+      OUTPUT_QUEUE: image_fetcher.input
+      CONTROL_EXCHANGE: q2_biography_filter.control
+      PARTITION_ID: "1"
+      UNTIL_2020_PARTITION_COUNT: "3"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  q2-biography-filter-2:
+    build:
+      context: .
+      dockerfile: src/q2/biography_filter/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q2_biography_filter.input
+      OUTPUT_QUEUE: image_fetcher.input
+      CONTROL_EXCHANGE: q2_biography_filter.control
+      PARTITION_ID: "2"
+      UNTIL_2020_PARTITION_COUNT: "3"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  image-fetcher-0:
     build:
       context: .
       dockerfile: src/q2/image_fetcher/Dockerfile
@@ -455,6 +561,41 @@ services:
       MOM_HOST: rabbitmq
       INPUT_QUEUE: image_fetcher.input
       OUTPUT_QUEUE: result_sink.input
+      CONTROL_EXCHANGE: image_fetcher.control
+      PARTITION_ID: "0"
+      BIOGRAPHY_FILTER_PARTITION_COUNT: "3"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  image-fetcher-1:
+    build:
+      context: .
+      dockerfile: src/q2/image_fetcher/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: image_fetcher.input
+      OUTPUT_QUEUE: result_sink.input
+      CONTROL_EXCHANGE: image_fetcher.control
+      PARTITION_ID: "1"
+      BIOGRAPHY_FILTER_PARTITION_COUNT: "3"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  image-fetcher-2:
+    build:
+      context: .
+      dockerfile: src/q2/image_fetcher/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: image_fetcher.input
+      OUTPUT_QUEUE: result_sink.input
+      CONTROL_EXCHANGE: image_fetcher.control
+      PARTITION_ID: "2"
+      BIOGRAPHY_FILTER_PARTITION_COUNT: "3"
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -467,8 +608,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: result_sink.input
-      Q1_PARTITION_COUNT: "${Q1_PARTITION_COUNT:-1}"
-      Q2_PARTITION_COUNT: "${Q2_PARTITION_COUNT:-1}"
+      Q1_PARTITION_COUNT: "${Q1_PARTITION_COUNT:-3}"
+      Q2_PARTITION_COUNT: "${Q2_PARTITION_COUNT:-3}"
       Q3_PARTITION_COUNT: "${Q3_PARTITION_COUNT:-3}"
       Q4_PARTITION_COUNT: "${Q4_PARTITION_COUNT:-1}"
       Q5_PARTITION_COUNT: "${Q5_PARTITION_COUNT:-1}"

@@ -27,3 +27,15 @@ class Q2BiographyFilterConfig:
             "image_fetcher.input",
         )
     )
+    control_exchange: str = field(
+        default_factory=lambda: os.environ.get(
+            "CONTROL_EXCHANGE",
+            "q2_biography_filter.control",
+        )
+    )
+    partition_id: int = field(
+        default_factory=lambda: int(os.environ.get("PARTITION_ID", "0"))
+    )
+    until_2020_partition_count: int = field(
+        default_factory=lambda: int(os.environ.get("UNTIL_2020_PARTITION_COUNT", "1"))
+    )
