@@ -1,9 +1,9 @@
 import unittest
-from unittest.mock import Mock, call
+from unittest.mock import Mock, call, patch
 
 from common.message_protocol.message import (
     AckMessage,
-    RoutedInputEndMessage,
+    PartitionEndMessage,
     TokenizedArticleBatchMessage,
 )
 from common.partition_router import PartitionRouter
@@ -25,6 +25,12 @@ class TestQ3WordProjector(unittest.TestCase):
             ],
             execution_id="run",
             reply_queue="results.run",
+        )
+        self.partition_end_0 = PartitionEndMessage(
+            "word_extractor", 0, "run", "results.run"
+        )
+        self.partition_end_1 = PartitionEndMessage(
+            "word_extractor", 1, "run", "results.run"
         )
 
     def test_deduplicates_per_article_keeps_stopwords_and_routes_both_languages(self):
@@ -65,12 +71,12 @@ class TestQ3WordProjector(unittest.TestCase):
                 ),
             )
 
-    def test_controller_publishes_before_ack_and_forwards_end_to_empty_partitions(self):
+    def test_controller_publishes_before_ack_and_broadcasts_input_end(self):
         messaging, ack, nack = Mock(), Mock(), Mock()
         events = Mock()
         events.attach_mock(messaging, "messaging")
         events.attach_mock(ack, "ack")
-        controller = Q3WordProjectorController(messaging, self.router)
+        controller = Q3WordProjectorController(messaging, self.router, 1, 2)
         controller.process_message(self.batch, ack, nack)
         expected = [
             call.messaging.publish(q, b)
@@ -78,45 +84,65 @@ class TestQ3WordProjector(unittest.TestCase):
         ]
         self.assertEqual(expected + [call.ack()], events.mock_calls)
         messaging.reset_mock()
-        end = RoutedInputEndMessage("run", "results.run")
-        controller.process_message(end, ack, nack)
+        controller.process_message(self.partition_end_0, ack, nack)
+        messaging.broadcast_control.assert_called_once_with(self.partition_end_0)
+        nack.assert_not_called()
+
+    def test_control_barrier_forwards_own_end_to_every_aggregator(self):
+        messaging = Mock()
+        controller = Q3WordProjectorController(messaging, self.router, 1, 2)
+
+        controller.process_control_message(self.partition_end_0)
+        messaging.publish.assert_not_called()
+        controller.process_control_message(self.partition_end_1)
+
+        expected = PartitionEndMessage("q3_word_projector", 1, "run", "results.run")
         self.assertEqual(
-            [call.publish(f"q3_word_aggregator.input.{i}", end) for i in range(7)],
+            [call.publish(f"q3_word_aggregator.input.{i}", expected) for i in range(7)],
             messaging.mock_calls,
         )
-        nack.assert_not_called()
 
     def test_failure_and_unexpected_message_are_not_acked(self):
         for message in (
             self.batch,
-            RoutedInputEndMessage("run", "reply"),
             AckMessage(),
         ):
             with self.subTest(message=message):
                 messaging, ack, nack = Mock(), Mock(), Mock()
                 messaging.publish.side_effect = RuntimeError("unavailable")
                 with self.assertRaises((RuntimeError, ValueError)):
-                    Q3WordProjectorController(messaging, self.router).process_message(
-                        message, ack, nack
-                    )
+                    Q3WordProjectorController(
+                        messaging, self.router, 1, 2
+                    ).process_message(message, ack, nack)
                 ack.assert_not_called()
                 nack.assert_called_once_with()
 
     def test_messaging_routes_serialized_messages_and_deserializes_input(self):
         input_queue = Mock()
         outputs = {f"out.{i}": Mock() for i in range(2)}
-        messaging = Q3WordProjectorMessaging(input_queue, outputs)
-        end = RoutedInputEndMessage("run", "reply")
+        control_input = Mock()
+        control_output = Mock()
+        with patch("q3.word_projector.messaging.CoordinatedConsumer") as consumer_class:
+            consumer = consumer_class.return_value
+            messaging = Q3WordProjectorMessaging(
+                input_queue,
+                outputs,
+                control_input,
+                control_output,
+            )
+        end = PartitionEndMessage("q3_word_projector", 1, "run", "reply")
         messaging.publish("out.1", end)
         outputs["out.0"].send.assert_not_called()
         outputs["out.1"].send.assert_called_once_with(end.serialize())
-        callback, ack, nack = Mock(), Mock(), Mock()
-        messaging.start_consuming(callback)
-        input_queue.start_consuming.call_args.args[0](self.batch.serialize(), ack, nack)
-        callback.assert_called_once_with(self.batch, ack, nack)
+        callback, control_callback = Mock(), Mock()
+        messaging.start_consuming(callback, control_callback)
+        consumer.start_consuming.assert_called_once_with(callback, control_callback)
+        messaging.broadcast_control(end)
+        control_output.send.assert_called_once_with(end.serialize())
         messaging.stop_consuming()
         messaging.close()
-        input_queue.stop_consuming.assert_called_once()
-        input_queue.close.assert_called_once()
+        consumer.stop_consuming.assert_called_once()
+        consumer.close.assert_called_once()
         for queue in outputs.values():
             queue.close.assert_called_once()
+        control_output.close.assert_called_once()

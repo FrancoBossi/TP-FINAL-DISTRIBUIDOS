@@ -27,10 +27,31 @@ class Q4Q5WordProjectorConfig:
             "q4_word_counter.input.0",
         )
     )
+    q4_output_queue_prefix: str = field(
+        default_factory=lambda: os.environ.get(
+            "Q4_OUTPUT_QUEUE_PREFIX", "q4_word_counter.input"
+        )
+    )
+    q4_partition_count: int = field(
+        default_factory=lambda: int(os.environ.get("Q4_PARTITION_COUNT", "1"))
+    )
 
     q5_output_queue: str = field(
         default_factory=lambda: os.environ.get(
             "Q5_OUTPUT_QUEUE",
             "q5_date_router.input",
+        )
+    )
+    control_exchange: str = field(
+        default_factory=lambda: os.environ.get(
+            "CONTROL_EXCHANGE", "q4_q5_word_projector.control"
+        )
+    )
+    partition_id: int = field(
+        default_factory=lambda: int(os.environ.get("PARTITION_ID", "0"))
+    )
+    word_extractor_partition_count: int = field(
+        default_factory=lambda: int(
+            os.environ.get("WORD_EXTRACTOR_PARTITION_COUNT", "1")
         )
     )

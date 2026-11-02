@@ -24,3 +24,9 @@ class Q5ComparatorConfig:
             "/tmp/q5-candidates",
         )
     )
+    partition_id: int = field(
+        default_factory=lambda: int(os.environ.get("PARTITION_ID", "0"))
+    )
+    date_router_partition_count: int = field(
+        default_factory=lambda: int(os.environ.get("DATE_ROUTER_PARTITION_COUNT", "1"))
+    )

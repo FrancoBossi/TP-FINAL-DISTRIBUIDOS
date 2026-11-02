@@ -2,15 +2,44 @@ import unittest
 from unittest.mock import Mock, call
 
 from common.message_protocol.message import (
+    PartitionEndMessage,
     Q5HistoricalWordCountBatchMessage,
     Q5PartialStatsMessage,
     Q5StatsPartitionEndMessage,
-    RoutedInputEndMessage,
 )
+from common.partition_router import PartitionRouter
 from q5.stats_worker.controller import Q5StatsWorkerController
+from q5.stats_worker.messaging import Q5StatsWorkerMessaging
 
 
 class TestQ5StatsWorkerController(unittest.TestCase):
+    def test_messaging_routes_one_execution_to_one_average_reducer(self):
+        input_queue = Mock()
+        output_queues = {
+            f"q5_average_reducer.input.{partition}": Mock() for partition in range(3)
+        }
+        router = PartitionRouter("q5_average_reducer.input", 3)
+        messaging = Q5StatsWorkerMessaging(
+            input_queue,
+            output_queues["q5_average_reducer.input.0"],
+            output_queues,
+            router,
+        )
+        message = Q5PartialStatsMessage(
+            10,
+            2,
+            "execution-123",
+            "results.execution-123",
+        )
+
+        messaging.publish(message)
+
+        selected_queue = router.queue_for("execution-123")
+        output_queues[selected_queue].send.assert_called_once_with(message.serialize())
+        for queue_name, queue in output_queues.items():
+            if queue_name != selected_queue:
+                queue.send.assert_not_called()
+
     def test_accumulates_batches_and_publishes_partial_stats_before_end(self):
         messaging = Mock()
         controller = Q5StatsWorkerController(
@@ -30,7 +59,9 @@ class TestQ5StatsWorkerController(unittest.TestCase):
             execution_id="execution-123",
             reply_queue="results.execution-123",
         )
-        end = RoutedInputEndMessage(
+        end = PartitionEndMessage(
+            stage="q5_date_router",
+            partition_id=0,
             execution_id="execution-123",
             reply_queue="results.execution-123",
         )
@@ -77,7 +108,9 @@ class TestQ5StatsWorkerController(unittest.TestCase):
             execution_id="execution-123",
             reply_queue="results.execution-123",
         )
-        end = RoutedInputEndMessage(
+        end = PartitionEndMessage(
+            stage="q5_date_router",
+            partition_id=0,
             execution_id="execution-123",
             reply_queue="results.execution-123",
         )

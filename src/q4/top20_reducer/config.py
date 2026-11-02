@@ -18,3 +18,6 @@ class Q4Top20ReducerConfig:
     output_queue: str = field(
         default_factory=lambda: os.environ.get("OUTPUT_QUEUE", "result_sink.input")
     )
+    partition_count: int = field(
+        default_factory=lambda: int(os.environ.get("PARTITION_COUNT", "1"))
+    )

@@ -3,6 +3,7 @@ import signal
 from functools import partial
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
+from common.partition_router import PartitionRouter
 from q5.stats_worker.config import Q5StatsWorkerConfig, configure_logging
 from q5.stats_worker.controller import Q5StatsWorkerController
 from q5.stats_worker.messaging import Q5StatsWorkerMessaging
@@ -14,19 +15,25 @@ def main() -> int:
     configure_logging()
     config = Q5StatsWorkerConfig()
 
+    output_queues = {
+        f"{config.output_queue_prefix}.{partition}": MessageMiddlewareQueueRabbitMQ(
+            config.mom_host, f"{config.output_queue_prefix}.{partition}"
+        )
+        for partition in range(config.reducer_partition_count)
+    }
     messaging = Q5StatsWorkerMessaging(
         MessageMiddlewareQueueRabbitMQ(
             config.mom_host,
             config.input_queue,
         ),
-        MessageMiddlewareQueueRabbitMQ(
-            config.mom_host,
-            config.output_queue,
-        ),
+        next(iter(output_queues.values())),
+        output_queues,
+        PartitionRouter(config.output_queue_prefix, config.reducer_partition_count),
     )
     controller = Q5StatsWorkerController(
         messaging,
         config.partition_id,
+        config.date_router_partition_count,
     )
 
     signal.signal(

@@ -16,12 +16,16 @@ class Q5AverageReducerMessaging:
         self,
         input_queue: MessageMiddlewareQueue,
         output_queue: MessageMiddlewareQueue,
+        output_queues: list[MessageMiddlewareQueue] | None = None,
     ) -> None:
         self._input_queue = input_queue
         self._output_queue = output_queue
+        self._output_queues = output_queues or [output_queue]
 
     def publish(self, message: Message) -> None:
-        self._output_queue.send(message.serialize())
+        body = message.serialize()
+        for queue in self._output_queues:
+            queue.send(body)
 
     def start_consuming(self, on_message: MessageCallback) -> None:
         def deserialize_message(
@@ -41,4 +45,5 @@ class Q5AverageReducerMessaging:
         try:
             self._input_queue.close()
         finally:
-            self._output_queue.close()
+            for queue in self._output_queues:
+                queue.close()

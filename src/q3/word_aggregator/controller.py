@@ -2,12 +2,13 @@ from dataclasses import dataclass
 
 from common.message_protocol.message import (
     Message,
+    PartitionEndMessage,
     Q3WordPresenceBatchMessage,
     QueryEndMessage,
+    QueryPartitionEndMessage,
     ResultMessage,
-    RoutedInputEndMessage,
 )
-from q3.word_aggregator.messaging import Ack, Nack, Q3WordAggregatorMessaging
+from q3.word_aggregator.messaging import Ack, Nack
 
 
 @dataclass
@@ -18,9 +19,23 @@ class WordPresence:
 
 
 class Q3WordAggregatorController:
-    def __init__(self, messaging: Q3WordAggregatorMessaging) -> None:
+    def __init__(
+        self,
+        messaging,
+        partition_id: int = 0,
+        partition_count: int = 1,
+        projector_partition_count: int = 1,
+    ) -> None:
+        if partition_count <= 0 or not 0 <= partition_id < partition_count:
+            raise ValueError("invalid Q3 partition configuration")
+        if projector_partition_count <= 0:
+            raise ValueError("Q3WordProjector partition count must be positive")
         self._messaging = messaging
+        self._partition_id = partition_id
+        self._partition_count = partition_count
+        self._projector_partition_count = projector_partition_count
         self._executions: dict[str, dict[str, WordPresence]] = {}
+        self._finished_projector_partitions: dict[str, set[int]] = {}
 
     def process_message(self, message: Message, ack: Ack, nack: Nack) -> None:
         try:
@@ -35,15 +50,50 @@ class Q3WordAggregatorController:
             case Q3WordPresenceBatchMessage():
                 for presence in message.presences:
                     self._handle_presence(message.execution_id, presence)
-            case RoutedInputEndMessage():
-                self._messaging.publish(
-                    QueryEndMessage(query_id=3, execution_id=message.execution_id)
+            case PartitionEndMessage():
+                self._validate_projector_partition_end(message)
+                finished_partitions = self._finished_projector_partitions.setdefault(
+                    message.execution_id,
+                    set(),
                 )
+                finished_partitions.add(message.partition_id)
+
+                if len(finished_partitions) < self._projector_partition_count:
+                    return
+
+                if self._partition_count == 1:
+                    self._messaging.publish(
+                        QueryEndMessage(query_id=3, execution_id=message.execution_id)
+                    )
+                else:
+                    self._messaging.publish(
+                        QueryPartitionEndMessage(
+                            query_id=3,
+                            partition_id=self._partition_id,
+                            execution_id=message.execution_id,
+                        )
+                    )
                 self._executions.pop(message.execution_id, None)
+                self._finished_projector_partitions.pop(message.execution_id)
             case _:
                 raise ValueError(
-                    "Q3WordAggregator expected Q3_WORD_PRESENCE_BATCH or ROUTED_INPUT_END"
+                    "Q3WordAggregator expected Q3_WORD_PRESENCE_BATCH or PARTITION_END"
                 )
+
+    def _validate_projector_partition_end(
+        self,
+        message: PartitionEndMessage,
+    ) -> None:
+        if message.stage != "q3_word_projector":
+            raise ValueError(
+                "Q3WordAggregator expected q3_word_projector partition end, "
+                f"got {message.stage}"
+            )
+
+        if not 0 <= message.partition_id < self._projector_partition_count:
+            raise ValueError(
+                f"Invalid Q3WordProjector partition id: {message.partition_id}"
+            )
 
     def _handle_presence(self, execution_id: str, presence: dict[str, str]) -> None:
         word = presence["word"]

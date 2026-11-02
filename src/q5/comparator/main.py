@@ -29,6 +29,8 @@ def main() -> int:
     controller = Q5ComparatorController(
         messaging,
         candidate_buffer,
+        config.partition_id,
+        config.date_router_partition_count,
     )
 
     signal.signal(

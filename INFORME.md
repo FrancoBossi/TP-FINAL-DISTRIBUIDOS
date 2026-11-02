@@ -12,7 +12,7 @@ El diseño separa tres etapas de evolución:
 2. **Escalabilidad, dentro de este mismo hito:** múltiples réplicas, protocolo de control, `PARTITION_END`, barreras, clientes concurrentes y graceful shutdown completo.
 3. **Tolerancia a fallos, en el hito posterior:** persistencia, recuperación ante caídas, deduplicación e idempotencia frente a reentregas.
 
-Al corte de este documento se encuentran implementados el cliente, el Gateway concurrente, el ingreso incremental desde Parquet, el batching por bytes, el preprocesamiento, el fan-out del QueryRouter, las ramas funcionales de Q1-Q5 y ResultSink. La rama textual incluye WordExtractor, Q3WordProjector, Q3WordAggregator, Q4WordCounter, Q4Top20Reducer, la proyección compartida de Q4/Q5, Q5DateRouter, Q5StatsWorker, Q5AverageReducer y Q5Comparator con almacenamiento temporal JSONL en un volumen Docker. El recorrido punta a punta se validó con 50.000 artículos: el cliente recibió los cinco finales y los cinco archivos coincidieron con la referencia serial. El ingreso stateful despliega tres particiones de InputBatcher con routing estable por ejecución. Preprocessor, QueryRouter, Until2020Filter, Q1EnglishFilter, Q2BiographyFilter e ImageFetcher despliegan tres réplicas coordinadas mediante exchanges de control. Q1 y Q2 entregan tres finales de partición a la barrera genérica de ResultSink. Q4 y Q5 funcionan actualmente con una partición y las barreras de los grupos restantes continúan pendientes dentro del hito de escalabilidad.
+Al corte de este documento se encuentran implementados el cliente, el Gateway concurrente, el ingreso incremental desde Parquet, el batching por bytes, el preprocesamiento, el fan-out del QueryRouter, las ramas Q1-Q5 y ResultSink. El recorrido punta a punta se validó con 50.000 artículos: el cliente recibió los cinco finales y los cinco archivos coincidieron con la referencia serial. El pipeline despliega tres réplicas o particiones en InputBatcher, Preprocessor, QueryRouter y en las etapas de Q1-Q5 que procesan o mantienen estado distribuido. Los componentes stateless coordinan su cierre mediante exchanges de control; los stateful aplican routing estable y barreras. Q1, Q2, Q3 y Q5 entregan tres finales de partición a ResultSink. En Q4, los parciales de cada ejecución convergen en uno de tres reducers físicos, que produce un único final. Gateway y ResultSink permanecen como instancias únicas. El trabajo pendiente principal de este hito es completar el graceful shutdown coordinado y validar nuevamente el dataset completo bajo la topología replicada.
 
 ---
 
@@ -155,24 +155,24 @@ El siguiente DAG representa el flujo completo de datos de la arquitectura objeti
 | Q1EnglishFilter | Filtrar inglés y producir Q1 | Stateless, replicable | Cola compartida | Implementado, tres réplicas con control distribuido |
 | Q2BiographyFilter | Detectar sección biográfica | Stateless, replicable | Cola compartida | Implementado, tres réplicas con control distribuido |
 | ImageFetcher | Descargar imagen y producir Q2 | Replicable, I/O-bound | Cola compartida | Implementado, tres réplicas con descarga secuencial por instancia |
-| WordExtractor | Tokenización básica compartida | Stateless, replicable | Cola compartida | Implementado, una réplica y barrera para tres QueryRouters |
-| Q3WordProjector | Palabras únicas de cada artículo | Stateless, replicable | Cola compartida | Implementado, una réplica |
-| Q3WordAggregator | Presencia por idioma | Stateful y particionado | `(execution_id, word)` | Implementado, una partición |
-| Q4Q5WordProjector | Stopwords, deduplicación y `word_count` | Stateless, replicable | Cola compartida | Implementado, una réplica |
-| Q4WordCounter | Conteo global distribuido y top local | Stateful y particionado | `(execution_id, word)` | Implementado, una partición |
-| Q4Top20Reducer | Fusionar tops locales | Stateful, reducers replicados | `execution_id` | Implementado, una instancia |
-| Q5DateRouter | Separar histórico y candidatos | Stateless, replicable | Cola compartida | Implementado, una réplica |
-| Q5StatsWorker | Suma y cantidad parciales | Stateful por ejecución local | Distribución de trabajo | Implementado, una partición |
-| Q5AverageReducer | Calcular promedio global | Stateful, reducers replicados | `execution_id` | Implementado, una instancia y barrera configurable |
-| Q5Comparator | Esperar promedio y comparar candidatos | Stateful y particionado | `(execution_id, article_id)` | Implementado, una instancia y buffer JSONL |
-| ResultSink | Reenviar resultados y finales hacia cada Gateway | Stateless en la versión actual; stateful al incorporar barreras | `execution_id` | Implementado con una instancia y finales provisionales |
+| WordExtractor | Tokenización básica compartida | Stateless, replicable | Cola compartida | Implementado, tres réplicas coordinadas |
+| Q3WordProjector | Palabras únicas de cada artículo | Stateless, replicable | Cola compartida | Implementado, tres réplicas coordinadas |
+| Q3WordAggregator | Presencia por idioma | Stateful y particionado | `(execution_id, word)` | Implementado, tres particiones con `QUERY_PARTITION_END` |
+| Q4Q5WordProjector | Stopwords, deduplicación y `word_count` | Stateless, replicable | Cola compartida | Implementado, tres réplicas coordinadas |
+| Q4WordCounter | Conteo global distribuido y top local | Stateful y particionado | `(execution_id, word)` | Implementado, tres particiones con barrera |
+| Q4Top20Reducer | Fusionar tops locales | Stateful, reducers replicados | `execution_id` | Implementado, tres reducers físicos |
+| Q5DateRouter | Separar histórico y candidatos | Stateless, replicable | Cola compartida | Implementado, tres réplicas coordinadas |
+| Q5StatsWorker | Suma y cantidad parciales | Stateful por ejecución local | `execution_id` | Implementado, tres particiones con afinidad estable |
+| Q5AverageReducer | Calcular promedio global | Stateful, reducer lógico | `execution_id` | Implementado, tres reducers físicos y barrera de tres workers |
+| Q5Comparator | Esperar promedio y comparar candidatos | Stateful y particionado | `(execution_id, article_id)` | Implementado, tres particiones con buffers JSONL aislados |
+| ResultSink | Reenviar resultados y consolidar finales hacia cada Gateway | Stateful por barreras | `execution_id` | Implementado con una instancia y barreras por query |
 | MessageMiddleware | Abstraer queues, publicación dinámica, ACK/NACK y grupos | Infraestructura común | - | Queue, publisher dinámico y exchange directo implementados sobre RabbitMQ |
 
 ### 5.3 Estado del flujo implementado
 
 Actualmente el camino funcional de Q1-Q5 converge en ResultSink y desde allí llega a las colas temporales `results.<execution_id>` que consume Gateway.
 
-El QueryRouter publica la proyección textual en `word_extractor.input`. WordExtractor tokeniza los abstracts y alimenta las ramas de Q3 y Q4/Q5. Q3WordProjector deduplica palabras por artículo y las enruta por `(execution_id, word)`; Q3WordAggregator detecta la presencia en ambos idiomas y publica resultados y un final provisional. Q4Q5WordProjector elimina stopwords, deduplica por artículo y publica las proyecciones específicas en `q4_word_counter.input.0` y `q5_date_router.input`. La única instancia de Q4WordCounter produce un top local y Q4Top20Reducer lo convierte en resultados antes de publicar en `result_sink.input`. Q5DateRouter separa conteos históricos y candidatos; Q5StatsWorker y Q5AverageReducer calculan el promedio histórico y Q5Comparator compara los candidatos, usando un archivo temporal cuando el promedio todavía no está disponible. ResultSink consume los resultados y finales de Q1-Q5 y los reenvía inmediatamente a `results.<execution_id>`, desde donde Gateway los entrega al cliente mediante el protocolo TCP externo.
+El QueryRouter publica la proyección textual en `word_extractor.input`. Tres WordExtractors tokenizan los abstracts y alimentan las ramas de Q3 y Q4/Q5. Tres Q3WordProjectors deduplican palabras por artículo y las enrutan por `(execution_id, word)` hacia tres Q3WordAggregators. En Q4, tres projectors enrutan palabras hacia tres counters; los tops parciales de una ejecución convergen en uno de tres reducers. En Q5, tres DateRouters separan conteos históricos y candidatos; tres StatsWorkers y tres AverageReducers calculan promedios de ejecuciones distintas en paralelo, mientras tres Comparators reciben candidatos por `(execution_id, article_id)` y usan buffers aislados. ResultSink consume los resultados y finales de Q1-Q5 y los reenvía inmediatamente a `results.<execution_id>`, desde donde Gateway los entrega al cliente mediante el protocolo TCP externo.
 
 ---
 
@@ -352,15 +352,15 @@ Cada ImageFetcher descarga secuencialmente. Las tres réplicas permiten procesar
 
 ## 10. Rama textual Q3/Q4/Q5
 
-Esta sección combina el estado implementado de WordExtractor, Q3 y Q4 con la arquitectura objetivo de Q5 y del escalamiento posterior.
+Esta sección describe la rama textual replicada implementada para Q3, Q4 y Q5.
 
 ### 10.1 WordExtractor
 
-WordExtractor realiza solamente transformaciones comunes: minúsculas, tokenización y descarte de tokens exclusivamente numéricos. Conserva identidad, idioma, fecha y URL. No elimina stopwords ni filtra por fecha, porque esas reglas no son comunes a las tres consultas. La versión implementada transforma `TextArticleBatchMessage` en `TokenizedArticleBatchMessage`, publica el mismo batch en las colas independientes de Q3 y Q4/Q5 y reenvía `RoutedInputEndMessage` a ambas ramas. Cada artículo tokenizado incluye `has_abstract`, que distingue un abstract ausente (`None`) de uno presente pero vacío; esta diferencia es necesaria para reproducir el denominador de Q5 de la referencia serial.
+WordExtractor realiza solamente transformaciones comunes: minúsculas, tokenización y descarte de tokens exclusivamente numéricos. Conserva identidad, idioma, fecha y URL. No elimina stopwords ni filtra por fecha, porque esas reglas no son comunes a las tres consultas. Tres réplicas transforman `TextArticleBatchMessage` en `TokenizedArticleBatchMessage` y publican el mismo batch en las colas independientes de Q3 y Q4/Q5. Cada artículo tokenizado incluye `has_abstract`, que distingue un abstract ausente (`None`) de uno presente pero vacío; esta diferencia es necesaria para reproducir el denominador de Q5 de la referencia serial. Las réplicas coordinan los tres finales de QueryRouter mediante `word_extractor.control` y cada una emite su propio `PARTITION_END` hacia ambas ramas.
 
 ### 10.2 Q3: palabras compartidas
 
-`Q3WordProjector` deduplica las palabras dentro de cada artículo y publica `(execution_id, word, language)`. No elimina stopwords. La versión funcional utiliza una réplica y distribuye actualmente sobre una única partición de Q3WordAggregator.
+Tres Q3WordProjectors deduplican las palabras dentro de cada artículo y publican `(execution_id, word, language)`. No eliminan stopwords. Cada presencia se enruta por `(execution_id, word)` hacia una de tres particiones de Q3WordAggregator.
 
 `Q3WordAggregator` se particiona por `(execution_id, word)` y mantiene:
 
@@ -370,34 +370,31 @@ seen_fr
 emitted
 ```
 
-Cuando una palabra pasa por primera vez a estar presente en ambos idiomas se emite el resultado y se marca `emitted`. Una colisión del hash solamente coloca dos palabras en la misma réplica, no mezcla sus claves en el estado interno. Al recibir `RoutedInputEndMessage`, la implementación actual publica un `QUERY_END` provisional y limpia el estado de esa ejecución. Este cierre es correcto con una sola partición; al escalar deberá reemplazarse por `PARTITION_END` y una barrera.
+Cuando una palabra pasa por primera vez a estar presente en ambos idiomas se emite el resultado y se marca `emitted`. Una colisión del hash solamente coloca dos palabras en la misma réplica, no mezcla sus claves en el estado interno. Cada aggregator espera los finales de los tres projectors y publica su `QUERY_PARTITION_END`; ResultSink espera los IDs `{0, 1, 2}` antes de producir el único cierre de Q3.
 
 ### 10.3 Q4: top 20 global
 
 `Q4Q5WordProjector` omite los artículos cuyo abstract era `None`, elimina
 stopwords, deduplica palabras dentro de cada artículo y publica un
-`Q4WordBatchMessage` con una aparición por palabra y artículo en
-`q4_word_counter.input.0`. Las repeticiones entre artículos se preservan porque
+`Q4WordBatchMessage` con una aparición por palabra y artículo. Las palabras se
+particionan por `(execution_id, word)` entre tres colas `q4_word_counter.input.<partition>`.
+Las repeticiones entre artículos se preservan porque
 representan apariciones diferentes.
 
-La versión funcional utiliza un solo `Q4WordCounter`. Mantiene un `Counter` por `execution_id` y, al recibir el fin, publica su top 20 local seguido de `Q4PartitionEndMessage(partition_id=0)`.
-
-`Q4Top20Reducer` espera el final de la única partición configurada, ordena los candidatos por conteo descendente y palabra ascendente, publica un `ResultMessage` por palabra y finalmente el único `QUERY_END` de Q4.
-
-En el diseño objetivo, Q4WordCounter se particionará por `(execution_id, word)`. Cada partición contará un subconjunto disjunto de palabras y producirá su top 20 local. El reducer fusionará esos tops y esperará un final por partición. Enviar solamente veinte candidatos por partición es suficiente: una palabra fuera del top 20 local ya tiene al menos veinte palabras de su propia partición que la superan o empatan según el criterio de orden, por lo que no puede ingresar al top 20 global. El routing por hash, el despliegue de múltiples counters y la coordinación correcta con múltiples réplicas del projector siguen pendientes dentro del hito de escalabilidad.
+Cada Q4WordCounter mantiene un `Counter` por `execution_id`. Después de recibir los finales de los tres projectors publica su top 20 local seguido de `Q4PartitionEndMessage(partition_id)`. Los parciales se enrutan por `execution_id` hacia uno de tres Q4Top20Reducers físicos. El reducer elegido espera los finales de los tres counters, ordena los candidatos por conteo descendente y palabra ascendente, publica un `ResultMessage` por palabra y finalmente el único `QUERY_END` de Q4. Enviar solamente veinte candidatos por partición es suficiente: una palabra fuera del top 20 local ya tiene al menos veinte palabras de su propia partición que la superan o empatan según el criterio de orden, por lo que no puede ingresar al top 20 global.
 
 ### 10.4 Q5: promedio y comparación
 
 `Q4Q5WordProjector` calcula también `word_count = len(unique_words)`, garantizando el mismo criterio que Q4, y publica un `Q5ArticleWordCountBatchMessage` en `q5_date_router.input`. La proyección conserva `article_id`, URL y fecha. Los artículos sin abstract se omiten, mientras que los abstracts presentes pero vacíos se conservan con conteo cero, como en la ejecución serial.
 
-`Q5DateRouter` está implementado con una réplica. Consume `Q5ArticleWordCountBatchMessage`, omite las salidas vacías y divide el flujo:
+Tres Q5DateRouters consumen `Q5ArticleWordCountBatchMessage`, omiten las salidas vacías y dividen el flujo:
 
-- Conteos hasta 2020 en `Q5HistoricalWordCountBatchMessage`, enviados a `q5_stats_worker.input`;
-- `article_id`, URL y conteo desde 2021 en `Q5CandidateBatchMessage`, enviados a `q5_comparator.input`.
+- Conteos hasta 2020 en `Q5HistoricalWordCountBatchMessage`, enrutados por `execution_id` hacia un StatsWorker;
+- `article_id`, URL y conteo desde 2021 en `Q5CandidateBatchMessage`, enrutados por `(execution_id, article_id)` hacia un Comparator.
 
-Al recibir `RoutedInputEndMessage`, reenvía el final a ambas ramas antes de confirmar la entrada. La implementación utiliza una sola réplica hasta incorporar el protocolo de control y barreras.
+Los DateRouters coordinan los finales de los tres Q4Q5WordProjectors y cada uno publica su propio `PARTITION_END` en todas las colas de StatsWorker y Comparator.
 
-`Q5StatsWorker` acumula `total_word_count` y `abstract_count` por ejecución. Al recibir el cierre publica `Q5PartialStatsMessage` seguido de `Q5StatsPartitionEndMessage`. La implementación funcional usa la partición `0`.
+Tres Q5StatsWorkers acumulan `total_word_count` y `abstract_count` por ejecución. Cada ejecución histórica pertenece a un solo worker. Después de recibir los finales de los tres DateRouters, publica `Q5PartialStatsMessage` seguido de `Q5StatsPartitionEndMessage`.
 
 Los parciales históricos convergen por `execution_id` en `Q5AverageReducer`, que espera los finales de la cantidad configurada de particiones y calcula:
 
@@ -405,9 +402,9 @@ Los parciales históricos convergen por `execution_id` en `Q5AverageReducer`, qu
 average = global_sum / global_count
 ```
 
-Luego publica `Q5AverageMessage` en `q5_comparator.input`. La barrera está implementada y configurada actualmente para una sola partición.
+Los parciales de una ejecución se enrutan hacia uno de tres AverageReducers físicos. El reducer lógico espera los finales de los tres StatsWorkers y luego difunde `Q5AverageMessage` a las tres colas de comparadores, porque una ejecución puede tener candidatos en las tres particiones.
 
-Los candidatos pueden llegar antes que el promedio. No se mantienen sin ACK dentro de RabbitMQ porque eso usaría la MOM como base de datos y limitaría el flujo. Cada comparator los confirma después de incorporarlos a un `CandidateBuffer` de la aplicación, separado por ejecución. La implementación utiliza un archivo JSONL append-only por `execution_id`, cuyo nombre se deriva mediante SHA-256. Los archivos se guardan en `/var/lib/q5-candidates`, respaldado por el volumen Docker `q5_candidate_buffer`, y se recorren línea por línea para evitar memoria ilimitada.
+Los candidatos pueden llegar antes que el promedio. No se mantienen sin ACK dentro de RabbitMQ porque eso usaría la MOM como base de datos y limitaría el flujo. Cada comparator los confirma después de incorporarlos a un `CandidateBuffer` de la aplicación, separado por ejecución. La implementación utiliza un archivo JSONL append-only por `execution_id`, cuyo nombre se deriva mediante SHA-256. Cada una de las tres particiones usa un subdirectorio propio de `/var/lib/q5-candidates`, respaldado por el volumen Docker `q5_candidate_buffer`, y recorre los archivos línea por línea para evitar memoria ilimitada.
 
 El comparator mantiene una máquina de estados con:
 
@@ -418,13 +415,13 @@ candidate_input_closed
 buffer
 ```
 
-Antes del promedio persiste candidatos; después del promedio compara directamente los nuevos y drena los anteriores. Solo finaliza cuando conoce el promedio, recibió el cierre de su entrada y no quedan candidatos pendientes. En ese momento publica el único `QUERY_END` de Q5 y elimina el archivo temporal. La comparación es estricta: `word_count > average`.
+Antes del promedio persiste candidatos; después del promedio compara directamente los nuevos y drena los anteriores. Cada comparator finaliza cuando conoce el promedio, recibió los finales de los tres DateRouters y no quedan candidatos pendientes. En ese momento publica su `QUERY_PARTITION_END` y elimina el archivo temporal. ResultSink espera los tres comparators antes de publicar el único `QUERY_END` de Q5. La comparación es estricta: `word_count > average`.
 
 ---
 
 ## 11. ResultSink y entrega al cliente
 
-La implementación actual de ResultSink consume `result_sink.input` y reenvía cada `ResultMessage` a `results.<execution_id>` sin acumular resultados. Para el cierre mantiene una barrera genérica por `(execution_id, query_id)`: cada `QueryPartitionEndMessage` agrega un `partition_id` a un conjunto y, al alcanzar la cantidad configurada para esa query, ResultSink publica exactamente un `QueryEndMessage`. Los duplicados recibidos antes de completar la barrera no incrementan el conjunto. Durante la migración también acepta y reenvía los `QueryEndMessage` directos de las ramas todavía no replicadas. Publica mediante el exchange por defecto de RabbitMQ con enrutamiento obligatorio y publisher confirms; recién después de confirmar esa publicación ejecuta el ACK del mensaje de entrada.
+La implementación actual de ResultSink consume `result_sink.input` y reenvía cada `ResultMessage` a `results.<execution_id>` sin acumular resultados. Para el cierre mantiene una barrera genérica por `(execution_id, query_id)`: cada `QueryPartitionEndMessage` agrega un `partition_id` a un conjunto y, al alcanzar la cantidad configurada para esa query, ResultSink publica exactamente un `QueryEndMessage`. Los duplicados recibidos antes de completar la barrera no incrementan el conjunto. Q1, Q2, Q3 y Q5 utilizan esta barrera con tres particiones. Q4 publica un `QueryEndMessage` directo porque todos los parciales de una ejecución convergen en un único reducer lógico. ResultSink publica mediante el exchange por defecto de RabbitMQ con enrutamiento obligatorio y publisher confirms; recién después de confirmar esa publicación ejecuta el ACK del mensaje de entrada.
 
 ResultSink no declara las colas de salida. Cada cola `results.<execution_id>` es exclusiva, temporal y pertenece a la conexión de Gateway que inició la ejecución. El publicador dinámico solamente la utiliza como destino. Si la cola no existe porque el cliente se desconectó, la publicación obligatoria produce un error de mensaje no enrutable: ResultSink registra el descarte y confirma la entrada. Los demás errores de publicación continúan produciendo NACK.
 
@@ -490,7 +487,7 @@ quedan para tolerancia a fallos.
 
 ### 12.3 Comunicación por grupos
 
-`MessageMiddlewareExchangeRabbitMQ` toma como base la versión utilizada en el TP de Coordinación. Declara un exchange `direct`; cada instancia consumidora crea su propia cola exclusiva y la vincula con las routing keys configuradas. Una instancia usada solamente para publicar declara el exchange sin crear una cola innecesaria. Cuando varias réplicas vinculan sus colas con la misma clave, una publicación de control llega a todas ellas. El negocio no conoce bindings ni detalles de RabbitMQ. DATA continúa usando colas compartidas o particionadas y el control de finalización utiliza este broadcast al grupo. El patrón ya está integrado en Preprocessor, QueryRouter, Until2020Filter y Q1EnglishFilter mediante sus respectivos exchanges de control; queda extenderlo a los demás grupos replicados.
+`MessageMiddlewareExchangeRabbitMQ` toma como base la versión utilizada en el TP de Coordinación. Declara un exchange `direct`; cada instancia consumidora crea su propia cola exclusiva y la vincula con las routing keys configuradas. Una instancia usada solamente para publicar declara el exchange sin crear una cola innecesaria. Cuando varias réplicas vinculan sus colas con la misma clave, una publicación de control llega a todas ellas. El negocio no conoce bindings ni detalles de RabbitMQ. DATA continúa usando colas compartidas o particionadas y el control de finalización utiliza este broadcast al grupo. El patrón está integrado en Preprocessor, QueryRouter, Until2020Filter, Q1EnglishFilter, Q2BiographyFilter, ImageFetcher, WordExtractor, Q3WordProjector, Q4Q5WordProjector y Q5DateRouter.
 
 ### 12.4 ACK, NACK y prefetch
 
@@ -514,9 +511,9 @@ Confundir `INPUT_END` con `QUERY_END` produciría finales anticipados mientras t
 
 ### 13.2 Evolución desde la versión funcional
 
-La primera versión utilizó una sola réplica por etapa: DATA y `INPUT_END` pasaban por la misma cola, por lo que el consumidor único procesaba los batches anteriores y después reenviaba el final. Los productores finales de Q1 e ImageFetcher ya emiten `QUERY_PARTITION_END` desde tres réplicas y ResultSink completa ambas consultas mediante barreras configuradas con tres particiones.
+La primera versión utilizó una sola réplica por etapa: DATA y `INPUT_END` pasaban por la misma cola, por lo que el consumidor único procesaba los batches anteriores y después reenviaba el final. Esa versión permitió comprobar el recorrido funcional antes de introducir coordinación distribuida.
 
-Esa solución permitió comprobar el recorrido funcional, pero no era correcta al agregar consumidores competidores. Preprocessor ya fue migrado al protocolo distribuido; las etapas restantes se migrarán reutilizando el mismo patrón.
+La versión actual reutiliza el protocolo distribuido a lo largo de Q1-Q5. Los productores finales de Q1, Q2, Q3 y Q5 emiten `QUERY_PARTITION_END` desde tres particiones y ResultSink completa sus barreras. Q4 converge primero en un reducer lógico y emite un único `QUERY_END`.
 
 ### 13.3 Protocolo objetivo para grupos replicados
 
@@ -529,7 +526,7 @@ El diseño, basado en el patrón del TP de Coordinación, es:
 5. La etapa responsable mantiene una barrera con la cantidad configurada de particiones.
 6. Solamente al completar la barrera propaga el cierre o produce `QUERY_END`.
 
-No se asume orden entre colas distintas. Tampoco se fabrican finales durante `SIGTERM`. `CoordinatedConsumer` encapsula el hilo de control, la cola local segura y la pausa temporal del loop de DATA. Preprocessor, QueryRouter, Until2020Filter, Q1EnglishFilter, Q2BiographyFilter e ImageFetcher lo reutilizan para terminar el batch en vuelo, publicar su final por la misma conexión que DATA y reanudar el consumo. Cada QueryRouter espera los tres finales de Preprocessor y emite su propio final en ambas ramas; cada Until2020Filter espera los tres IDs de QueryRouter; y las etapas finales de Q1/Q2 completan sucesivamente sus barreras de tres particiones. WordExtractor conserva por ahora una barrera singleton.
+No se asume orden entre colas distintas. Tampoco se fabrican finales durante `SIGTERM`. `CoordinatedConsumer` encapsula el hilo de control, la cola local segura y la pausa temporal del loop de DATA. Los grupos stateless replicados lo reutilizan para terminar el batch en vuelo, publicar su final por la misma conexión que DATA y reanudar el consumo. Las etapas siguientes esperan los tres IDs de origen antes de cerrar cada partición lógica.
 
 ---
 
@@ -553,7 +550,7 @@ Para la demo se utiliza tres como cantidad inicial en los grupos coordinados y s
 
 ### 14.3 Límites del escalamiento actual
 
-Docker Compose despliega tres particiones de InputBatcher y tres instancias de Preprocessor, QueryRouter, Until2020Filter, Q1EnglishFilter, Q2BiographyFilter e ImageFetcher. Los demás componentes funcionales conservan una instancia. InputBatcher demuestra particionado stateful con afinidad por ejecución; los seis grupos stateless siguientes demuestran consumidores competidores, broadcast de control y barreras efectivas. Todavía falta extender el protocolo a los demás componentes replicables y particionados.
+Docker Compose despliega tres particiones o réplicas de todos los componentes escalables de Q1-Q5. Las etapas stateless usan consumidores competidores y broadcast de control; las stateful usan colas particionadas y hash estable; los reducers se distribuyen por ejecución. Gateway y ResultSink permanecen como instancias únicas. El límite actual principal no es la topología de datos sino el graceful shutdown coordinado de todos los procesos.
 
 La cantidad de particiones de una etapa stateful deberá permanecer fija mientras existan ejecuciones activas, salvo que se implemente migración explícita de estado.
 
@@ -629,20 +626,21 @@ Docker Compose contiene:
 - Q1
 - Q2BiographyFilter
 - ImageFetcher
-- WordExtractor
-- Q3WordProjector y Q3WordAggregator partición 0
-- Q4Q5WordProjector
-- Q4WordCounter partición 0 y Q4Top20Reducer
-- Q5DateRouter, Q5StatsWorker, Q5AverageReducer y Q5Comparator
+- WordExtractor réplicas 0, 1 y 2
+- Q3WordProjector réplicas 0, 1 y 2; Q3WordAggregator particiones 0, 1 y 2
+- Q4Q5WordProjector réplicas 0, 1 y 2
+- Q4WordCounter particiones 0, 1 y 2; Q4Top20Reducer instancias 0, 1 y 2
+- Q5DateRouter réplicas 0, 1 y 2
+- Q5StatsWorker, Q5AverageReducer y Q5Comparator particiones 0, 1 y 2
 - ResultSink
 - Client bajo el profile `client`
 - cAdvisor, Prometheus y Grafana bajo el profile opcional `monitoring`
 
-Cada componente funcional posee su Dockerfile y se comunica por nombre de servicio dentro de la red de Compose. RabbitMQ expone 5672 para AMQP y 15672 para administración. Q5Comparator monta el volumen nombrado `q5_candidate_buffer` en `/var/lib/q5-candidates`.
+Cada componente funcional posee su Dockerfile y se comunica por nombre de servicio dentro de la red de Compose. RabbitMQ expone 5672 para AMQP y 15672 para administración. Los tres Q5Comparators montan el volumen nombrado `q5_candidate_buffer` en `/var/lib/q5-candidates` y utilizan subdirectorios separados por partición.
 
 ### 16.2 Despliegue objetivo
 
-El diseño no fija Q1 o Q2 a una computadora particular. Los nodos de cómputo deben ser equivalentes y permitir ubicar réplicas donde exista capacidad. RabbitMQ es infraestructura compartida. ImageFetcher es el único componente que necesita salida HTTP hacia Wikimedia. Q5Comparator utiliza almacenamiento temporal en un volumen para su `CandidateBuffer`; al incorporar múltiples particiones deberá asignarse almacenamiento aislado a cada dueño lógico.
+El diseño no fija las consultas a una computadora particular. Los nodos de cómputo deben ser equivalentes y permitir ubicar réplicas donde exista capacidad. RabbitMQ es infraestructura compartida. ImageFetcher es el único componente que necesita salida HTTP hacia Wikimedia. Cada Q5Comparator utiliza almacenamiento temporal aislado para su `CandidateBuffer`.
 
 Compose permite demostrar la topología con múltiples containers. La expansión a varias computadoras requiere conservar nombres de servicios, configuración común, claves de particionado y acceso al broker; no debe requerir reescribir la lógica de negocio.
 
@@ -778,19 +776,20 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 
 ### 22.2 Evidencia disponible al corte
 
-- La suite local completa pasa con 216 tests.
+- La suite local completa pasa con 228 tests.
 - Se conectaron doce clientes mínimos al Gateway con los InputBatcher detenidos. Sus 24 mensajes —un artículo y un final por ejecución— quedaron distribuidos entre `input_batcher.input.0`, `.1` y `.2` sin dividir una ejecución. Al iniciar las tres particiones, cada cola tuvo un único consumidor, las tres quedaron vacías y `preprocessor.input` recibió los 24 mensajes esperados.
 - Se validaron con RabbitMQ real tres réplicas de Preprocessor y tres de QueryRouter, con tres bindings exclusivos en cada exchange de control. Nueve batches produjeron nueve mensajes y un único final en cada una de las cuatro salidas posteriores a Until2020Filter y WordExtractor. Una segunda ejecución confirmó que ambos grupos reanudan el consumo después de sus barreras.
 - Se validaron tres réplicas de Until2020Filter con tres bindings exclusivos. Seis batches y tres finales de QueryRouter produjeron tres resultados Q1, ningún resultado Q2 y un único `QUERY_END` por consulta. Una segunda ejecución vacía sin reiniciar containers confirmó la reanudación y limpieza de las barreras.
 - Se validaron tres réplicas de Q1EnglishFilter con tres bindings exclusivos en `q1.control`. Una ejecución distribuyó sus candidatos entre las réplicas y completó la barrera de tres particiones en ResultSink; una segunda ejecución vacía, sin reiniciar containers, produjo exactamente un `QUERY_END`, confirmando la limpieza del estado y la reanudación del consumo.
 - Se validaron tres réplicas de Q2BiographyFilter y tres de ImageFetcher, con tres consumidores en cada cola y tres bindings exclusivos en cada exchange de control. Seis candidatos sin URL atravesaron ambas etapas; los tres ImageFetchers completaron sus barreras y ResultSink entregó un único `QUERY_END` de Q2. No hubo mensajes duplicados ni pendientes, y una segunda ejecución vacía sin reiniciar containers confirmó la limpieza del estado.
 - Se verificó el recorrido Q1 hasta `result_sink.input` con RabbitMQ real.
-- Se verificó Q2 desde `until_2020.input` hasta resultados Base64 y `QUERY_END` provisional.
+- Se verificó Q2 desde `until_2020.input` hasta resultados Base64 y el cierre consolidado por ResultSink.
 - Se verificó que un candidato sin URL se registra y se omite.
 - Se verificó que HTTP 404 no reintenta y que errores transitorios sí lo hacen de forma acotada.
-- Se verificó el recorrido de Q3 con RabbitMQ real desde `word_extractor.input` hasta un resultado compartido y su `QUERY_END` provisional en `result_sink.input`.
+- Se verificó con RabbitMQ real la rama Q3 replicada completa: tres WordExtractors, tres projectors y tres aggregators produjeron el resultado compartido y los finales de partición `0`, `1` y `2`, sin mensajes intermedios pendientes.
 - Se verificó con RabbitMQ real que ResultSink reenvía un resultado hacia una cola exclusiva `results.<execution_id>` ya declarada por Gateway y confirma posteriormente la entrada.
 - Se verificó con RabbitMQ real la barrera genérica de ResultSink: para Q1 configurada con tres particiones recibió los finales `0`, `1`, `1` y `2`, ignoró el duplicado y entregó un único `QUERY_END` después del resultado previo.
+- Se verificó también la barrera real de Q5 en ResultSink: los finales de comparator `2`, `0` y `1` produjeron exactamente un `QUERY_END` y ningún mensaje adicional.
 - Se verificó que ResultSink finaliza con código 0 ante `SIGTERM`.
 - Se verificó con RabbitMQ real que dos consumidores con colas exclusivas vinculadas a la misma routing key reciben una copia del mismo control y que ambas colas se eliminan al cerrar sus conexiones.
 - Se verificó con RabbitMQ real que Q4Q5WordProjector consume un batch tokenizado, publica las dos proyecciones con los mismos metadatos de ejecución y propaga el final a ambas ramas.
@@ -798,13 +797,14 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 - Se verificó con RabbitMQ real el recorrido funcional de Q4 desde `q4_q5_word_projector.input` hasta sus resultados ordenados y un único `QUERY_END` en `result_sink.input`.
 - Se verificó con RabbitMQ real que Q5DateRouter separa los conteos hasta 2020 de los candidatos desde 2021 y propaga el final a ambas ramas.
 - Se verificó con RabbitMQ real la rama completa de Q5: dos históricos con conteos 0 y 2 produjeron promedio 1; un candidato que empataba fue omitido, otro con conteo 3 produjo el único resultado y después se publicó un único `QUERY_END`.
+- Se verificaron conjuntamente Q4 y Q5 bajo la topología de tres réplicas o particiones desde `word_extractor.input`: todas las colas intermedias quedaron vacías; Q4 produjo los conteos esperados y un único cierre; Q5 produjo el candidato superior al promedio y los finales de comparator `0`, `1` y `2` para la barrera de ResultSink.
 - Se comprobó que Q5Comparator eliminó el archivo JSONL de la ejecución después de drenar correctamente el CandidateBuffer.
 - Se ejecutó el pipeline completo con 50.000 artículos. El cliente recibió los cinco `QUERY_END` y escribió 1.111 resultados de Q1, 9 de Q2, 6.902 de Q3, 20 de Q4 y 14.608 de Q5.
 - La comparación automática informó `Match` para `query1.jsonl` a `query5.jsonl`; no hubo registros faltantes, adicionales ni duplicados respecto de la referencia.
 - Después de deshabilitar los heartbeats de las conexiones bloqueantes no volvieron a registrarse cierres por `missed heartbeats` y todos los componentes funcionales permanecieron activos.
 - Se verificó el arranque separado de los containers implementados.
 
-El pipeline funcional queda validado. También se verificó una desconexión antes del primer artículo: Gateway eliminó su cola temporal, Q1-Q5 completaron la ejecución vacía, ResultSink descartó los cinco finales sin destino, no quedaron mensajes ni archivos temporales y todos los componentes permanecieron activos. Las pruebas siguientes deben concentrarse en múltiples réplicas, barreras y comportamiento ante cierres o caídas de procesos internos.
+El pipeline funcional y las barreras replicadas quedan validados mediante pruebas unitarias y smokes por ramas. También se verificó una desconexión antes del primer artículo: Gateway eliminó su cola temporal, Q1-Q5 completaron la ejecución vacía, ResultSink descartó los cinco finales sin destino, no quedaron mensajes ni archivos temporales y todos los componentes permanecieron activos. Resta repetir la comparación completa de 50.000 artículos con esta topología replicada y concentrar las pruebas siguientes en múltiples clientes y graceful shutdown.
 
 ---
 
@@ -835,14 +835,11 @@ El pipeline funcional está completo y fue comparado con la referencia serial so
 
 ### 24.2 Para completar el hito de escalabilidad
 
-1. Extender `MessageMiddlewareExchangeRabbitMQ` a los grupos de control restantes.
-2. Reutilizar `PARTITION_END` y completar las barreras por etapa.
-3. Extender `QUERY_PARTITION_END`, ya utilizado por Q1 y Q2, a Q3-Q5 al replicar sus productores finales.
-4. Configurar múltiples réplicas y particiones.
-5. Medir la concurrencia HTTP limitada por las tres réplicas de ImageFetcher y ajustar su cantidad si las métricas lo justifican.
-6. Completar graceful shutdown.
-7. Medir el sistema y justificar cantidades de réplicas.
-8. Actualizar y exportar todos los diagramas 4+1.
+1. Completar graceful shutdown coordinado.
+2. Repetir la comparación completa con 50.000 artículos bajo la topología replicada.
+3. Ejecutar escenarios de múltiples clientes y justificar las cantidades mediante métricas.
+4. Medir la concurrencia HTTP limitada por las tres réplicas de ImageFetcher y ajustar su cantidad si las métricas lo justifican.
+5. Actualizar y exportar los diagramas 4+1 restantes.
 
 ### 24.3 Mejoras posteriores al pipeline funcional
 
