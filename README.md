@@ -2,7 +2,7 @@
 
 Trabajo práctico grupal de Sistemas Distribuidos. El sistema procesa artículos de Wikipedia en inglés y francés y genera los resultados de cinco consultas mediante una arquitectura distribuida basada en RabbitMQ.
 
-> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware y el pipeline distribuido Q1-Q5. Los componentes replicables y las etapas stateful de las cinco consultas se despliegan con tres réplicas o particiones, salvo Gateway y ResultSink, que permanecen como instancias únicas. El pipeline funcional completo fue validado con 50.000 artículos y sus cinco archivos coinciden con la referencia serial. Todavía falta completar el graceful shutdown coordinado y la etapa posterior de tolerancia a fallos.
+> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware y el pipeline distribuido Q1-Q5. Los componentes replicables y las etapas stateful de las cinco consultas se despliegan con tres réplicas o particiones, salvo Gateway y ResultSink, que permanecen como instancias únicas. El pipeline funcional completo fue validado con 50.000 artículos y sus cinco archivos coinciden con la referencia serial. El cierre por señales está implementado; la recuperación después de reinicios queda para la etapa de tolerancia a fallos.
 
 ## Consultas
 
@@ -44,7 +44,7 @@ El sistema debe resolver las siguientes consultas:
 | Estadísticas, promedio y comparación de Q5 | Implementado con tres particiones por etapa y buffer JSONL en volumen Docker |
 | ResultSink | Implementado como instancia única con barreras para Q1, Q2, Q3 y Q5; Q4 converge en un reducer lógico |
 | Atención concurrente de varios clientes | Implementada con una sesión por thread |
-| Graceful shutdown completo para procesos concurrentes | Pendiente |
+| Graceful shutdown por SIGTERM/SIGINT | Implementado |
 | Estrategia de tolerancia a fallos y persistencia | Pendiente |
 
 ### Concurrencia actual de clientes
@@ -953,11 +953,9 @@ El desarrollo se divide en tres momentos distintos:
 3. En la instancia posterior de tolerancia a fallos, incorporar persistencia, recuperación ante caídas e idempotencia frente a reentregas.
 
 ## Próximos pasos
-
-1. Completar graceful shutdown coordinado de todos los procesos.
-2. Validar nuevamente el pipeline completo con múltiples clientes y el dataset de 50.000 artículos bajo la topología replicada.
-3. Completar la propagación de errores y los límites para entradas no confiables.
-4. Incorporar recuperación, persistencia coordinada e idempotencia en el siguiente hito.
+1. Validar nuevamente el pipeline completo con múltiples clientes y el dataset de 50.000 artículos bajo la topología replicada.
+2. Completar la propagación de errores y los límites para entradas no confiables.
+3. Incorporar recuperación, persistencia coordinada e idempotencia en el siguiente hito.
 
 Para la demo de escalabilidad se parte de tres instancias en los grupos ya coordinados y de tres particiones de InputBatcher. Se comparan configuraciones de una, tres y, cuando las métricas lo justifiquen, hasta cinco réplicas. La cantidad no se replica mecánicamente entre componentes: las etapas stateless usan consumidores competidores, las stateful requieren particiones y routing estable, y los reducers se distribuyen por ejecución. CPU, consumidores y profundidad de colas se utilizan para justificar dónde aumentar la cantidad.
 
@@ -1017,9 +1015,7 @@ correspondientes:
   componente que actúa como cuello de botella.
 
 La concurrencia de clientes y la desconexión durante el upload ya están
-implementadas. Todavía deben ensayarse con la carga definitiva de la demo y
-completarse el graceful shutdown general, las barreras para múltiples réplicas y
-la recuperación ante la caída de procesos internos.
+implementadas. Todavía deben ensayarse con la carga definitiva de la demo y la recuperación ante la caída de procesos internos.
 
 cAdvisor accede al daemon de Docker mediante el socket
 `/var/run/docker.sock`, montado dentro del contenedor, y al runtime containerd
@@ -1054,3 +1050,34 @@ Referencias:
 - [cAdvisor Docker exporter](https://prometheus.io/docs/guides/cadvisor/)
 - [RabbitMQ Exporter](https://www.rabbitmq.com/docs/3.13/prometheus)
 - [Grafana provisioning](https://grafana.com/docs/grafana/latest/administration/provisioning/)
+
+## Cierre por señales
+
+Los procesos del pipeline atienden `SIGTERM` y `SIGINT`: dejan de consumir,
+terminan el callback activo y cierran sus conexiones. Las publicaciones usan
+confirmaciones del broker en los canales de la capa común. Esto confirma recepción
+en RabbitMQ, no procesamiento downstream ni persistencia. InputBatcher confirma
+artículos al incorporarlos al buffer; no espera a publicar cada batch. Los mensajes entregados
+pero aún no procesados se reencolan al cancelar el consumidor o cerrar la conexión.
+InputBatcher publica sus batches parciales sin generar finales.
+Los consumidores coordinados detienen y esperan su thread de control.
+
+Gateway deja de aceptar clientes, interrumpe sus sockets y detiene los consumidores
+de resultados; espera los threads de sesión para que cada uno cierre sus conexiones
+y elimine su cola exclusiva. No fabrica `INPUT_END` para uploads interrumpidos
+por el cierre del servidor. Cada `ClientSession` agrupa socket, thread y referencia
+al middleware, sincroniza el stop con el cierre y permite esperar su finalización.
+El listener revisa la señal de cierre como máximo cada segundo mientras está inactivo.
+
+Client atiende las señales mediante `SystemExit(0)`: al salir de los contextos de
+`run()` y `receive_results()`, cierra el socket y hace flush y cierre de los archivos
+abiertos. Los archivos pueden quedar incompletos; el código de salida actual no
+distingue esta interrupción de una ejecución exitosa.
+
+Compose permite configurar `STOP_GRACE_PERIOD` (por defecto `2m`) para el drenaje.
+Para usar ese plazo, ejecutar `docker compose down`.
+
+Si se agota el plazo, Docker envía `SIGKILL`: no se ejecutan las siguientes líneas
+ni los bloques de limpieza. Si falla la publicación de un batch ya confirmado en
+entrada, su contenido puede perderse al terminar el proceso. Las pruebas de cierre
+no sustituyen la validación del despliegue completo bajo carga.
