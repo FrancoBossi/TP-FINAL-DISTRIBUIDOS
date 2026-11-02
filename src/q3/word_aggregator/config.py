@@ -27,5 +27,9 @@ class Q3WordAggregatorConfig:
             "result_sink.input",
         )
     )
-    partition_id: int = field(default_factory=lambda: int(os.environ.get("PARTITION_ID", "0")))
-    partition_count: int = field(default_factory=lambda: int(os.environ.get("PARTITION_COUNT", "1")))
+    partition_id: int = field(
+        default_factory=lambda: int(os.environ.get("PARTITION_ID", "0"))
+    )
+    partition_count: int = field(
+        default_factory=lambda: int(os.environ.get("PARTITION_COUNT", "1"))
+    )

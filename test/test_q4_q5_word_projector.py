@@ -8,6 +8,7 @@ from common.message_protocol.message import (
     RoutedInputEndMessage,
     TokenizedArticleBatchMessage,
 )
+from common.partition_router import PartitionRouter
 from q4_q5_word_projector.controller import Q4Q5WordProjectorController
 from q4_q5_word_projector.messaging import Q4Q5WordProjectorMessaging
 from q4_q5_word_projector.projector import project_batch
@@ -154,6 +155,67 @@ class TestQ4Q5WordProjector(unittest.TestCase):
             ],
             events.mock_calls,
         )
+        nack.assert_not_called()
+
+    def test_controller_partitions_q4_words_and_broadcasts_end(self):
+        router = PartitionRouter("q4_word_counter.input", 3)
+        message = TokenizedArticleBatchMessage(
+            articles=[
+                {
+                    "article_id": "article-a",
+                    "url": "https://example.com/a",
+                    "modification_date": "2020-01-01T00:00:00",
+                    "has_abstract": True,
+                    "words": ["network", "data"],
+                },
+                {
+                    "article_id": "article-b",
+                    "url": "https://example.com/b",
+                    "modification_date": "2021-01-01T00:00:00",
+                    "has_abstract": True,
+                    "words": ["network"],
+                },
+            ],
+            execution_id="execution-123",
+            reply_queue="results.execution-123",
+        )
+        messaging = Mock()
+        ack = Mock()
+        nack = Mock()
+        controller = Q4Q5WordProjectorController(messaging, router)
+
+        controller.process_message(message, ack, nack)
+
+        routed_words: dict[str, list[str]] = {}
+        for call_args in messaging.publish_q4_to.call_args_list:
+            queue, batch = call_args.args
+            routed_words.setdefault(queue, []).extend(batch.words)
+        self.assertCountEqual(
+            [word for words in routed_words.values() for word in words],
+            ["network", "network", "data"],
+        )
+        for queue, words in routed_words.items():
+            for word in words:
+                self.assertEqual(
+                    router.queue_for('["execution-123", "' + word + '"]'),
+                    queue,
+                )
+        messaging.publish_q4.assert_not_called()
+        messaging.publish_q5.assert_called_once()
+        ack.assert_called_once_with()
+        nack.assert_not_called()
+
+        messaging.reset_mock()
+        ack.reset_mock()
+        end = RoutedInputEndMessage("execution-123", "results.execution-123")
+        controller.process_message(end, ack, nack)
+
+        self.assertEqual(
+            [call(f"q4_word_counter.input.{partition}", end) for partition in range(3)],
+            messaging.publish_q4_to.call_args_list,
+        )
+        messaging.publish_q5.assert_called_once_with(end)
+        ack.assert_called_once_with()
         nack.assert_not_called()
 
     def test_messaging_serializes_outputs_and_deserializes_input(self):

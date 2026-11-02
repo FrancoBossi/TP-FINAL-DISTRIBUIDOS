@@ -8,6 +8,7 @@ from common.message_protocol.message import (
     Q5HistoricalWordCountBatchMessage,
     RoutedInputEndMessage,
 )
+from common.partition_router import PartitionRouter
 from q5.date_router.controller import Q5DateRouterController
 from q5.date_router.messaging import Q5DateRouterMessaging
 from q5.date_router.router import route_batch
@@ -127,6 +128,55 @@ class TestQ5DateRouter(unittest.TestCase):
             ],
             events.mock_calls,
         )
+        nack.assert_not_called()
+
+    def test_controller_routes_execution_to_one_worker_and_broadcasts_end(self):
+        router = PartitionRouter("q5_stats_worker.input", 3)
+        message = Q5ArticleWordCountBatchMessage(
+            articles=[
+                {
+                    "article_id": "historical",
+                    "url": "https://example.com/historical",
+                    "modification_date": "2020-12-31T23:59:59",
+                    "word_count": 2,
+                },
+                {
+                    "article_id": "candidate",
+                    "url": "https://example.com/candidate",
+                    "modification_date": "2021-01-01T00:00:00",
+                    "word_count": 3,
+                },
+            ],
+            execution_id="execution-123",
+            reply_queue="results.execution-123",
+        )
+        messaging = Mock()
+        ack = Mock()
+        nack = Mock()
+        controller = Q5DateRouterController(messaging, router)
+
+        controller.process_message(message, ack, nack)
+
+        historical_batch, candidate_batch = route_batch(message)
+        messaging.publish_historical_to.assert_called_once_with(
+            router.queue_for("execution-123"), historical_batch
+        )
+        messaging.publish_historical.assert_not_called()
+        messaging.publish_candidates.assert_called_once_with(candidate_batch)
+        ack.assert_called_once_with()
+        nack.assert_not_called()
+
+        messaging.reset_mock()
+        ack.reset_mock()
+        end = RoutedInputEndMessage("execution-123", "results.execution-123")
+        controller.process_message(end, ack, nack)
+
+        self.assertEqual(
+            [call(f"q5_stats_worker.input.{partition}", end) for partition in range(3)],
+            messaging.publish_historical_to.call_args_list,
+        )
+        messaging.publish_candidates.assert_called_once_with(end)
+        ack.assert_called_once_with()
         nack.assert_not_called()
 
     def test_messaging_serializes_outputs_and_deserializes_input(self):

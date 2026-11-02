@@ -4,11 +4,11 @@ from common.message_protocol.message import (
     Message,
     Q3WordPresenceBatchMessage,
     QueryEndMessage,
+    QueryPartitionEndMessage,
     ResultMessage,
     RoutedInputEndMessage,
-    QueryPartitionEndMessage,
 )
-from q3.word_aggregator.messaging import Ack, Nack, Q3WordAggregatorMessaging
+from q3.word_aggregator.messaging import Ack, Nack
 
 
 @dataclass
@@ -19,7 +19,9 @@ class WordPresence:
 
 
 class Q3WordAggregatorController:
-    def __init__(self, messaging, partition_id: int = 0, partition_count: int = 1) -> None:
+    def __init__(
+        self, messaging, partition_id: int = 0, partition_count: int = 1
+    ) -> None:
         if partition_count <= 0 or not 0 <= partition_id < partition_count:
             raise ValueError("invalid Q3 partition configuration")
         self._messaging = messaging
@@ -42,7 +44,9 @@ class Q3WordAggregatorController:
                     self._handle_presence(message.execution_id, presence)
             case RoutedInputEndMessage():
                 if self._partition_count == 1:
-                    self._messaging.publish(QueryEndMessage(query_id=3, execution_id=message.execution_id))
+                    self._messaging.publish(
+                        QueryEndMessage(query_id=3, execution_id=message.execution_id)
+                    )
                 else:
                     self._messaging.publish(
                         QueryPartitionEndMessage(

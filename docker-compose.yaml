@@ -171,7 +171,7 @@ services:
       rabbitmq:
         condition: service_healthy
 
-  q3-word-aggregator:
+  q3-word-aggregator-0:
     build:
       context: .
       dockerfile: src/q3/word_aggregator/Dockerfile
@@ -261,7 +261,7 @@ services:
       rabbitmq:
         condition: service_healthy
 
-  q4-word-counter:
+  q4-word-counter-0:
     build:
       context: .
       dockerfile: src/q4/word_counter/Dockerfile
@@ -333,7 +333,7 @@ services:
       rabbitmq:
         condition: service_healthy
 
-  q5-stats-worker:
+  q5-stats-worker-0:
     build:
       context: .
       dockerfile: src/q5/stats_worker/Dockerfile

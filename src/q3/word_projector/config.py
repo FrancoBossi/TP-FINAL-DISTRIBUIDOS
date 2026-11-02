@@ -20,4 +20,6 @@ class Q3WordProjectorConfig:
             "OUTPUT_QUEUE_PREFIX", "q3_word_aggregator.input"
         )
     )
-    partition_count: int = field(default_factory=lambda: int(os.environ.get("PARTITION_COUNT", "1")))
+    partition_count: int = field(
+        default_factory=lambda: int(os.environ.get("PARTITION_COUNT", "1"))
+    )
