@@ -1,14 +1,14 @@
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from common.message_protocol.message import (
     Message,
+    PartitionEndMessage,
     Q5AverageMessage,
     Q5CandidateBatchMessage,
-    QueryEndMessage,
+    QueryPartitionEndMessage,
     ResultMessage,
-    RoutedInputEndMessage,
 )
 from q5.comparator.buffer import CandidateBuffer
 from q5.comparator.messaging import Ack, Nack, Q5ComparatorMessaging
@@ -19,6 +19,7 @@ class ExecutionState:
     average_received: bool = False
     average_word_count: float | None = None
     candidate_input_ended: bool = False
+    ended_date_router_partitions: set[int] = field(default_factory=set)
 
 
 class Q5ComparatorController:
@@ -26,9 +27,15 @@ class Q5ComparatorController:
         self,
         messaging: Q5ComparatorMessaging,
         candidate_buffer: CandidateBuffer,
+        partition_id: int = 0,
+        date_router_partition_count: int = 1,
     ) -> None:
+        if date_router_partition_count <= 0:
+            raise ValueError("date_router_partition_count must be positive")
         self._messaging = messaging
         self._candidate_buffer = candidate_buffer
+        self._partition_id = partition_id
+        self._date_router_partition_count = date_router_partition_count
         self._executions: dict[str, ExecutionState] = {}
 
     def process_message(
@@ -62,9 +69,19 @@ class Q5ComparatorController:
                 )
             return
 
-        if isinstance(message, RoutedInputEndMessage):
+        if isinstance(message, PartitionEndMessage):
+            if message.stage != "q5_date_router":
+                raise ValueError("Q5Comparator received an invalid partition stage")
+            if not 0 <= message.partition_id < self._date_router_partition_count:
+                raise ValueError(
+                    "Q5DateRouter partition id is outside configured range"
+                )
             state = self._state_for(message.execution_id)
-            state.candidate_input_ended = True
+            state.ended_date_router_partitions.add(message.partition_id)
+            state.candidate_input_ended = (
+                len(state.ended_date_router_partitions)
+                == self._date_router_partition_count
+            )
             self._try_finish(message.execution_id)
             return
 
@@ -85,7 +102,7 @@ class Q5ComparatorController:
             return
 
         raise ValueError(
-            "Q5Comparator expected Q5_CANDIDATE_BATCH, INPUT_END or Q5_AVERAGE"
+            "Q5Comparator expected Q5_CANDIDATE_BATCH, PARTITION_END or Q5_AVERAGE"
         )
 
     def _state_for(self, execution_id: str) -> ExecutionState:
@@ -122,8 +139,9 @@ class Q5ComparatorController:
             return
 
         self._messaging.publish(
-            QueryEndMessage(
+            QueryPartitionEndMessage(
                 query_id=5,
+                partition_id=self._partition_id,
                 execution_id=execution_id,
             )
         )

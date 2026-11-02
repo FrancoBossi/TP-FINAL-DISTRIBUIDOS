@@ -7,9 +7,29 @@ from common.message_protocol.message import (
     Q5StatsPartitionEndMessage,
 )
 from q5.average_reducer.controller import Q5AverageReducerController
+from q5.average_reducer.messaging import Q5AverageReducerMessaging
 
 
 class TestQ5AverageReducerController(unittest.TestCase):
+    def test_messaging_broadcasts_average_to_every_comparator(self):
+        input_queue = Mock()
+        output_queues = [Mock(), Mock(), Mock()]
+        messaging = Q5AverageReducerMessaging(
+            input_queue,
+            output_queues[0],
+            output_queues,
+        )
+        message = Q5AverageMessage(
+            3.5,
+            "execution-123",
+            "results.execution-123",
+        )
+
+        messaging.publish(message)
+
+        for queue in output_queues:
+            queue.send.assert_called_once_with(message.serialize())
+
     def test_waits_for_all_partitions_and_publishes_global_average(self):
         messaging = Mock()
         controller = Q5AverageReducerController(

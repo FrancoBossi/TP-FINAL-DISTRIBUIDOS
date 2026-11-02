@@ -33,6 +33,14 @@ class Q5DateRouterConfig:
             "q5_comparator.input",
         )
     )
+    candidate_output_queue_prefix: str = field(
+        default_factory=lambda: os.environ.get(
+            "CANDIDATE_OUTPUT_QUEUE_PREFIX", "q5_comparator.input"
+        )
+    )
+    candidate_partition_count: int = field(
+        default_factory=lambda: int(os.environ.get("CANDIDATE_PARTITION_COUNT", "1"))
+    )
     historical_output_queue_prefix: str = field(
         default_factory=lambda: os.environ.get(
             "HISTORICAL_OUTPUT_QUEUE_PREFIX", "q5_stats_worker.input"
@@ -40,4 +48,15 @@ class Q5DateRouterConfig:
     )
     historical_partition_count: int = field(
         default_factory=lambda: int(os.environ.get("HISTORICAL_PARTITION_COUNT", "1"))
+    )
+    control_exchange: str = field(
+        default_factory=lambda: os.environ.get(
+            "CONTROL_EXCHANGE", "q5_date_router.control"
+        )
+    )
+    partition_id: int = field(
+        default_factory=lambda: int(os.environ.get("PARTITION_ID", "0"))
+    )
+    projector_partition_count: int = field(
+        default_factory=lambda: int(os.environ.get("PROJECTOR_PARTITION_COUNT", "1"))
     )

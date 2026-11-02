@@ -3,11 +3,11 @@ from unittest.mock import Mock, call
 
 from common.message_protocol.message import (
     AckMessage,
+    PartitionEndMessage,
     Q3WordPresenceBatchMessage,
     QueryEndMessage,
     QueryPartitionEndMessage,
     ResultMessage,
-    RoutedInputEndMessage,
 )
 from q3.word_aggregator.controller import Q3WordAggregatorController
 
@@ -23,6 +23,14 @@ class TestQ3WordAggregator(unittest.TestCase):
             Q3WordPresenceBatchMessage(presences, execution, f"results.{execution}"),
             self.ack,
             self.nack,
+        )
+
+    def end(self, execution="run", partition_id=0):
+        return PartitionEndMessage(
+            "q3_word_projector",
+            partition_id,
+            execution,
+            f"results.{execution}",
         )
 
     def test_both_orders_batches_and_repetitions_emit_once(self):
@@ -62,9 +70,7 @@ class TestQ3WordAggregator(unittest.TestCase):
             "a",
         )
         self.send([{"word": "network", "language": "en"}], "b")
-        self.controller.process_message(
-            RoutedInputEndMessage("a", "reply"), self.ack, self.nack
-        )
+        self.controller.process_message(self.end("a"), self.ack, self.nack)
         self.assertNotIn("a", self.controller._executions)
         self.assertIn("b", self.controller._executions)
         self.assertEqual(
@@ -85,9 +91,7 @@ class TestQ3WordAggregator(unittest.TestCase):
 
     def test_empty_execution_finishes(self):
         self.send([])
-        self.controller.process_message(
-            RoutedInputEndMessage("run", "reply"), self.ack, self.nack
-        )
+        self.controller.process_message(self.end(), self.ack, self.nack)
         self.messaging.publish.assert_called_once_with(QueryEndMessage(3, "run"))
         self.assertEqual({}, self.controller._executions)
 
@@ -95,9 +99,7 @@ class TestQ3WordAggregator(unittest.TestCase):
         controller = Q3WordAggregatorController(
             self.messaging, partition_id=2, partition_count=3
         )
-        controller.process_message(
-            RoutedInputEndMessage("run", "reply"), self.ack, self.nack
-        )
+        controller.process_message(self.end(), self.ack, self.nack)
         self.messaging.publish.assert_called_once_with(
             QueryPartitionEndMessage(3, 2, "run")
         )
@@ -122,12 +124,26 @@ class TestQ3WordAggregator(unittest.TestCase):
         self.ack.reset_mock()
         self.messaging.publish.side_effect = RuntimeError("unavailable")
         with self.assertRaises(RuntimeError):
-            self.controller.process_message(
-                RoutedInputEndMessage("run", "reply"), self.ack, self.nack
-            )
+            self.controller.process_message(self.end(), self.ack, self.nack)
         self.assertIn("run", self.controller._executions)
         self.ack.assert_not_called()
         self.nack.assert_called_once()
+
+    def test_waits_for_all_projector_partitions(self):
+        controller = Q3WordAggregatorController(
+            self.messaging,
+            partition_id=2,
+            partition_count=3,
+            projector_partition_count=2,
+        )
+
+        controller.process_message(self.end(partition_id=0), self.ack, self.nack)
+        self.messaging.publish.assert_not_called()
+        controller.process_message(self.end(partition_id=1), self.ack, self.nack)
+
+        self.messaging.publish.assert_called_once_with(
+            QueryPartitionEndMessage(3, 2, "run")
+        )
 
     def test_rejects_unexpected_messages(self):
         with self.assertRaises(ValueError):

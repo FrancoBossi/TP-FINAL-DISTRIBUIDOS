@@ -1,14 +1,13 @@
-from collections.abc import Callable
-
+from common.coordinated_consumer import (
+    ControlMessageCallback,
+    CoordinatedConsumer,
+    MessageCallback,
+)
 from common.message_protocol.message import Message
-from common.middleware.middleware import MessageMiddlewareQueue
-
-Ack = Callable[[], None]
-Nack = Callable[..., None]
-MessageCallback = Callable[
-    [Message, Ack, Nack],
-    None,
-]
+from common.middleware.middleware import (
+    MessageMiddlewareExchange,
+    MessageMiddlewareQueue,
+)
 
 
 class Q5DateRouterMessaging:
@@ -17,12 +16,17 @@ class Q5DateRouterMessaging:
         input_queue: MessageMiddlewareQueue,
         historical_output_queue: MessageMiddlewareQueue,
         candidate_output_queue: MessageMiddlewareQueue,
+        control_exchange_input: MessageMiddlewareExchange,
+        control_exchange_output: MessageMiddlewareExchange,
         historical_output_queues: dict[str, MessageMiddlewareQueue] | None = None,
+        candidate_output_queues: dict[str, MessageMiddlewareQueue] | None = None,
     ) -> None:
-        self._input_queue = input_queue
+        self._consumer = CoordinatedConsumer(input_queue, control_exchange_input)
         self._historical_output_queue = historical_output_queue
         self._historical_output_queues = historical_output_queues or {}
         self._candidate_output_queue = candidate_output_queue
+        self._candidate_output_queues = candidate_output_queues or {}
+        self._control_exchange_output = control_exchange_output
 
     def publish_historical(self, message: Message) -> None:
         self._historical_output_queue.send(message.serialize())
@@ -35,28 +39,38 @@ class Q5DateRouterMessaging:
     def publish_candidates(self, message: Message) -> None:
         self._candidate_output_queue.send(message.serialize())
 
-    def start_consuming(self, on_message: MessageCallback) -> None:
-        def deserialize_message(
-            body: bytes,
-            ack: Ack,
-            nack: Nack,
-        ) -> None:
-            message = Message.deserialize(body)
-            on_message(message, ack, nack)
+    def publish_candidates_to(self, queue: str, message: Message) -> None:
+        self._candidate_output_queues.get(queue, self._candidate_output_queue).send(
+            message.serialize()
+        )
 
-        self._input_queue.start_consuming(deserialize_message)
+    def broadcast_control(self, message: Message) -> None:
+        self._control_exchange_output.send(message.serialize())
+
+    def start_consuming(
+        self,
+        on_message: MessageCallback,
+        on_control_message: ControlMessageCallback,
+    ) -> None:
+        self._consumer.start_consuming(on_message, on_control_message)
 
     def stop_consuming(self) -> None:
-        self._input_queue.stop_consuming()
+        self._consumer.stop_consuming()
 
     def close(self) -> None:
         try:
-            self._input_queue.close()
+            self._consumer.close()
         finally:
             try:
                 self._historical_output_queue.close()
             finally:
-                for queue in self._historical_output_queues.values():
-                    if queue is not self._historical_output_queue:
-                        queue.close()
-                self._candidate_output_queue.close()
+                try:
+                    for queue in self._historical_output_queues.values():
+                        if queue is not self._historical_output_queue:
+                            queue.close()
+                    self._candidate_output_queue.close()
+                    for queue in self._candidate_output_queues.values():
+                        if queue is not self._candidate_output_queue:
+                            queue.close()
+                finally:
+                    self._control_exchange_output.close()

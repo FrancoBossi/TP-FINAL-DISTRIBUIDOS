@@ -4,7 +4,6 @@ from unittest.mock import Mock, call
 from common.message_protocol.message import (
     AckMessage,
     PartitionEndMessage,
-    RoutedInputEndMessage,
     TextArticleBatchMessage,
     TokenizedArticleBatchMessage,
 )
@@ -18,6 +17,7 @@ class TestWordExtractorController(unittest.TestCase):
         self.nack = Mock()
         self.controller = WordExtractorController(
             messaging=self.messaging,
+            partition_id=1,
             query_router_partition_count=2,
         )
         self.batch = TextArticleBatchMessage(
@@ -93,23 +93,25 @@ class TestWordExtractorController(unittest.TestCase):
             self.nack,
         )
 
-        self.messaging.publish_q3.assert_not_called()
-        self.messaging.publish_q4_q5.assert_not_called()
+        self.messaging.broadcast_control.assert_called_once_with(self.partition_end_0)
         self.ack.assert_called_once()
 
-    def test_forwards_one_input_end_after_barrier(self):
-        self.controller.process_message(
-            self.partition_end_0,
-            self.ack,
-            self.nack,
-        )
-        self.controller.process_message(
-            self.partition_end_1,
-            self.ack,
-            self.nack,
-        )
+    def test_waits_for_all_query_router_partitions_on_control(self):
+        self.controller.process_control_message(self.partition_end_0)
 
-        expected = RoutedInputEndMessage("run", "results.run")
+        self.messaging.publish_q3.assert_not_called()
+        self.messaging.publish_q4_q5.assert_not_called()
+
+    def test_emits_own_partition_end_after_control_barrier(self):
+        self.controller.process_control_message(self.partition_end_0)
+        self.controller.process_control_message(self.partition_end_1)
+
+        expected = PartitionEndMessage(
+            stage="word_extractor",
+            partition_id=1,
+            execution_id="run",
+            reply_queue="results.run",
+        )
         self.assertEqual(
             self.messaging.mock_calls,
             [
@@ -117,20 +119,10 @@ class TestWordExtractorController(unittest.TestCase):
                 call.publish_q4_q5(expected),
             ],
         )
-        self.assertEqual(self.ack.call_count, 2)
-        self.nack.assert_not_called()
 
     def test_does_not_count_same_partition_twice(self):
-        self.controller.process_message(
-            self.partition_end_0,
-            self.ack,
-            self.nack,
-        )
-        self.controller.process_message(
-            self.partition_end_0,
-            self.ack,
-            self.nack,
-        )
+        self.controller.process_control_message(self.partition_end_0)
+        self.controller.process_control_message(self.partition_end_0)
 
         self.messaging.publish_q3.assert_not_called()
         self.messaging.publish_q4_q5.assert_not_called()
@@ -140,6 +132,19 @@ class TestWordExtractorController(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "unavailable"):
             self.controller.process_message(self.batch, self.ack, self.nack)
+
+        self.ack.assert_not_called()
+        self.nack.assert_called_once()
+
+    def test_control_broadcast_failure_never_acks(self):
+        self.messaging.broadcast_control.side_effect = RuntimeError("unavailable")
+
+        with self.assertRaisesRegex(RuntimeError, "unavailable"):
+            self.controller.process_message(
+                self.partition_end_0,
+                self.ack,
+                self.nack,
+            )
 
         self.ack.assert_not_called()
         self.nack.assert_called_once()
@@ -157,7 +162,8 @@ class TestWordExtractorController(unittest.TestCase):
         self.controller.stop()
 
         self.messaging.start_consuming.assert_called_once_with(
-            self.controller.process_message
+            self.controller.process_message,
+            self.controller.process_control_message,
         )
         self.messaging.stop_consuming.assert_called_once()
 

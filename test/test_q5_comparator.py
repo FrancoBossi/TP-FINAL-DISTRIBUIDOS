@@ -3,11 +3,11 @@ import unittest
 from unittest.mock import Mock, call
 
 from common.message_protocol.message import (
+    PartitionEndMessage,
     Q5AverageMessage,
     Q5CandidateBatchMessage,
-    QueryEndMessage,
+    QueryPartitionEndMessage,
     ResultMessage,
-    RoutedInputEndMessage,
 )
 from q5.comparator.buffer import CandidateBuffer
 from q5.comparator.controller import Q5ComparatorController
@@ -50,7 +50,9 @@ class TestQ5ComparatorController(unittest.TestCase):
             execution_id="execution-123",
             reply_queue="results.execution-123",
         )
-        end = RoutedInputEndMessage(
+        end = PartitionEndMessage(
+            stage="q5_date_router",
+            partition_id=0,
             execution_id="execution-123",
             reply_queue="results.execution-123",
         )
@@ -85,8 +87,9 @@ class TestQ5ComparatorController(unittest.TestCase):
                     )
                 ),
                 call(
-                    QueryEndMessage(
+                    QueryPartitionEndMessage(
                         query_id=5,
+                        partition_id=0,
                         execution_id="execution-123",
                     )
                 ),
@@ -125,7 +128,9 @@ class TestQ5ComparatorController(unittest.TestCase):
             execution_id="execution-123",
             reply_queue="results.execution-123",
         )
-        end = RoutedInputEndMessage(
+        end = PartitionEndMessage(
+            stage="q5_date_router",
+            partition_id=0,
             execution_id="execution-123",
             reply_queue="results.execution-123",
         )
@@ -148,8 +153,9 @@ class TestQ5ComparatorController(unittest.TestCase):
                     )
                 ),
                 call(
-                    QueryEndMessage(
+                    QueryPartitionEndMessage(
                         query_id=5,
+                        partition_id=0,
                         execution_id="execution-123",
                     )
                 ),
@@ -174,7 +180,9 @@ class TestQ5ComparatorController(unittest.TestCase):
             execution_id="execution-empty",
             reply_queue="results.execution-empty",
         )
-        end = RoutedInputEndMessage(
+        end = PartitionEndMessage(
+            stage="q5_date_router",
+            partition_id=0,
             execution_id="execution-empty",
             reply_queue="results.execution-empty",
         )
@@ -200,8 +208,9 @@ class TestQ5ComparatorController(unittest.TestCase):
         )
 
         self.messaging.publish.assert_called_once_with(
-            QueryEndMessage(
+            QueryPartitionEndMessage(
                 query_id=5,
+                partition_id=0,
                 execution_id="execution-empty",
             )
         )
@@ -247,6 +256,54 @@ class TestQ5ComparatorController(unittest.TestCase):
             list(self.buffer.iterate("execution-123")),
             candidates.articles,
         )
+
+    def test_waits_for_every_date_router_partition_before_finishing(self):
+        controller = Q5ComparatorController(
+            messaging=self.messaging,
+            candidate_buffer=self.buffer,
+            partition_id=2,
+            date_router_partition_count=3,
+        )
+        average = Q5AverageMessage(
+            average_word_count=3.0,
+            execution_id="execution-123",
+            reply_queue="results.execution-123",
+        )
+        controller.process_message(average, self.ack, self.nack)
+
+        for partition_id in (0, 1):
+            controller.process_message(
+                PartitionEndMessage(
+                    "q5_date_router",
+                    partition_id,
+                    "execution-123",
+                    "results.execution-123",
+                ),
+                self.ack,
+                self.nack,
+            )
+
+        self.messaging.publish.assert_not_called()
+
+        controller.process_message(
+            PartitionEndMessage(
+                "q5_date_router",
+                2,
+                "execution-123",
+                "results.execution-123",
+            ),
+            self.ack,
+            self.nack,
+        )
+
+        self.messaging.publish.assert_called_once_with(
+            QueryPartitionEndMessage(
+                query_id=5,
+                partition_id=2,
+                execution_id="execution-123",
+            )
+        )
+        self.assertNotIn("execution-123", controller._executions)
 
 
 if __name__ == "__main__":

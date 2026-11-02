@@ -21,6 +21,14 @@ class Q5AverageReducerConfig:
     output_queue: str = field(
         default_factory=lambda: os.environ.get("OUTPUT_QUEUE", "q5_comparator.input")
     )
+    output_queue_prefix: str = field(
+        default_factory=lambda: os.environ.get(
+            "OUTPUT_QUEUE_PREFIX", "q5_comparator.input"
+        )
+    )
+    comparator_partition_count: int = field(
+        default_factory=lambda: int(os.environ.get("COMPARATOR_PARTITION_COUNT", "1"))
+    )
     partition_count: int = field(
         default_factory=lambda: int(os.environ.get("PARTITION_COUNT", "1"))
     )

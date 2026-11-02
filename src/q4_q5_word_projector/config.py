@@ -42,3 +42,16 @@ class Q4Q5WordProjectorConfig:
             "q5_date_router.input",
         )
     )
+    control_exchange: str = field(
+        default_factory=lambda: os.environ.get(
+            "CONTROL_EXCHANGE", "q4_q5_word_projector.control"
+        )
+    )
+    partition_id: int = field(
+        default_factory=lambda: int(os.environ.get("PARTITION_ID", "0"))
+    )
+    word_extractor_partition_count: int = field(
+        default_factory=lambda: int(
+            os.environ.get("WORD_EXTRACTOR_PARTITION_COUNT", "1")
+        )
+    )

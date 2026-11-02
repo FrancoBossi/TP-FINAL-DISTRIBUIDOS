@@ -33,3 +33,6 @@ class Q3WordAggregatorConfig:
     partition_count: int = field(
         default_factory=lambda: int(os.environ.get("PARTITION_COUNT", "1"))
     )
+    projector_partition_count: int = field(
+        default_factory=lambda: int(os.environ.get("PROJECTOR_PARTITION_COUNT", "1"))
+    )

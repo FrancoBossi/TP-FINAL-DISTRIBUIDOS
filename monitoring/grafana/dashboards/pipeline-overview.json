@@ -9335,7 +9335,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -9429,7 +9429,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q3-word-projector\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q3-word-projector.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -9711,7 +9711,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -9805,7 +9805,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q3-word-projector\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q3-word-projector.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -10087,7 +10087,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -10181,7 +10181,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q3-word-projector\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q3-word-projector.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -10475,13 +10475,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Read | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Write | {{name}}",
               "range": true,
               "refId": "B"
@@ -10587,13 +10587,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q3-word-projector\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q3-word-projector.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Read | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q3-word-projector\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q3-word-projector.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Write | {{name}}",
               "range": true,
               "refId": "B"
@@ -10923,13 +10923,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "RX | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "TX | {{name}}",
               "range": true,
               "refId": "B"
@@ -11035,13 +11035,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q3-word-projector\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q3-word-projector.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "RX | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q3-word-projector\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q3-word-projector.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "TX | {{name}}",
               "range": true,
               "refId": "B"
@@ -12149,7 +12149,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -12243,7 +12243,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -12431,7 +12431,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-top20-reducer\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-top20-reducer.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -12619,7 +12619,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -12713,7 +12713,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -12901,7 +12901,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-top20-reducer\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-top20-reducer.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -13089,7 +13089,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -13183,7 +13183,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -13371,7 +13371,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-top20-reducer\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-top20-reducer.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -13571,13 +13571,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Read | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Write | {{name}}",
               "range": true,
               "refId": "B"
@@ -13683,13 +13683,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Read | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Write | {{name}}",
               "range": true,
               "refId": "B"
@@ -13907,13 +13907,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-top20-reducer\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-top20-reducer.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Read | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-top20-reducer\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-top20-reducer.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Write | {{name}}",
               "range": true,
               "refId": "B"
@@ -14131,13 +14131,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "RX | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "TX | {{name}}",
               "range": true,
               "refId": "B"
@@ -14243,13 +14243,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "RX | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "TX | {{name}}",
               "range": true,
               "refId": "B"
@@ -14467,13 +14467,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-top20-reducer\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-top20-reducer.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "RX | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-top20-reducer\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-top20-reducer.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "TX | {{name}}",
               "range": true,
               "refId": "B"
@@ -15663,7 +15663,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -15757,7 +15757,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -15851,7 +15851,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-date-router\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-date-router.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -16039,7 +16039,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-average-reducer\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-average-reducer.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -16133,7 +16133,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-comparator\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-comparator.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -16227,7 +16227,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -16321,7 +16321,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -16415,7 +16415,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-date-router\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-date-router.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -16603,7 +16603,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-average-reducer\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-average-reducer.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -16697,7 +16697,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-comparator\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-comparator.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -16791,7 +16791,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -16885,7 +16885,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -16979,7 +16979,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-date-router\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-date-router.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -17167,7 +17167,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-average-reducer\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-average-reducer.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -17261,7 +17261,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-comparator\",container_label_com_docker_compose_service=~\"$service\"})",
+              "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-comparator.*\",container_label_com_docker_compose_service=~\"$service\"})",
               "legendFormat": "{{name}}",
               "range": true,
               "refId": "A"
@@ -17367,13 +17367,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Read | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Write | {{name}}",
               "range": true,
               "refId": "B"
@@ -17479,13 +17479,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Read | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Write | {{name}}",
               "range": true,
               "refId": "B"
@@ -17591,13 +17591,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-date-router\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-date-router.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Read | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-date-router\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-date-router.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Write | {{name}}",
               "range": true,
               "refId": "B"
@@ -17815,13 +17815,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-average-reducer\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-average-reducer.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Read | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-average-reducer\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-average-reducer.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Write | {{name}}",
               "range": true,
               "refId": "B"
@@ -17927,13 +17927,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-comparator\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-comparator.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Read | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-comparator\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-comparator.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
               "legendFormat": "Write | {{name}}",
               "range": true,
               "refId": "B"
@@ -18039,13 +18039,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "RX | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"word-extractor.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "TX | {{name}}",
               "range": true,
               "refId": "B"
@@ -18151,13 +18151,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "RX | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q4-q5-word-projector.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "TX | {{name}}",
               "range": true,
               "refId": "B"
@@ -18263,13 +18263,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-date-router\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-date-router.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "RX | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-date-router\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-date-router.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "TX | {{name}}",
               "range": true,
               "refId": "B"
@@ -18487,13 +18487,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-average-reducer\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-average-reducer.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "RX | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-average-reducer\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-average-reducer.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "TX | {{name}}",
               "range": true,
               "refId": "B"
@@ -18599,13 +18599,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-comparator\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-comparator.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "RX | {{name}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-comparator\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+              "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"q5-comparator.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
               "legendFormat": "TX | {{name}}",
               "range": true,
               "refId": "B"

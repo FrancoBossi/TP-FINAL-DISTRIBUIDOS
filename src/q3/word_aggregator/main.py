@@ -52,6 +52,7 @@ def main() -> int:
         messaging=messaging,
         partition_id=config.partition_id,
         partition_count=config.partition_count,
+        projector_partition_count=config.projector_partition_count,
     )
 
     signal.signal(

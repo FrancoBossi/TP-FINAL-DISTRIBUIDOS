@@ -3,7 +3,10 @@ import signal
 from functools import partial
 from types import FrameType
 
-from common.middleware import MessageMiddlewareQueueRabbitMQ
+from common.middleware import (
+    MessageMiddlewareExchangeRabbitMQ,
+    MessageMiddlewareQueueRabbitMQ,
+)
 from common.partition_router import PartitionRouter
 from q4_q5_word_projector.config import (
     Q4Q5WordProjectorConfig,
@@ -21,6 +24,7 @@ def create_messaging(
     q4_output_queue_name: str,
     q5_output_queue_name: str,
     q4_partition_count: int = 1,
+    control_exchange_name: str = "q4_q5_word_projector.control",
 ) -> Q4Q5WordProjectorMessaging:
     input_queue = MessageMiddlewareQueueRabbitMQ(
         host=mom_host,
@@ -36,12 +40,24 @@ def create_messaging(
         host=mom_host,
         queue_name=q5_output_queue_name,
     )
+    control_exchange_input = MessageMiddlewareExchangeRabbitMQ(
+        host=mom_host,
+        exchange_name=control_exchange_name,
+        routing_keys=[control_exchange_name],
+    )
+    control_exchange_output = MessageMiddlewareExchangeRabbitMQ(
+        host=mom_host,
+        exchange_name=control_exchange_name,
+        routing_keys=[control_exchange_name],
+        create_queue=False,
+    )
 
     return Q4Q5WordProjectorMessaging(
         input_queue=input_queue,
-        q4_output_queue=next(iter(q4_output_queues.values())),
-        q5_output_queue=q5_output_queue,
         q4_output_queues=q4_output_queues,
+        q5_output_queue=q5_output_queue,
+        control_exchange_input=control_exchange_input,
+        control_exchange_output=control_exchange_output,
     )
 
 
@@ -63,12 +79,15 @@ def main() -> int:
         q4_output_queue_name=config.q4_output_queue_prefix,
         q5_output_queue_name=config.q5_output_queue,
         q4_partition_count=config.q4_partition_count,
+        control_exchange_name=config.control_exchange,
     )
     controller = Q4Q5WordProjectorController(
         messaging=messaging,
         router=PartitionRouter(
             config.q4_output_queue_prefix, config.q4_partition_count
         ),
+        partition_id=config.partition_id,
+        word_extractor_partition_count=config.word_extractor_partition_count,
     )
 
     signal.signal(
@@ -77,7 +96,8 @@ def main() -> int:
     )
 
     logger.info(
-        "Q4Q5WordProjector consuming from %s and publishing to %s and %s",
+        "Q4Q5WordProjector partition %s consuming from %s and publishing to %s and %s",
+        config.partition_id,
         config.input_queue,
         config.q4_output_queue,
         config.q5_output_queue,
