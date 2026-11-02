@@ -3,6 +3,7 @@ from unittest.mock import Mock, call
 
 from common.message_protocol.message import (
     AckMessage,
+    PartitionEndMessage,
     RoutedInputEndMessage,
     TextArticleBatchMessage,
     TokenizedArticleBatchMessage,
@@ -15,7 +16,10 @@ class TestWordExtractorController(unittest.TestCase):
         self.messaging = Mock()
         self.ack = Mock()
         self.nack = Mock()
-        self.controller = WordExtractorController(self.messaging)
+        self.controller = WordExtractorController(
+            messaging=self.messaging,
+            query_router_partition_count=2,
+        )
         self.batch = TextArticleBatchMessage(
             articles=[
                 {
@@ -26,6 +30,18 @@ class TestWordExtractorController(unittest.TestCase):
                     "abstract": "Network NETWORK and",
                 }
             ],
+            execution_id="run",
+            reply_queue="results.run",
+        )
+        self.partition_end_0 = PartitionEndMessage(
+            stage="query_router",
+            partition_id=0,
+            execution_id="run",
+            reply_queue="results.run",
+        )
+        self.partition_end_1 = PartitionEndMessage(
+            stage="query_router",
+            partition_id=1,
             execution_id="run",
             reply_queue="results.run",
         )
@@ -61,48 +77,90 @@ class TestWordExtractorController(unittest.TestCase):
         )
         self.nack.assert_not_called()
 
-    def test_empty_input_still_forwards_end_to_both_branches(self):
-        self.controller.process_message(
-            TextArticleBatchMessage([], "run", "results.run"), self.ack, self.nack
-        )
+    def test_empty_batch_publishes_nothing(self):
+        message = TextArticleBatchMessage([], "run", "results.run")
+
+        self.controller.process_message(message, self.ack, self.nack)
+
         self.assertEqual([], self.messaging.mock_calls)
-        end = RoutedInputEndMessage("run", "results.run")
-        self.controller.process_message(end, self.ack, self.nack)
+        self.ack.assert_called_once()
+        self.nack.assert_not_called()
+
+    def test_waits_for_all_query_router_partitions(self):
+        self.controller.process_message(
+            self.partition_end_0,
+            self.ack,
+            self.nack,
+        )
+
+        self.messaging.publish_q3.assert_not_called()
+        self.messaging.publish_q4_q5.assert_not_called()
+        self.ack.assert_called_once()
+
+    def test_forwards_one_input_end_after_barrier(self):
+        self.controller.process_message(
+            self.partition_end_0,
+            self.ack,
+            self.nack,
+        )
+        self.controller.process_message(
+            self.partition_end_1,
+            self.ack,
+            self.nack,
+        )
+
+        expected = RoutedInputEndMessage("run", "results.run")
         self.assertEqual(
             self.messaging.mock_calls,
             [
-                call.publish_q3(end),
-                call.publish_q4_q5(end),
+                call.publish_q3(expected),
+                call.publish_q4_q5(expected),
             ],
         )
-        self.assertEqual(2, self.ack.call_count)
+        self.assertEqual(self.ack.call_count, 2)
         self.nack.assert_not_called()
 
-    def test_publication_failure_never_acks_batch_or_end(self):
-        for message in (self.batch, RoutedInputEndMessage("run", "results.run")):
-            for method in ("publish_q3", "publish_q4_q5"):
-                with self.subTest(message=message, method=method):
-                    messaging = Mock()
-                    getattr(messaging, method).side_effect = RuntimeError("unavailable")
-                    ack, nack = Mock(), Mock()
-                    with self.assertRaisesRegex(RuntimeError, "unavailable"):
-                        WordExtractorController(messaging).process_message(
-                            message, ack, nack
-                        )
-                    ack.assert_not_called()
-                    nack.assert_called_once_with()
+    def test_does_not_count_same_partition_twice(self):
+        self.controller.process_message(
+            self.partition_end_0,
+            self.ack,
+            self.nack,
+        )
+        self.controller.process_message(
+            self.partition_end_0,
+            self.ack,
+            self.nack,
+        )
+
+        self.messaging.publish_q3.assert_not_called()
+        self.messaging.publish_q4_q5.assert_not_called()
+
+    def test_publication_failure_never_acks(self):
+        self.messaging.publish_q4_q5.side_effect = RuntimeError("unavailable")
+
+        with self.assertRaisesRegex(RuntimeError, "unavailable"):
+            self.controller.process_message(self.batch, self.ack, self.nack)
+
+        self.ack.assert_not_called()
+        self.nack.assert_called_once()
 
     def test_unexpected_message_is_rejected(self):
         with self.assertRaises(ValueError):
             self.controller.process_message(AckMessage(), self.ack, self.nack)
+
         self.ack.assert_not_called()
-        self.nack.assert_called_once_with()
+        self.nack.assert_called_once()
         self.assertEqual([], self.messaging.mock_calls)
 
     def test_delegates_start_and_stop(self):
         self.controller.start()
         self.controller.stop()
+
         self.messaging.start_consuming.assert_called_once_with(
             self.controller.process_message
         )
-        self.messaging.stop_consuming.assert_called_once_with()
+        self.messaging.stop_consuming.assert_called_once()
+
+
+if __name__ == "__main__":
+    unittest.main()

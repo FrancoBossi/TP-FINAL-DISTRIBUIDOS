@@ -10,6 +10,7 @@ from common.message_protocol.message import (
     InputEndMessage,
     Message,
     NormalizedArticleBatchMessage,
+    PartitionEndMessage,
     Q1CandidateBatchMessage,
     Q1Q2ArticleBatchMessage,
     Q2CandidateBatchMessage,
@@ -24,6 +25,7 @@ from common.message_protocol.message import (
     Q5PartialStatsMessage,
     Q5StatsPartitionEndMessage,
     QueryEndMessage,
+    QueryPartitionEndMessage,
     ResultMessage,
     RoutedArticleMessage,
     RoutedInputEndMessage,
@@ -158,6 +160,17 @@ class TestMessage(unittest.TestCase):
             RoutedInputEndMessage(
                 execution_id=execution_id,
                 reply_queue=f"results.{execution_id}",
+            ),
+            PartitionEndMessage(
+                stage="preprocessor",
+                partition_id=0,
+                execution_id=execution_id,
+                reply_queue=f"results.{execution_id}",
+            ),
+            QueryPartitionEndMessage(
+                query_id=2,
+                partition_id=1,
+                execution_id=execution_id,
             ),
             AckMessage(),
             ErrorMessage(message="failed"),

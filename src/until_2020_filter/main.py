@@ -60,6 +60,7 @@ def main() -> int:
     )
     controller = Until2020FilterController(
         messaging=messaging,
+        query_router_partition_count=config.query_router_partition_count,
     )
 
     signal.signal(
@@ -68,8 +69,10 @@ def main() -> int:
     )
 
     logger.info(
-        "Until2020Filter consuming from %s and publishing to %s and %s",
+        "Until2020Filter consuming from %s, awaiting %s QueryRouter "
+        "partitions and publishing to %s and %s",
         config.input_queue,
+        config.query_router_partition_count,
         config.q1_output_queue,
         config.q2_output_queue,
     )

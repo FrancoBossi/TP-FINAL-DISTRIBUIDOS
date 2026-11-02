@@ -1,9 +1,12 @@
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import pika
 
-from common.middleware import MessageMiddlewareQueueRabbitMQ
+from common.middleware import (
+    MessageMiddlewareExchangeRabbitMQ,
+    MessageMiddlewareQueueRabbitMQ,
+)
 from common.middleware.middleware import MessageMiddlewareDisconnectedError
 
 
@@ -113,6 +116,103 @@ class TestMessageMiddlewareQueueRabbitMQ(unittest.TestCase):
 
         channel.basic_ack.assert_called_once_with(delivery_tag=42)
         channel.basic_nack.assert_called_once_with(delivery_tag=42)
+
+
+class TestMessageMiddlewareExchangeRabbitMQ(unittest.TestCase):
+    def test_declares_consumer_queue_binds_routes_and_publishes(self):
+        connection = Mock()
+        connection.is_closed = False
+
+        channel = connection.channel.return_value
+        channel.is_closed = False
+        channel.queue_declare.return_value.method.queue = "generated-control-queue"
+
+        with patch(
+            "common.middleware.middleware_rabbitmq.pika.BlockingConnection",
+            return_value=connection,
+        ):
+            exchange = MessageMiddlewareExchangeRabbitMQ(
+                host="rabbitmq",
+                exchange_name="control",
+                routing_keys=["input_end", "query_failed"],
+            )
+
+        channel.exchange_declare.assert_called_once_with(
+            exchange="control",
+            exchange_type="direct",
+            durable=False,
+        )
+        channel.queue_declare.assert_called_once_with(
+            queue="",
+            exclusive=True,
+        )
+        self.assertEqual(
+            channel.queue_bind.call_args_list,
+            [
+                call(
+                    exchange="control",
+                    queue="generated-control-queue",
+                    routing_key="input_end",
+                ),
+                call(
+                    exchange="control",
+                    queue="generated-control-queue",
+                    routing_key="query_failed",
+                ),
+            ],
+        )
+
+        exchange.send(b"control message")
+
+        self.assertEqual(
+            channel.basic_publish.call_args_list,
+            [
+                call(
+                    exchange="control",
+                    routing_key="input_end",
+                    body=b"control message",
+                ),
+                call(
+                    exchange="control",
+                    routing_key="query_failed",
+                    body=b"control message",
+                ),
+            ],
+        )
+
+    def test_publisher_only_does_not_create_queue(self):
+        connection = Mock()
+        connection.is_closed = False
+
+        channel = connection.channel.return_value
+        channel.is_closed = False
+
+        with patch(
+            "common.middleware.middleware_rabbitmq.pika.BlockingConnection",
+            return_value=connection,
+        ):
+            exchange = MessageMiddlewareExchangeRabbitMQ(
+                host="rabbitmq",
+                exchange_name="control",
+                routing_keys=["input_end"],
+                create_queue=False,
+            )
+
+        channel.exchange_declare.assert_called_once_with(
+            exchange="control",
+            exchange_type="direct",
+            durable=False,
+        )
+        channel.queue_declare.assert_not_called()
+        channel.queue_bind.assert_not_called()
+
+        exchange.send(b"input finished")
+
+        channel.basic_publish.assert_called_once_with(
+            exchange="control",
+            routing_key="input_end",
+            body=b"input finished",
+        )
 
 
 if __name__ == "__main__":
