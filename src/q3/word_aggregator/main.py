@@ -1,9 +1,8 @@
 import logging
-import signal
-from functools import partial
 from types import FrameType
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
+from common.shutdown import shutdown_signals
 from q3.word_aggregator.config import Q3WordAggregatorConfig, configure_logging
 from q3.word_aggregator.controller import Q3WordAggregatorController
 from q3.word_aggregator.messaging import Q3WordAggregatorMessaging
@@ -55,11 +54,6 @@ def main() -> int:
         projector_partition_count=config.projector_partition_count,
     )
 
-    signal.signal(
-        signal.SIGTERM,
-        partial(handle_sigterm, controller),
-    )
-
     logger.info(
         "Q3WordAggregator consuming from %s and publishing to %s",
         config.input_queue,
@@ -67,7 +61,8 @@ def main() -> int:
     )
 
     try:
-        controller.start()
+        with shutdown_signals(controller.stop):
+            controller.start()
     except KeyboardInterrupt:
         return 0
     finally:

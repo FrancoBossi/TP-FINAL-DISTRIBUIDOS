@@ -1,10 +1,9 @@
 import logging
-import signal
-from functools import partial
 from types import FrameType
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
 from common.middleware.middleware_rabbitmq import MessagePublisherRabbitMQ
+from common.shutdown import shutdown_signals
 from result_sink.config import ResultSinkConfig, configure_logging
 from result_sink.controller import ResultSinkController
 from result_sink.messaging import ResultSinkMessaging
@@ -53,18 +52,14 @@ def main() -> int:
         partition_counts=config.partition_counts,
     )
 
-    signal.signal(
-        signal.SIGTERM,
-        partial(handle_sigterm, controller),
-    )
-
     logger.info(
         "ResultSink consuming from %s and streaming to results.<execution_id>",
         config.input_queue,
     )
 
     try:
-        controller.start()
+        with shutdown_signals(controller.stop):
+            controller.start()
     except KeyboardInterrupt:
         return 0
     finally:

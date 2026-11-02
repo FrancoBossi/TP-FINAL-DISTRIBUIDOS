@@ -3,6 +3,7 @@ import socket
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
+from threading import Event
 from uuid import uuid4
 
 from common.message_protocol.external import (
@@ -197,6 +198,7 @@ def forward_results(
 def handle_client(
     client_socket: socket.socket,
     messaging_factory: Callable[[str], GatewayMessaging],
+    stop_event: Event,
 ) -> None:
     execution_id = uuid4().hex
     messaging = None
@@ -214,6 +216,8 @@ def handle_client(
 
         try:
             while not input_finished:
+                if stop_event.is_set():
+                    return
                 published, input_finished = forward_message(
                     client_socket,
                     messaging,
@@ -221,6 +225,8 @@ def handle_client(
                     published,
                 )
         except (EOFError, OSError):
+            if stop_event.is_set():
+                return
             messaging.publish(
                 RoutedInputEndMessage(
                     execution_id=execution_id,
@@ -233,7 +239,8 @@ def handle_client(
             )
             return
 
-        forward_results(client_socket, messaging, execution_id)
+        if not stop_event.is_set():
+            forward_results(client_socket, messaging, execution_id)
     except Exception as error:
         logger.exception(
             "Execution %s: failed after %d articles published",

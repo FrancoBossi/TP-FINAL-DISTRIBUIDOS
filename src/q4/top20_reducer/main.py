@@ -1,8 +1,7 @@
 import logging
-import signal
-from functools import partial
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
+from common.shutdown import shutdown_signals
 from q4.top20_reducer.config import Q4Top20ReducerConfig, configure_logging
 from q4.top20_reducer.controller import Q4Top20ReducerController
 from q4.top20_reducer.messaging import Q4Top20ReducerMessaging
@@ -21,10 +20,10 @@ def main() -> int:
         messaging,
         partition_count=config.partition_count,
     )
-    signal.signal(signal.SIGTERM, partial(lambda c, _s, _f: c.stop(), controller))
     logger.info("Q4Top20Reducer consuming from %s", config.input_queue)
     try:
-        controller.start()
+        with shutdown_signals(controller.stop):
+            controller.start()
     except KeyboardInterrupt:
         return 0
     finally:

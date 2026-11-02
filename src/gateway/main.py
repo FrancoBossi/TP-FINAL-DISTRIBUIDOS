@@ -1,16 +1,11 @@
-import signal
-from types import FrameType
-from typing import NoReturn
+from threading import Event
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
 from common.partition_router import PartitionRouter
+from common.shutdown import shutdown_signals
 from gateway.config import GatewayConfig, configure_logging
 from gateway.messaging import GatewayMessaging
 from gateway.server import serve
-
-
-def handle_sigterm(signum: int, frame: FrameType | None) -> NoReturn:
-    raise SystemExit(0)
 
 
 def create_messaging(
@@ -51,18 +46,20 @@ def main() -> int:
         partition_count=config.input_batcher_partitions,
     )
 
-    signal.signal(signal.SIGTERM, handle_sigterm)
+    stop_event = Event()
 
     try:
-        serve(
-            config.host,
-            config.port,
-            lambda execution_id: create_messaging(
-                mom_host=config.mom_host,
-                input_queue_name=input_router.queue_for(execution_id),
-                execution_id=execution_id,
-            ),
-        )
+        with shutdown_signals(stop_event.set):
+            serve(
+                config.host,
+                config.port,
+                lambda execution_id: create_messaging(
+                    mom_host=config.mom_host,
+                    input_queue_name=input_router.queue_for(execution_id),
+                    execution_id=execution_id,
+                ),
+                stop_event=stop_event,
+            )
     except KeyboardInterrupt:
         return 0
 

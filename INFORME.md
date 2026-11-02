@@ -12,7 +12,7 @@ El diseño separa tres etapas de evolución:
 2. **Escalabilidad, dentro de este mismo hito:** múltiples réplicas, protocolo de control, `PARTITION_END`, barreras, clientes concurrentes y graceful shutdown completo.
 3. **Tolerancia a fallos, en el hito posterior:** persistencia, recuperación ante caídas, deduplicación e idempotencia frente a reentregas.
 
-Al corte de este documento se encuentran implementados el cliente, el Gateway concurrente, el ingreso incremental desde Parquet, el batching por bytes, el preprocesamiento, el fan-out del QueryRouter, las ramas Q1-Q5 y ResultSink. El recorrido punta a punta se validó con 50.000 artículos: el cliente recibió los cinco finales y los cinco archivos coincidieron con la referencia serial. El pipeline despliega tres réplicas o particiones en InputBatcher, Preprocessor, QueryRouter y en las etapas de Q1-Q5 que procesan o mantienen estado distribuido. Los componentes stateless coordinan su cierre mediante exchanges de control; los stateful aplican routing estable y barreras. Q1, Q2, Q3 y Q5 entregan tres finales de partición a ResultSink. En Q4, los parciales de cada ejecución convergen en uno de tres reducers físicos, que produce un único final. Gateway y ResultSink permanecen como instancias únicas. El trabajo pendiente principal de este hito es completar el graceful shutdown coordinado y validar nuevamente el dataset completo bajo la topología replicada.
+Al corte de este documento se encuentran implementados el cliente, el Gateway concurrente, el ingreso incremental desde Parquet, el batching por bytes, el preprocesamiento, el fan-out del QueryRouter, las ramas Q1-Q5 y ResultSink. El recorrido punta a punta se validó con 50.000 artículos: el cliente recibió los cinco finales y los cinco archivos coincidieron con la referencia serial. El pipeline despliega tres réplicas o particiones en InputBatcher, Preprocessor, QueryRouter y en las etapas de Q1-Q5 que procesan o mantienen estado distribuido. Los componentes stateless coordinan su cierre mediante exchanges de control; los stateful aplican routing estable y barreras. Q1, Q2, Q3 y Q5 entregan tres finales de partición a ResultSink. En Q4, los parciales de cada ejecución convergen en uno de tres reducers físicos, que produce un único final. Gateway y ResultSink permanecen como instancias únicas. El cierre por señales está implementado; resta validarlo bajo carga y comparar nuevamente el dataset completo bajo la topología replicada.
 
 ---
 
@@ -550,7 +550,7 @@ Para la demo se utiliza tres como cantidad inicial en los grupos coordinados y s
 
 ### 14.3 Límites del escalamiento actual
 
-Docker Compose despliega tres particiones o réplicas de todos los componentes escalables de Q1-Q5. Las etapas stateless usan consumidores competidores y broadcast de control; las stateful usan colas particionadas y hash estable; los reducers se distribuyen por ejecución. Gateway y ResultSink permanecen como instancias únicas. El límite actual principal no es la topología de datos sino el graceful shutdown coordinado de todos los procesos.
+Docker Compose despliega tres particiones o réplicas de todos los componentes escalables de Q1-Q5. Las etapas stateless usan consumidores competidores y broadcast de control; las stateful usan colas particionadas y hash estable; los reducers se distribuyen por ejecución. Gateway y ResultSink permanecen como instancias únicas. La validación pendiente incluye el cierre por señales y la ejecución completa bajo carga con esta topología.
 
 La cantidad de particiones de una etapa stateful deberá permanecer fija mientras existan ejecuciones activas, salvo que se implemente migración explícita de estado.
 
@@ -658,20 +658,35 @@ Compose permite demostrar la topología con múltiples containers. La expansión
 
 Queda pendiente definir una política completa de poison messages y propagar fallos internos terminales como `QUERY_FAILED` hasta el cliente.
 
-### 17.2 Graceful shutdown objetivo
+### 17.2 Cierre por señales implementado
 
-Ante `SIGTERM`, cada proceso debe:
+Los workers registran un handler compartido para `SIGTERM` y `SIGINT`. La primera
+señal solicita detener el consumo; las siguientes no repiten la solicitud. El
+handler no termina el proceso: el callback activo puede finalizar y luego retorna
+`start_consuming()`. El `finally` del entrypoint cierra el middleware.
 
-1. Dejar de solicitar DATA nuevo
-2. Terminar tareas cortas ya iniciadas
-3. Confirmar solamente trabajo completo
-4. Reencolar trabajo incompleto
-5. Confirmar publicaciones pendientes
-6. Hacer flush de estado o archivos propios
-7. Cerrar sockets y conexiones RabbitMQ
-8. Finalizar sin inventar `PARTITION_END`
+`CoordinatedConsumer` respeta un stop solicitado antes de iniciar, deja de drenar
+la cola local de control durante el cierre y espera su thread de control. No se
+reinicia la misma instancia después de detenerla. El middleware reencola entregas
+que todavía no iniciaron su callback al detectar el stop.
 
-La implementación actual cierra recursos en sus flujos normales, pero el manejo coordinado de `SIGTERM` para todos los procesos todavía está pendiente dentro de este hito.
+InputBatcher confirma artículos después de incorporarlos al buffer. Cuando el
+consumo retorna normalmente, publica los batches parciales y después los elimina
+del acumulador. Si el consumo lanza una excepción,
+este drenaje no se ejecuta. Si falla la publicación o se fuerza la terminación,
+pueden perderse artículos ya confirmados; no existe persistencia de ese buffer.
+
+Gateway deja de aceptar conexiones y solicita el stop de cada `ClientSession`.
+Cada sesión agrupa thread, socket, middleware y sincronización. Interrumpir el
+socket desbloquea operaciones TCP; detener el consumidor desbloquea la espera de
+resultados en RabbitMQ. Gateway espera los threads y cada sesión cierra sus propias
+conexiones. El listener usa un timeout de un segundo para revisar el evento de
+cierre.
+
+Client lanza `SystemExit(0)` ante una señal. Los contextos de socket y `ExitStack`
+liberan la conexión y hacen flush y cierre de los archivos abiertos. Los archivos
+pueden quedar parciales y el código de salida actual no identifica la interrupción.
+
 
 ---
 
@@ -835,11 +850,10 @@ El pipeline funcional está completo y fue comparado con la referencia serial so
 
 ### 24.2 Para completar el hito de escalabilidad
 
-1. Completar graceful shutdown coordinado.
-2. Repetir la comparación completa con 50.000 artículos bajo la topología replicada.
-3. Ejecutar escenarios de múltiples clientes y justificar las cantidades mediante métricas.
-4. Medir la concurrencia HTTP limitada por las tres réplicas de ImageFetcher y ajustar su cantidad si las métricas lo justifican.
-5. Actualizar y exportar los diagramas 4+1 restantes.
+1. Repetir la comparación completa con 50.000 artículos bajo la topología replicada.
+2. Ejecutar escenarios de múltiples clientes y justificar las cantidades mediante métricas.
+3. Medir la concurrencia HTTP limitada por las tres réplicas de ImageFetcher y ajustar su cantidad si las métricas lo justifican.
+4. Actualizar y exportar los diagramas 4+1 restantes.
 
 ### 24.3 Mejoras posteriores al pipeline funcional
 

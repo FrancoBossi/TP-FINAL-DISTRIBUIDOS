@@ -61,3 +61,15 @@ class TestGatewayMessaging(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGatewayMessagingLifecycle(unittest.TestCase):
+    def test_stop_after_close_does_not_touch_closed_connection(self):
+        input_queue, result_queue = Mock(), Mock()
+        messaging = GatewayMessaging(input_queue, result_queue, "results.test")
+        messaging.close()
+        messaging.stop_consuming_results()
+        messaging.close()
+        result_queue.stop_consuming.assert_not_called()
+        input_queue.close.assert_called_once_with()
+        result_queue.close.assert_called_once_with()

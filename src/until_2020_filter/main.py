@@ -1,12 +1,11 @@
 import logging
-import signal
-from functools import partial
 from types import FrameType
 
 from common.middleware import (
     MessageMiddlewareExchangeRabbitMQ,
     MessageMiddlewareQueueRabbitMQ,
 )
+from common.shutdown import shutdown_signals
 from until_2020_filter.config import (
     Until2020FilterConfig,
     configure_logging,
@@ -82,11 +81,6 @@ def main() -> int:
         query_router_partition_count=config.query_router_partition_count,
     )
 
-    signal.signal(
-        signal.SIGTERM,
-        partial(handle_sigterm, controller),
-    )
-
     logger.info(
         "Until2020Filter partition %s consuming from %s, awaiting %s "
         "QueryRouter partitions and publishing to %s and %s",
@@ -98,7 +92,8 @@ def main() -> int:
     )
 
     try:
-        controller.start()
+        with shutdown_signals(controller.stop):
+            controller.start()
     except KeyboardInterrupt:
         return 0
     finally:

@@ -1,6 +1,4 @@
 import logging
-import signal
-from functools import partial
 from types import FrameType
 
 from common.middleware import (
@@ -8,6 +6,7 @@ from common.middleware import (
     MessageMiddlewareQueueRabbitMQ,
 )
 from common.partition_router import PartitionRouter
+from common.shutdown import shutdown_signals
 from q4_q5_word_projector.config import (
     Q4Q5WordProjectorConfig,
     configure_logging,
@@ -90,11 +89,6 @@ def main() -> int:
         word_extractor_partition_count=config.word_extractor_partition_count,
     )
 
-    signal.signal(
-        signal.SIGTERM,
-        partial(handle_sigterm, controller),
-    )
-
     logger.info(
         "Q4Q5WordProjector partition %s consuming from %s and publishing to %s and %s",
         config.partition_id,
@@ -104,7 +98,8 @@ def main() -> int:
     )
 
     try:
-        controller.start()
+        with shutdown_signals(controller.stop):
+            controller.start()
     except KeyboardInterrupt:
         return 0
     finally:

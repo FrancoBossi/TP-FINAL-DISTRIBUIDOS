@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 from functools import partial
+from threading import Event
 
 import pika
 
@@ -36,6 +37,7 @@ def _pika_error_to_middleware_error(
 
 class _MessageMiddlewareRabbitMQBase:
     def __init__(self, host: str) -> None:
+        self._stop_requested = Event()
         with _pika_error_to_middleware_error(
             "initialization",
             MessageMiddlewareMessageError,
@@ -50,9 +52,15 @@ class _MessageMiddlewareRabbitMQBase:
                     retry_delay=3,
                     socket_timeout=5,
                     stack_timeout=10,
+                    blocked_connection_timeout=10,
                 )
             )
-            self._channel = self._connection.channel()
+            try:
+                self._channel = self._connection.channel()
+                self._channel.confirm_delivery()
+            except Exception:
+                self.close()
+                raise
 
     def _check_connection(self) -> None:
         if self._connection.is_closed:
@@ -63,6 +71,9 @@ class _MessageMiddlewareRabbitMQBase:
 
     def start_consuming(self, on_message_callback) -> None:
         self._check_connection()
+        if self._stop_requested.is_set():
+            self._stop_requested.clear()
+            return
 
         def callback(channel, method, _properties, body) -> None:
             ack = partial(
@@ -73,6 +84,9 @@ class _MessageMiddlewareRabbitMQBase:
                 channel.basic_nack,
                 delivery_tag=method.delivery_tag,
             )
+            if self._stop_requested.is_set():
+                nack(requeue=True)
+                return
             on_message_callback(body, ack, nack)
 
         with _pika_error_to_middleware_error(
@@ -85,9 +99,13 @@ class _MessageMiddlewareRabbitMQBase:
                 on_message_callback=callback,
                 auto_ack=False,
             )
-            self._channel.start_consuming()
+            try:
+                self._channel.start_consuming()
+            finally:
+                self._stop_requested.clear()
 
     def stop_consuming(self) -> None:
+        self._stop_requested.set()
         if self._connection.is_closed:
             return
 
@@ -114,17 +132,6 @@ class MessagePublisherRabbitMQ(
     MessageMiddlewarePublisher,
 ):
     """Publish to existing queues without declaring Gateway's exclusive queues."""
-
-    def __init__(self, host: str) -> None:
-        super().__init__(host)
-        try:
-            with _pika_error_to_middleware_error(
-                "enabling publisher confirms", MessageMiddlewareMessageError
-            ):
-                self._channel.confirm_delivery()
-        except Exception:
-            self.close()
-            raise
 
     def send_to(self, destination: str, message: bytes) -> None:
         self._check_connection()

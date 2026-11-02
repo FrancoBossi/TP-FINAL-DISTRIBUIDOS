@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 3,
+  "id": 2,
   "links": [],
   "panels": [
     {
@@ -82,6 +82,80 @@
       ],
       "title": "Queued messages",
       "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 9,
+        "x": 6,
+        "y": 0
+      },
+      "id": 214,
+      "options": {
+        "displayMode": "basic",
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "maxVizHeight": 300,
+        "minVizHeight": 20,
+        "minVizWidth": 0,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": false,
+        "sizing": "auto",
+        "text": {},
+        "valueMode": "color"
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "expr": "sort_desc(count by (service) (label_replace(label_replace(max by (container_label_com_docker_compose_project, container_label_com_docker_compose_service, name) (((time() - container_last_seen{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_project!=\"\",container_label_com_docker_compose_service=~\"$service\",container_label_com_docker_compose_service!=\"\",container_label_com_docker_compose_service!~\"cadvisor|grafana|prometheus\",name!=\"\"}) < 90) and on (job, instance) (up{job=\"cadvisor\"} == 1)), \"service\", \"$1\", \"container_label_com_docker_compose_service\", \"(.+)\"), \"service\", \"$1\", \"container_label_com_docker_compose_service\", \"(.+)-[0-9]+\")))",
+          "instant": true,
+          "legendFormat": "{{service}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Current replicas per service",
+      "type": "bargauge"
     },
     {
       "datasource": {
@@ -159,8 +233,8 @@
       },
       "gridPos": {
         "h": 12,
-        "w": 18,
-        "x": 6,
+        "w": 9,
+        "x": 15,
         "y": 0
       },
       "id": 186,
@@ -187,7 +261,7 @@
           "refId": "A"
         }
       ],
-      "title": "Contenedores observados",
+      "title": "Observed containers",
       "transformations": [
         {
           "id": "filterFieldsByName",
@@ -584,8 +658,8 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "100 * sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"gateway\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"gateway\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
@@ -678,8 +752,8 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "100 * sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"input-batcher-.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"input-batcher-.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
@@ -772,8 +846,8 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "100 * sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"preprocessor-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"preprocessor-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
@@ -866,8 +940,8 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "100 * sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"query-router-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"query-router-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
@@ -960,8 +1034,8 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "100 * sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"result-sink\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"result-sink\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
@@ -1148,8 +1222,8 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"gateway\",container_label_com_docker_compose_service=~\"$service\"})",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"gateway\",container_label_com_docker_compose_service=~\"$service\"})",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
@@ -1242,8 +1316,8 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"input-batcher-.*\",container_label_com_docker_compose_service=~\"$service\"})",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"input-batcher-.*\",container_label_com_docker_compose_service=~\"$service\"})",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
@@ -1336,8 +1410,8 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"preprocessor-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"})",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"preprocessor-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"})",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
@@ -1430,8 +1504,8 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"query-router-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"})",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"query-router-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"})",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
@@ -1524,8 +1598,8 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"result-sink\",container_label_com_docker_compose_service=~\"$service\"})",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (container_memory_working_set_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"result-sink\",container_label_com_docker_compose_service=~\"$service\"})",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
@@ -1712,8 +1786,8 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"gateway\",container_label_com_docker_compose_service=~\"$service\"})",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"gateway\",container_label_com_docker_compose_service=~\"$service\"})",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
@@ -1806,8 +1880,8 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"input-batcher-.*\",container_label_com_docker_compose_service=~\"$service\"})",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"input-batcher-.*\",container_label_com_docker_compose_service=~\"$service\"})",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
@@ -1900,8 +1974,8 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"preprocessor-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"})",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"preprocessor-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"})",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
@@ -1994,8 +2068,8 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"query-router-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"})",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"query-router-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"})",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
@@ -2088,8 +2162,8 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"result-sink\",container_label_com_docker_compose_service=~\"$service\"})",
-          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (container_fs_usage_bytes{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"result-sink\",container_label_com_docker_compose_service=~\"$service\"})",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
@@ -2306,14 +2380,14 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"gateway\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "Read | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"gateway\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "Read | {{name}}",
           "range": true,
           "refId": "A"
         },
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"gateway\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "Write | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"gateway\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "Write | {{name}}",
           "range": true,
           "refId": "B"
         }
@@ -2418,14 +2492,14 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"input-batcher-.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "Read | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"input-batcher-.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "Read | {{name}}",
           "range": true,
           "refId": "A"
         },
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"input-batcher-.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "Write | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"input-batcher-.*\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "Write | {{name}}",
           "range": true,
           "refId": "B"
         }
@@ -2530,14 +2604,14 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"preprocessor-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "Read | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"preprocessor-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "Read | {{name}}",
           "range": true,
           "refId": "A"
         },
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"preprocessor-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "Write | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"preprocessor-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "Write | {{name}}",
           "range": true,
           "refId": "B"
         }
@@ -2642,14 +2716,14 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"query-router-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "Read | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"query-router-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "Read | {{name}}",
           "range": true,
           "refId": "A"
         },
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"query-router-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "Write | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"query-router-[0-9]+\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "Write | {{name}}",
           "range": true,
           "refId": "B"
         }
@@ -2754,14 +2828,14 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"result-sink\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "Read | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_fs_reads_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"result-sink\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "Read | {{name}}",
           "range": true,
           "refId": "A"
         },
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"result-sink\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "Write | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_fs_writes_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"result-sink\",container_label_com_docker_compose_service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "Write | {{name}}",
           "range": true,
           "refId": "B"
         }
@@ -2978,14 +3052,14 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"gateway\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
-          "legendFormat": "RX | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"gateway\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+          "legendFormat": "RX | {{name}}",
           "range": true,
           "refId": "A"
         },
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"gateway\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
-          "legendFormat": "TX | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"gateway\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+          "legendFormat": "TX | {{name}}",
           "range": true,
           "refId": "B"
         }
@@ -3090,14 +3164,14 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"input-batcher-.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
-          "legendFormat": "RX | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"input-batcher-.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+          "legendFormat": "RX | {{name}}",
           "range": true,
           "refId": "A"
         },
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"input-batcher-.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
-          "legendFormat": "TX | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"input-batcher-.*\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+          "legendFormat": "TX | {{name}}",
           "range": true,
           "refId": "B"
         }
@@ -3202,14 +3276,14 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"preprocessor-[0-9]+\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
-          "legendFormat": "RX | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"preprocessor-[0-9]+\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+          "legendFormat": "RX | {{name}}",
           "range": true,
           "refId": "A"
         },
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"preprocessor-[0-9]+\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
-          "legendFormat": "TX | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"preprocessor-[0-9]+\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+          "legendFormat": "TX | {{name}}",
           "range": true,
           "refId": "B"
         }
@@ -3314,14 +3388,14 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"query-router-[0-9]+\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
-          "legendFormat": "RX | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"query-router-[0-9]+\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+          "legendFormat": "RX | {{name}}",
           "range": true,
           "refId": "A"
         },
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"query-router-[0-9]+\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
-          "legendFormat": "TX | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"query-router-[0-9]+\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+          "legendFormat": "TX | {{name}}",
           "range": true,
           "refId": "B"
         }
@@ -3426,14 +3500,14 @@
       "pluginVersion": "12.1.0",
       "targets": [
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"result-sink\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
-          "legendFormat": "RX | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_network_receive_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"result-sink\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+          "legendFormat": "RX | {{name}}",
           "range": true,
           "refId": "A"
         },
         {
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"result-sink\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
-          "legendFormat": "TX | {{container_label_com_docker_compose_service}}",
+          "expr": "sum by (name) (rate(container_network_transmit_bytes_total{job=\"cadvisor\",container_label_com_docker_compose_project=~\"$project\",container_label_com_docker_compose_service=~\"result-sink\",container_label_com_docker_compose_service=~\"$service\",interface!=\"lo\"}[$__rate_interval]))",
+          "legendFormat": "TX | {{name}}",
           "range": true,
           "refId": "B"
         }
@@ -4388,7 +4462,7 @@
             "h": 5,
             "w": 8,
             "x": 0,
-            "y": 49
+            "y": 92
           },
           "id": 46,
           "options": {
@@ -4482,7 +4556,7 @@
             "h": 5,
             "w": 8,
             "x": 8,
-            "y": 49
+            "y": 92
           },
           "id": 52,
           "options": {
@@ -4576,7 +4650,7 @@
             "h": 5,
             "w": 8,
             "x": 16,
-            "y": 49
+            "y": 92
           },
           "id": 58,
           "options": {
@@ -4670,7 +4744,7 @@
             "h": 5,
             "w": 8,
             "x": 0,
-            "y": 54
+            "y": 97
           },
           "id": 47,
           "options": {
@@ -4764,7 +4838,7 @@
             "h": 5,
             "w": 8,
             "x": 8,
-            "y": 54
+            "y": 97
           },
           "id": 53,
           "options": {
@@ -4858,7 +4932,7 @@
             "h": 5,
             "w": 8,
             "x": 16,
-            "y": 54
+            "y": 97
           },
           "id": 59,
           "options": {
@@ -4952,7 +5026,7 @@
             "h": 5,
             "w": 8,
             "x": 0,
-            "y": 59
+            "y": 102
           },
           "id": 48,
           "options": {
@@ -5046,7 +5120,7 @@
             "h": 5,
             "w": 8,
             "x": 8,
-            "y": 59
+            "y": 102
           },
           "id": 54,
           "options": {
@@ -5140,7 +5214,7 @@
             "h": 5,
             "w": 8,
             "x": 16,
-            "y": 59
+            "y": 102
           },
           "id": 60,
           "options": {
@@ -5246,7 +5320,7 @@
             "h": 5,
             "w": 8,
             "x": 0,
-            "y": 64
+            "y": 107
           },
           "id": 49,
           "options": {
@@ -5358,7 +5432,7 @@
             "h": 5,
             "w": 8,
             "x": 8,
-            "y": 64
+            "y": 107
           },
           "id": 55,
           "options": {
@@ -5470,7 +5544,7 @@
             "h": 5,
             "w": 8,
             "x": 16,
-            "y": 64
+            "y": 107
           },
           "id": 61,
           "options": {
@@ -5582,7 +5656,7 @@
             "h": 5,
             "w": 8,
             "x": 0,
-            "y": 69
+            "y": 112
           },
           "id": 50,
           "options": {
@@ -5694,7 +5768,7 @@
             "h": 5,
             "w": 8,
             "x": 8,
-            "y": 69
+            "y": 112
           },
           "id": 56,
           "options": {
@@ -5806,7 +5880,7 @@
             "h": 5,
             "w": 8,
             "x": 16,
-            "y": 69
+            "y": 112
           },
           "id": 62,
           "options": {
@@ -5906,7 +5980,7 @@
             "h": 5,
             "w": 8,
             "x": 0,
-            "y": 74
+            "y": 117
           },
           "id": 51,
           "options": {
@@ -6006,7 +6080,7 @@
             "h": 5,
             "w": 8,
             "x": 8,
-            "y": 74
+            "y": 117
           },
           "id": 57,
           "options": {
@@ -6106,7 +6180,7 @@
             "h": 5,
             "w": 8,
             "x": 16,
-            "y": 74
+            "y": 117
           },
           "id": 63,
           "options": {
@@ -6206,7 +6280,7 @@
             "h": 5,
             "w": 8,
             "x": 0,
-            "y": 79
+            "y": 122
           },
           "id": 191,
           "options": {
@@ -6300,7 +6374,7 @@
             "h": 5,
             "w": 8,
             "x": 8,
-            "y": 79
+            "y": 122
           },
           "id": 192,
           "options": {
@@ -6394,7 +6468,7 @@
             "h": 5,
             "w": 8,
             "x": 16,
-            "y": 79
+            "y": 122
           },
           "id": 193,
           "options": {
@@ -6502,7 +6576,7 @@
             "h": 5,
             "w": 6,
             "x": 0,
-            "y": 85
+            "y": 128
           },
           "id": 66,
           "options": {
@@ -6596,7 +6670,7 @@
             "h": 5,
             "w": 6,
             "x": 6,
-            "y": 85
+            "y": 128
           },
           "id": 72,
           "options": {
@@ -6690,7 +6764,7 @@
             "h": 5,
             "w": 6,
             "x": 12,
-            "y": 85
+            "y": 128
           },
           "id": 78,
           "options": {
@@ -6784,7 +6858,7 @@
             "h": 5,
             "w": 6,
             "x": 18,
-            "y": 85
+            "y": 128
           },
           "id": 84,
           "options": {
@@ -6878,7 +6952,7 @@
             "h": 5,
             "w": 6,
             "x": 0,
-            "y": 90
+            "y": 133
           },
           "id": 67,
           "options": {
@@ -6972,7 +7046,7 @@
             "h": 5,
             "w": 6,
             "x": 6,
-            "y": 90
+            "y": 133
           },
           "id": 73,
           "options": {
@@ -7066,7 +7140,7 @@
             "h": 5,
             "w": 6,
             "x": 12,
-            "y": 90
+            "y": 133
           },
           "id": 79,
           "options": {
@@ -7160,7 +7234,7 @@
             "h": 5,
             "w": 6,
             "x": 18,
-            "y": 90
+            "y": 133
           },
           "id": 85,
           "options": {
@@ -7254,7 +7328,7 @@
             "h": 5,
             "w": 6,
             "x": 0,
-            "y": 95
+            "y": 138
           },
           "id": 68,
           "options": {
@@ -7348,7 +7422,7 @@
             "h": 5,
             "w": 6,
             "x": 6,
-            "y": 95
+            "y": 138
           },
           "id": 74,
           "options": {
@@ -7442,7 +7516,7 @@
             "h": 5,
             "w": 6,
             "x": 12,
-            "y": 95
+            "y": 138
           },
           "id": 80,
           "options": {
@@ -7536,7 +7610,7 @@
             "h": 5,
             "w": 6,
             "x": 18,
-            "y": 95
+            "y": 138
           },
           "id": 86,
           "options": {
@@ -7642,7 +7716,7 @@
             "h": 5,
             "w": 6,
             "x": 0,
-            "y": 100
+            "y": 143
           },
           "id": 69,
           "options": {
@@ -7754,7 +7828,7 @@
             "h": 5,
             "w": 6,
             "x": 6,
-            "y": 100
+            "y": 143
           },
           "id": 75,
           "options": {
@@ -7866,7 +7940,7 @@
             "h": 5,
             "w": 6,
             "x": 12,
-            "y": 100
+            "y": 143
           },
           "id": 81,
           "options": {
@@ -7978,7 +8052,7 @@
             "h": 5,
             "w": 6,
             "x": 18,
-            "y": 100
+            "y": 143
           },
           "id": 87,
           "options": {
@@ -8090,7 +8164,7 @@
             "h": 5,
             "w": 6,
             "x": 0,
-            "y": 105
+            "y": 148
           },
           "id": 70,
           "options": {
@@ -8202,7 +8276,7 @@
             "h": 5,
             "w": 6,
             "x": 6,
-            "y": 105
+            "y": 148
           },
           "id": 76,
           "options": {
@@ -8314,7 +8388,7 @@
             "h": 5,
             "w": 6,
             "x": 12,
-            "y": 105
+            "y": 148
           },
           "id": 82,
           "options": {
@@ -8426,7 +8500,7 @@
             "h": 5,
             "w": 6,
             "x": 18,
-            "y": 105
+            "y": 148
           },
           "id": 88,
           "options": {
@@ -8526,7 +8600,7 @@
             "h": 5,
             "w": 6,
             "x": 0,
-            "y": 110
+            "y": 153
           },
           "id": 71,
           "options": {
@@ -8626,7 +8700,7 @@
             "h": 5,
             "w": 6,
             "x": 6,
-            "y": 110
+            "y": 153
           },
           "id": 77,
           "options": {
@@ -8726,7 +8800,7 @@
             "h": 5,
             "w": 6,
             "x": 12,
-            "y": 110
+            "y": 153
           },
           "id": 83,
           "options": {
@@ -8826,7 +8900,7 @@
             "h": 5,
             "w": 6,
             "x": 18,
-            "y": 110
+            "y": 153
           },
           "id": 89,
           "options": {
@@ -8926,7 +9000,7 @@
             "h": 5,
             "w": 6,
             "x": 0,
-            "y": 115
+            "y": 158
           },
           "id": 194,
           "options": {
@@ -9020,7 +9094,7 @@
             "h": 5,
             "w": 6,
             "x": 6,
-            "y": 115
+            "y": 158
           },
           "id": 195,
           "options": {
@@ -9114,7 +9188,7 @@
             "h": 5,
             "w": 6,
             "x": 12,
-            "y": 115
+            "y": 158
           },
           "id": 196,
           "options": {
@@ -9208,7 +9282,7 @@
             "h": 5,
             "w": 6,
             "x": 18,
-            "y": 115
+            "y": 158
           },
           "id": 197,
           "options": {
@@ -9316,7 +9390,7 @@
             "h": 5,
             "w": 6,
             "x": 0,
-            "y": 121
+            "y": 164
           },
           "id": 92,
           "options": {
@@ -9410,7 +9484,7 @@
             "h": 5,
             "w": 6,
             "x": 6,
-            "y": 121
+            "y": 164
           },
           "id": 98,
           "options": {
@@ -9504,7 +9578,7 @@
             "h": 5,
             "w": 6,
             "x": 12,
-            "y": 121
+            "y": 164
           },
           "id": 104,
           "options": {
@@ -9598,7 +9672,7 @@
             "h": 5,
             "w": 6,
             "x": 18,
-            "y": 121
+            "y": 164
           },
           "id": 110,
           "options": {
@@ -9692,7 +9766,7 @@
             "h": 5,
             "w": 6,
             "x": 0,
-            "y": 126
+            "y": 169
           },
           "id": 93,
           "options": {
@@ -9786,7 +9860,7 @@
             "h": 5,
             "w": 6,
             "x": 6,
-            "y": 126
+            "y": 169
           },
           "id": 99,
           "options": {
@@ -9880,7 +9954,7 @@
             "h": 5,
             "w": 6,
             "x": 12,
-            "y": 126
+            "y": 169
           },
           "id": 105,
           "options": {
@@ -9974,7 +10048,7 @@
             "h": 5,
             "w": 6,
             "x": 18,
-            "y": 126
+            "y": 169
           },
           "id": 111,
           "options": {
@@ -10068,7 +10142,7 @@
             "h": 5,
             "w": 6,
             "x": 0,
-            "y": 131
+            "y": 174
           },
           "id": 94,
           "options": {
@@ -10162,7 +10236,7 @@
             "h": 5,
             "w": 6,
             "x": 6,
-            "y": 131
+            "y": 174
           },
           "id": 100,
           "options": {
@@ -10256,7 +10330,7 @@
             "h": 5,
             "w": 6,
             "x": 12,
-            "y": 131
+            "y": 174
           },
           "id": 106,
           "options": {
@@ -10350,7 +10424,7 @@
             "h": 5,
             "w": 6,
             "x": 18,
-            "y": 131
+            "y": 174
           },
           "id": 112,
           "options": {
@@ -10456,7 +10530,7 @@
             "h": 5,
             "w": 6,
             "x": 0,
-            "y": 136
+            "y": 179
           },
           "id": 95,
           "options": {
@@ -10568,7 +10642,7 @@
             "h": 5,
             "w": 6,
             "x": 6,
-            "y": 136
+            "y": 179
           },
           "id": 101,
           "options": {
@@ -10680,7 +10754,7 @@
             "h": 5,
             "w": 6,
             "x": 12,
-            "y": 136
+            "y": 179
           },
           "id": 107,
           "options": {
@@ -10792,7 +10866,7 @@
             "h": 5,
             "w": 6,
             "x": 18,
-            "y": 136
+            "y": 179
           },
           "id": 113,
           "options": {
@@ -10904,7 +10978,7 @@
             "h": 5,
             "w": 6,
             "x": 0,
-            "y": 141
+            "y": 184
           },
           "id": 96,
           "options": {
@@ -11016,7 +11090,7 @@
             "h": 5,
             "w": 6,
             "x": 6,
-            "y": 141
+            "y": 184
           },
           "id": 102,
           "options": {
@@ -11128,7 +11202,7 @@
             "h": 5,
             "w": 6,
             "x": 12,
-            "y": 141
+            "y": 184
           },
           "id": 108,
           "options": {
@@ -11240,7 +11314,7 @@
             "h": 5,
             "w": 6,
             "x": 18,
-            "y": 141
+            "y": 184
           },
           "id": 114,
           "options": {
@@ -11340,7 +11414,7 @@
             "h": 5,
             "w": 6,
             "x": 0,
-            "y": 146
+            "y": 189
           },
           "id": 97,
           "options": {
@@ -11440,7 +11514,7 @@
             "h": 5,
             "w": 6,
             "x": 6,
-            "y": 146
+            "y": 189
           },
           "id": 103,
           "options": {
@@ -11540,7 +11614,7 @@
             "h": 5,
             "w": 6,
             "x": 12,
-            "y": 146
+            "y": 189
           },
           "id": 109,
           "options": {
@@ -11640,7 +11714,7 @@
             "h": 5,
             "w": 6,
             "x": 18,
-            "y": 146
+            "y": 189
           },
           "id": 115,
           "options": {
@@ -11740,7 +11814,7 @@
             "h": 5,
             "w": 6,
             "x": 0,
-            "y": 151
+            "y": 194
           },
           "id": 198,
           "options": {
@@ -11834,7 +11908,7 @@
             "h": 5,
             "w": 6,
             "x": 6,
-            "y": 151
+            "y": 194
           },
           "id": 199,
           "options": {
@@ -11928,7 +12002,7 @@
             "h": 5,
             "w": 6,
             "x": 12,
-            "y": 151
+            "y": 194
           },
           "id": 200,
           "options": {
@@ -12022,7 +12096,7 @@
             "h": 5,
             "w": 6,
             "x": 18,
-            "y": 151
+            "y": 194
           },
           "id": 201,
           "options": {
@@ -12130,7 +12204,7 @@
             "h": 5,
             "w": 4,
             "x": 0,
-            "y": 157
+            "y": 200
           },
           "id": 118,
           "options": {
@@ -12224,7 +12298,7 @@
             "h": 5,
             "w": 5,
             "x": 4,
-            "y": 157
+            "y": 200
           },
           "id": 124,
           "options": {
@@ -12318,7 +12392,7 @@
             "h": 5,
             "w": 5,
             "x": 9,
-            "y": 157
+            "y": 200
           },
           "id": 130,
           "options": {
@@ -12412,7 +12486,7 @@
             "h": 5,
             "w": 5,
             "x": 14,
-            "y": 157
+            "y": 200
           },
           "id": 136,
           "options": {
@@ -12506,7 +12580,7 @@
             "h": 5,
             "w": 5,
             "x": 19,
-            "y": 157
+            "y": 200
           },
           "id": 142,
           "options": {
@@ -12600,7 +12674,7 @@
             "h": 5,
             "w": 4,
             "x": 0,
-            "y": 162
+            "y": 205
           },
           "id": 119,
           "options": {
@@ -12694,7 +12768,7 @@
             "h": 5,
             "w": 5,
             "x": 4,
-            "y": 162
+            "y": 205
           },
           "id": 125,
           "options": {
@@ -12788,7 +12862,7 @@
             "h": 5,
             "w": 5,
             "x": 9,
-            "y": 162
+            "y": 205
           },
           "id": 131,
           "options": {
@@ -12882,7 +12956,7 @@
             "h": 5,
             "w": 5,
             "x": 14,
-            "y": 162
+            "y": 205
           },
           "id": 137,
           "options": {
@@ -12976,7 +13050,7 @@
             "h": 5,
             "w": 5,
             "x": 19,
-            "y": 162
+            "y": 205
           },
           "id": 143,
           "options": {
@@ -13070,7 +13144,7 @@
             "h": 5,
             "w": 4,
             "x": 0,
-            "y": 167
+            "y": 210
           },
           "id": 120,
           "options": {
@@ -13164,7 +13238,7 @@
             "h": 5,
             "w": 5,
             "x": 4,
-            "y": 167
+            "y": 210
           },
           "id": 126,
           "options": {
@@ -13258,7 +13332,7 @@
             "h": 5,
             "w": 5,
             "x": 9,
-            "y": 167
+            "y": 210
           },
           "id": 132,
           "options": {
@@ -13352,7 +13426,7 @@
             "h": 5,
             "w": 5,
             "x": 14,
-            "y": 167
+            "y": 210
           },
           "id": 138,
           "options": {
@@ -13446,7 +13520,7 @@
             "h": 5,
             "w": 5,
             "x": 19,
-            "y": 167
+            "y": 210
           },
           "id": 144,
           "options": {
@@ -13552,7 +13626,7 @@
             "h": 5,
             "w": 4,
             "x": 0,
-            "y": 172
+            "y": 215
           },
           "id": 121,
           "options": {
@@ -13664,7 +13738,7 @@
             "h": 5,
             "w": 5,
             "x": 4,
-            "y": 172
+            "y": 215
           },
           "id": 127,
           "options": {
@@ -13776,7 +13850,7 @@
             "h": 5,
             "w": 5,
             "x": 9,
-            "y": 172
+            "y": 215
           },
           "id": 133,
           "options": {
@@ -13888,7 +13962,7 @@
             "h": 5,
             "w": 5,
             "x": 14,
-            "y": 172
+            "y": 215
           },
           "id": 139,
           "options": {
@@ -14000,7 +14074,7 @@
             "h": 5,
             "w": 5,
             "x": 19,
-            "y": 172
+            "y": 215
           },
           "id": 145,
           "options": {
@@ -14112,7 +14186,7 @@
             "h": 5,
             "w": 4,
             "x": 0,
-            "y": 177
+            "y": 220
           },
           "id": 122,
           "options": {
@@ -14224,7 +14298,7 @@
             "h": 5,
             "w": 5,
             "x": 4,
-            "y": 177
+            "y": 220
           },
           "id": 128,
           "options": {
@@ -14336,7 +14410,7 @@
             "h": 5,
             "w": 5,
             "x": 9,
-            "y": 177
+            "y": 220
           },
           "id": 134,
           "options": {
@@ -14448,7 +14522,7 @@
             "h": 5,
             "w": 5,
             "x": 14,
-            "y": 177
+            "y": 220
           },
           "id": 140,
           "options": {
@@ -14560,7 +14634,7 @@
             "h": 5,
             "w": 5,
             "x": 19,
-            "y": 177
+            "y": 220
           },
           "id": 146,
           "options": {
@@ -14660,7 +14734,7 @@
             "h": 5,
             "w": 4,
             "x": 0,
-            "y": 182
+            "y": 225
           },
           "id": 123,
           "options": {
@@ -14760,7 +14834,7 @@
             "h": 5,
             "w": 5,
             "x": 4,
-            "y": 182
+            "y": 225
           },
           "id": 129,
           "options": {
@@ -14860,7 +14934,7 @@
             "h": 5,
             "w": 5,
             "x": 9,
-            "y": 182
+            "y": 225
           },
           "id": 135,
           "options": {
@@ -14960,7 +15034,7 @@
             "h": 5,
             "w": 5,
             "x": 14,
-            "y": 182
+            "y": 225
           },
           "id": 141,
           "options": {
@@ -14979,13 +15053,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (vhost, queue) (rabbitmq_queue_messages_ready{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q4_top20_reducer[.]input\"})",
+              "expr": "sum by (vhost, queue) (rabbitmq_queue_messages_ready{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q4_top20_reducer[.]input([.][0-9]+)?\"})",
               "legendFormat": "Ready | {{queue}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (vhost, queue) (rabbitmq_queue_messages_unacked{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q4_top20_reducer[.]input\"})",
+              "expr": "sum by (vhost, queue) (rabbitmq_queue_messages_unacked{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q4_top20_reducer[.]input([.][0-9]+)?\"})",
               "legendFormat": "Unacked | {{queue}}",
               "range": true,
               "refId": "B"
@@ -15060,7 +15134,7 @@
             "h": 5,
             "w": 5,
             "x": 19,
-            "y": 182
+            "y": 225
           },
           "id": 147,
           "options": {
@@ -15160,7 +15234,7 @@
             "h": 5,
             "w": 4,
             "x": 0,
-            "y": 187
+            "y": 230
           },
           "id": 202,
           "options": {
@@ -15254,7 +15328,7 @@
             "h": 5,
             "w": 5,
             "x": 4,
-            "y": 187
+            "y": 230
           },
           "id": 203,
           "options": {
@@ -15348,7 +15422,7 @@
             "h": 5,
             "w": 5,
             "x": 9,
-            "y": 187
+            "y": 230
           },
           "id": 204,
           "options": {
@@ -15442,7 +15516,7 @@
             "h": 5,
             "w": 5,
             "x": 14,
-            "y": 187
+            "y": 230
           },
           "id": 205,
           "options": {
@@ -15461,7 +15535,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (vhost, queue) (rabbitmq_queue_consumers{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q4_top20_reducer[.]input\"})",
+              "expr": "sum by (vhost, queue) (rabbitmq_queue_consumers{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q4_top20_reducer[.]input([.][0-9]+)?\"})",
               "legendFormat": "Consumers | {{queue}}",
               "range": true,
               "refId": "A"
@@ -15536,7 +15610,7 @@
             "h": 5,
             "w": 5,
             "x": 19,
-            "y": 187
+            "y": 230
           },
           "id": 206,
           "options": {
@@ -15644,7 +15718,7 @@
             "h": 5,
             "w": 4,
             "x": 0,
-            "y": 193
+            "y": 236
           },
           "id": 150,
           "options": {
@@ -15738,7 +15812,7 @@
             "h": 5,
             "w": 4,
             "x": 4,
-            "y": 193
+            "y": 236
           },
           "id": 156,
           "options": {
@@ -15832,7 +15906,7 @@
             "h": 5,
             "w": 4,
             "x": 8,
-            "y": 193
+            "y": 236
           },
           "id": 162,
           "options": {
@@ -15926,7 +16000,7 @@
             "h": 5,
             "w": 4,
             "x": 12,
-            "y": 193
+            "y": 236
           },
           "id": 168,
           "options": {
@@ -16020,7 +16094,7 @@
             "h": 5,
             "w": 4,
             "x": 16,
-            "y": 193
+            "y": 236
           },
           "id": 174,
           "options": {
@@ -16114,7 +16188,7 @@
             "h": 5,
             "w": 4,
             "x": 20,
-            "y": 193
+            "y": 236
           },
           "id": 180,
           "options": {
@@ -16208,7 +16282,7 @@
             "h": 5,
             "w": 4,
             "x": 0,
-            "y": 198
+            "y": 241
           },
           "id": 151,
           "options": {
@@ -16302,7 +16376,7 @@
             "h": 5,
             "w": 4,
             "x": 4,
-            "y": 198
+            "y": 241
           },
           "id": 157,
           "options": {
@@ -16396,7 +16470,7 @@
             "h": 5,
             "w": 4,
             "x": 8,
-            "y": 198
+            "y": 241
           },
           "id": 163,
           "options": {
@@ -16490,7 +16564,7 @@
             "h": 5,
             "w": 4,
             "x": 12,
-            "y": 198
+            "y": 241
           },
           "id": 169,
           "options": {
@@ -16584,7 +16658,7 @@
             "h": 5,
             "w": 4,
             "x": 16,
-            "y": 198
+            "y": 241
           },
           "id": 175,
           "options": {
@@ -16678,7 +16752,7 @@
             "h": 5,
             "w": 4,
             "x": 20,
-            "y": 198
+            "y": 241
           },
           "id": 181,
           "options": {
@@ -16772,7 +16846,7 @@
             "h": 5,
             "w": 4,
             "x": 0,
-            "y": 203
+            "y": 246
           },
           "id": 152,
           "options": {
@@ -16866,7 +16940,7 @@
             "h": 5,
             "w": 4,
             "x": 4,
-            "y": 203
+            "y": 246
           },
           "id": 158,
           "options": {
@@ -16960,7 +17034,7 @@
             "h": 5,
             "w": 4,
             "x": 8,
-            "y": 203
+            "y": 246
           },
           "id": 164,
           "options": {
@@ -17054,7 +17128,7 @@
             "h": 5,
             "w": 4,
             "x": 12,
-            "y": 203
+            "y": 246
           },
           "id": 170,
           "options": {
@@ -17148,7 +17222,7 @@
             "h": 5,
             "w": 4,
             "x": 16,
-            "y": 203
+            "y": 246
           },
           "id": 176,
           "options": {
@@ -17242,7 +17316,7 @@
             "h": 5,
             "w": 4,
             "x": 20,
-            "y": 203
+            "y": 246
           },
           "id": 182,
           "options": {
@@ -17348,7 +17422,7 @@
             "h": 5,
             "w": 4,
             "x": 0,
-            "y": 208
+            "y": 251
           },
           "id": 153,
           "options": {
@@ -17460,7 +17534,7 @@
             "h": 5,
             "w": 4,
             "x": 4,
-            "y": 208
+            "y": 251
           },
           "id": 159,
           "options": {
@@ -17572,7 +17646,7 @@
             "h": 5,
             "w": 4,
             "x": 8,
-            "y": 208
+            "y": 251
           },
           "id": 165,
           "options": {
@@ -17684,7 +17758,7 @@
             "h": 5,
             "w": 4,
             "x": 12,
-            "y": 208
+            "y": 251
           },
           "id": 171,
           "options": {
@@ -17796,7 +17870,7 @@
             "h": 5,
             "w": 4,
             "x": 16,
-            "y": 208
+            "y": 251
           },
           "id": 177,
           "options": {
@@ -17908,7 +17982,7 @@
             "h": 5,
             "w": 4,
             "x": 20,
-            "y": 208
+            "y": 251
           },
           "id": 183,
           "options": {
@@ -18020,7 +18094,7 @@
             "h": 5,
             "w": 4,
             "x": 0,
-            "y": 213
+            "y": 256
           },
           "id": 154,
           "options": {
@@ -18132,7 +18206,7 @@
             "h": 5,
             "w": 4,
             "x": 4,
-            "y": 213
+            "y": 256
           },
           "id": 160,
           "options": {
@@ -18244,7 +18318,7 @@
             "h": 5,
             "w": 4,
             "x": 8,
-            "y": 213
+            "y": 256
           },
           "id": 166,
           "options": {
@@ -18356,7 +18430,7 @@
             "h": 5,
             "w": 4,
             "x": 12,
-            "y": 213
+            "y": 256
           },
           "id": 172,
           "options": {
@@ -18468,7 +18542,7 @@
             "h": 5,
             "w": 4,
             "x": 16,
-            "y": 213
+            "y": 256
           },
           "id": 178,
           "options": {
@@ -18580,7 +18654,7 @@
             "h": 5,
             "w": 4,
             "x": 20,
-            "y": 213
+            "y": 256
           },
           "id": 184,
           "options": {
@@ -18680,7 +18754,7 @@
             "h": 5,
             "w": 4,
             "x": 0,
-            "y": 218
+            "y": 261
           },
           "id": 155,
           "options": {
@@ -18780,7 +18854,7 @@
             "h": 5,
             "w": 4,
             "x": 4,
-            "y": 218
+            "y": 261
           },
           "id": 161,
           "options": {
@@ -18880,7 +18954,7 @@
             "h": 5,
             "w": 4,
             "x": 8,
-            "y": 218
+            "y": 261
           },
           "id": 167,
           "options": {
@@ -18980,7 +19054,7 @@
             "h": 5,
             "w": 4,
             "x": 12,
-            "y": 218
+            "y": 261
           },
           "id": 173,
           "options": {
@@ -19080,7 +19154,7 @@
             "h": 5,
             "w": 4,
             "x": 16,
-            "y": 218
+            "y": 261
           },
           "id": 179,
           "options": {
@@ -19099,13 +19173,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (vhost, queue) (rabbitmq_queue_messages_ready{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q5_average_reducer[.]input\"})",
+              "expr": "sum by (vhost, queue) (rabbitmq_queue_messages_ready{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q5_average_reducer[.]input([.][0-9]+)?\"})",
               "legendFormat": "Ready | {{queue}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (vhost, queue) (rabbitmq_queue_messages_unacked{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q5_average_reducer[.]input\"})",
+              "expr": "sum by (vhost, queue) (rabbitmq_queue_messages_unacked{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q5_average_reducer[.]input([.][0-9]+)?\"})",
               "legendFormat": "Unacked | {{queue}}",
               "range": true,
               "refId": "B"
@@ -19180,7 +19254,7 @@
             "h": 5,
             "w": 4,
             "x": 20,
-            "y": 218
+            "y": 261
           },
           "id": 185,
           "options": {
@@ -19199,13 +19273,13 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (vhost, queue) (rabbitmq_queue_messages_ready{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q5_comparator[.]input\"})",
+              "expr": "sum by (vhost, queue) (rabbitmq_queue_messages_ready{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q5_comparator[.]input([.][0-9]+)?\"})",
               "legendFormat": "Ready | {{queue}}",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (vhost, queue) (rabbitmq_queue_messages_unacked{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q5_comparator[.]input\"})",
+              "expr": "sum by (vhost, queue) (rabbitmq_queue_messages_unacked{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q5_comparator[.]input([.][0-9]+)?\"})",
               "legendFormat": "Unacked | {{queue}}",
               "range": true,
               "refId": "B"
@@ -19280,7 +19354,7 @@
             "h": 5,
             "w": 4,
             "x": 0,
-            "y": 223
+            "y": 266
           },
           "id": 207,
           "options": {
@@ -19374,7 +19448,7 @@
             "h": 5,
             "w": 4,
             "x": 4,
-            "y": 223
+            "y": 266
           },
           "id": 208,
           "options": {
@@ -19468,7 +19542,7 @@
             "h": 5,
             "w": 4,
             "x": 8,
-            "y": 223
+            "y": 266
           },
           "id": 209,
           "options": {
@@ -19562,7 +19636,7 @@
             "h": 5,
             "w": 4,
             "x": 12,
-            "y": 223
+            "y": 266
           },
           "id": 210,
           "options": {
@@ -19656,7 +19730,7 @@
             "h": 5,
             "w": 4,
             "x": 16,
-            "y": 223
+            "y": 266
           },
           "id": 211,
           "options": {
@@ -19675,7 +19749,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (vhost, queue) (rabbitmq_queue_consumers{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q5_average_reducer[.]input\"})",
+              "expr": "sum by (vhost, queue) (rabbitmq_queue_consumers{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q5_average_reducer[.]input([.][0-9]+)?\"})",
               "legendFormat": "Consumers | {{queue}}",
               "range": true,
               "refId": "A"
@@ -19750,7 +19824,7 @@
             "h": 5,
             "w": 4,
             "x": 20,
-            "y": 223
+            "y": 266
           },
           "id": 212,
           "options": {
@@ -19769,7 +19843,7 @@
           "pluginVersion": "12.1.0",
           "targets": [
             {
-              "expr": "sum by (vhost, queue) (rabbitmq_queue_consumers{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q5_comparator[.]input\"})",
+              "expr": "sum by (vhost, queue) (rabbitmq_queue_consumers{job=\"rabbitmq-queues\",vhost=~\"$vhost\",queue=~\"$queue\",queue=~\"q5_comparator[.]input([.][0-9]+)?\"})",
               "legendFormat": "Consumers | {{queue}}",
               "range": true,
               "refId": "A"
@@ -19893,7 +19967,7 @@
     ]
   },
   "time": {
-    "from": "now-5m",
+    "from": "now-30m",
     "to": "now"
   },
   "timepicker": {
@@ -19902,5 +19976,5 @@
   "timezone": "",
   "title": "Pipeline Details",
   "uid": "tp-pipeline-overview",
-  "version": 1
+  "version": 4
 }

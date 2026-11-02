@@ -48,8 +48,21 @@ class InputBatcherController:
 
         ack()
 
+    def _publish_remaining_batches(self) -> None:
+        for batch in list(self._batcher.current_batch.values()):
+            self._messaging.publish(batch)
+            self._batcher.flush(
+                RoutedInputEndMessage(
+                    execution_id=batch.execution_id,
+                    reply_queue=batch.reply_queue,
+                )
+            )
+
     def start(self) -> None:
         self._messaging.start_consuming(self.process_message)
+        # These articles were already acknowledged. Publish their partial
+        # batches without manufacturing an end-of-input for the execution.
+        self._publish_remaining_batches()
 
     def stop(self) -> None:
         self._messaging.stop_consuming()

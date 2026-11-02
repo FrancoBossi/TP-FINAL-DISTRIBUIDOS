@@ -1,12 +1,11 @@
 import logging
-import signal
-from functools import partial
 from types import FrameType
 
 from common.middleware import (
     MessageMiddlewareExchangeRabbitMQ,
     MessageMiddlewareQueueRabbitMQ,
 )
+from common.shutdown import shutdown_signals
 from query_router.config import QueryRouterConfig, configure_logging
 from query_router.controller import QueryRouterController
 from query_router.messaging import QueryRouterMessaging
@@ -79,11 +78,6 @@ def main() -> int:
         preprocessor_partition_count=config.preprocessor_partition_count,
     )
 
-    signal.signal(
-        signal.SIGTERM,
-        partial(handle_sigterm, controller),
-    )
-
     logger.info(
         "QueryRouter partition %s consuming from %s, awaiting %s "
         "preprocessor partitions and publishing to %s and %s",
@@ -95,7 +89,8 @@ def main() -> int:
     )
 
     try:
-        controller.start()
+        with shutdown_signals(controller.stop):
+            controller.start()
     except KeyboardInterrupt:
         return 0
     finally:
