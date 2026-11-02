@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from threading import Lock
 
 from common.message_protocol.message import Message
 from common.middleware.middleware import MessageMiddlewareQueue
@@ -14,6 +15,8 @@ class GatewayMessaging:
         result_queue: MessageMiddlewareQueue,
         result_queue_name: str,
     ) -> None:
+        self._lifecycle_lock = Lock()
+        self._closed = False
         self._input_queue = input_queue
         self._result_queue = result_queue
         self.result_queue_name = result_queue_name
@@ -33,10 +36,16 @@ class GatewayMessaging:
         self._result_queue.start_consuming(deserialize_result)
 
     def stop_consuming_results(self) -> None:
-        self._result_queue.stop_consuming()
+        with self._lifecycle_lock:
+            if not self._closed:
+                self._result_queue.stop_consuming()
 
     def close(self) -> None:
-        try:
-            self._input_queue.close()
-        finally:
-            self._result_queue.close()
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                self._input_queue.close()
+            finally:
+                self._result_queue.close()
