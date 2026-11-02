@@ -4,6 +4,7 @@ from functools import partial
 from types import FrameType
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
+from common.partition_router import PartitionRouter
 from q5.date_router.config import (
     Q5DateRouterConfig,
     configure_logging,
@@ -19,15 +20,18 @@ def create_messaging(
     input_queue_name: str,
     historical_output_queue_name: str,
     candidate_output_queue_name: str,
+    historical_partition_count: int = 1,
 ) -> Q5DateRouterMessaging:
     input_queue = MessageMiddlewareQueueRabbitMQ(
         host=mom_host,
         queue_name=input_queue_name,
     )
-    historical_output_queue = MessageMiddlewareQueueRabbitMQ(
-        host=mom_host,
-        queue_name=historical_output_queue_name,
-    )
+    historical_output_queues = {
+        f"{historical_output_queue_name}.{partition}": MessageMiddlewareQueueRabbitMQ(
+            host=mom_host, queue_name=f"{historical_output_queue_name}.{partition}"
+        )
+        for partition in range(historical_partition_count)
+    }
     candidate_output_queue = MessageMiddlewareQueueRabbitMQ(
         host=mom_host,
         queue_name=candidate_output_queue_name,
@@ -35,8 +39,9 @@ def create_messaging(
 
     return Q5DateRouterMessaging(
         input_queue=input_queue,
-        historical_output_queue=historical_output_queue,
+        historical_output_queue=next(iter(historical_output_queues.values())),
         candidate_output_queue=candidate_output_queue,
+        historical_output_queues=historical_output_queues,
     )
 
 
@@ -57,8 +62,15 @@ def main() -> int:
         input_queue_name=config.input_queue,
         historical_output_queue_name=config.historical_output_queue,
         candidate_output_queue_name=config.candidate_output_queue,
+        historical_partition_count=config.historical_partition_count,
     )
-    controller = Q5DateRouterController(messaging)
+    controller = Q5DateRouterController(
+        messaging,
+        PartitionRouter(
+            config.historical_output_queue_prefix,
+            config.historical_partition_count,
+        ),
+    )
 
     signal.signal(
         signal.SIGTERM,

@@ -157,13 +157,13 @@ El siguiente DAG representa el flujo completo de datos de la arquitectura objeti
 | ImageFetcher | Descargar imagen y producir Q2 | Replicable, I/O-bound | Cola compartida | Implementado secuencialmente, una réplica |
 | WordExtractor | Tokenización básica compartida | Stateless, replicable | Cola compartida | Implementado, una réplica y barrera para tres QueryRouters |
 | Q3WordProjector | Palabras únicas de cada artículo | Stateless, replicable | Cola compartida | Implementado, una réplica |
-| Q3WordAggregator | Presencia por idioma | Stateful y particionado | `(execution_id, word)` | Implementado, una partición |
+| Q3WordAggregator | Presencia por idioma | Stateful y particionado | `(execution_id, word)` | Implementado, tres particiones con `QUERY_PARTITION_END` |
 | Q4Q5WordProjector | Stopwords, deduplicación y `word_count` | Stateless, replicable | Cola compartida | Implementado, una réplica |
-| Q4WordCounter | Conteo global distribuido y top local | Stateful y particionado | `(execution_id, word)` | Implementado, una partición |
+| Q4WordCounter | Conteo global distribuido y top local | Stateful y particionado | `(execution_id, word)` | Implementado, tres particiones con barrera |
 | Q4Top20Reducer | Fusionar tops locales | Stateful, reducers replicados | `execution_id` | Implementado, una instancia |
 | Q5DateRouter | Separar histórico y candidatos | Stateless, replicable | Cola compartida | Implementado, una réplica |
-| Q5StatsWorker | Suma y cantidad parciales | Stateful por ejecución local | Distribución de trabajo | Implementado, una partición |
-| Q5AverageReducer | Calcular promedio global | Stateful, reducers replicados | `execution_id` | Implementado, una instancia y barrera configurable |
+| Q5StatsWorker | Suma y cantidad parciales | Stateful por ejecución local | `execution_id` | Implementado, tres particiones con afinidad estable |
+| Q5AverageReducer | Calcular promedio global | Stateful, reducer lógico | `execution_id` | Implementado, una instancia y barrera de tres workers |
 | Q5Comparator | Esperar promedio y comparar candidatos | Stateful y particionado | `(execution_id, article_id)` | Implementado, una instancia y buffer JSONL |
 | ResultSink | Reenviar resultados y finales hacia cada Gateway | Stateless en la versión actual; stateful al incorporar barreras | `execution_id` | Implementado con una instancia y finales provisionales |
 | MessageMiddleware | Abstraer queues, publicación dinámica, ACK/NACK y grupos | Infraestructura común | - | Queue, publisher dinámico y exchange directo implementados sobre RabbitMQ |

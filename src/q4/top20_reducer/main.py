@@ -17,7 +17,10 @@ def main() -> int:
         MessageMiddlewareQueueRabbitMQ(config.mom_host, config.input_queue),
         MessageMiddlewareQueueRabbitMQ(config.mom_host, config.output_queue),
     )
-    controller = Q4Top20ReducerController(messaging)
+    controller = Q4Top20ReducerController(
+        messaging,
+        partition_count=config.partition_count,
+    )
     signal.signal(signal.SIGTERM, partial(lambda c, _s, _f: c.stop(), controller))
     logger.info("Q4Top20Reducer consuming from %s", config.input_queue)
     try:

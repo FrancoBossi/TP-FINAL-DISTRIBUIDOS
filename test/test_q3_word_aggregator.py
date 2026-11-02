@@ -5,6 +5,7 @@ from common.message_protocol.message import (
     AckMessage,
     Q3WordPresenceBatchMessage,
     QueryEndMessage,
+    QueryPartitionEndMessage,
     ResultMessage,
     RoutedInputEndMessage,
 )
@@ -89,6 +90,17 @@ class TestQ3WordAggregator(unittest.TestCase):
         )
         self.messaging.publish.assert_called_once_with(QueryEndMessage(3, "run"))
         self.assertEqual({}, self.controller._executions)
+
+    def test_partitioned_execution_emits_partition_barrier(self):
+        controller = Q3WordAggregatorController(
+            self.messaging, partition_id=2, partition_count=3
+        )
+        controller.process_message(
+            RoutedInputEndMessage("run", "reply"), self.ack, self.nack
+        )
+        self.messaging.publish.assert_called_once_with(
+            QueryPartitionEndMessage(3, 2, "run")
+        )
 
     def test_failed_result_can_be_retried_without_losing_emission(self):
         self.send([{"word": "x", "language": "en"}])

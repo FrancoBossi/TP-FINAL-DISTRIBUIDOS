@@ -16,19 +16,22 @@ def create_messaging(
     mom_host: str,
     input_queue_name: str,
     output_queue_prefix: str,
+    partition_count: int = 1,
 ) -> Q3WordProjectorMessaging:
     input_queue = MessageMiddlewareQueueRabbitMQ(
         host=mom_host,
         queue_name=input_queue_name,
     )
-    output_queue = MessageMiddlewareQueueRabbitMQ(
-        host=mom_host,
-        queue_name=f"{output_queue_prefix}.0",
-    )
+    output_queues = {
+        f"{output_queue_prefix}.{partition}": MessageMiddlewareQueueRabbitMQ(
+            host=mom_host, queue_name=f"{output_queue_prefix}.{partition}"
+        )
+        for partition in range(partition_count)
+    }
 
     return Q3WordProjectorMessaging(
         input_queue=input_queue,
-        output_queues={f"{output_queue_prefix}.0": output_queue},
+        output_queues=output_queues,
     )
 
 
@@ -48,10 +51,11 @@ def main() -> int:
         mom_host=config.mom_host,
         input_queue_name=config.input_queue,
         output_queue_prefix=config.output_queue_prefix,
+        partition_count=config.partition_count,
     )
     controller = Q3WordProjectorController(
         messaging=messaging,
-        router=PartitionRouter(config.output_queue_prefix, 1),
+        router=PartitionRouter(config.output_queue_prefix, config.partition_count),
     )
 
     signal.signal(

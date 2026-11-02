@@ -3,6 +3,7 @@ from common.message_protocol.message import (
     Q5ArticleWordCountBatchMessage,
     RoutedInputEndMessage,
 )
+from common.partition_router import PartitionRouter
 from q5.date_router.messaging import (
     Ack,
     Nack,
@@ -15,8 +16,10 @@ class Q5DateRouterController:
     def __init__(
         self,
         messaging: Q5DateRouterMessaging,
+        historical_router: PartitionRouter | None = None,
     ) -> None:
         self._messaging = messaging
+        self._historical_router = historical_router
 
     def process_message(
         self,
@@ -30,13 +33,20 @@ class Q5DateRouterController:
                     historical_batch, candidate_batch = route_batch(message)
 
                     if historical_batch.word_counts:
-                        self._messaging.publish_historical(historical_batch)
+                        self._publish_historical(historical_batch)
 
                     if candidate_batch.articles:
                         self._messaging.publish_candidates(candidate_batch)
 
                 case RoutedInputEndMessage():
-                    self._messaging.publish_historical(message)
+                    if self._historical_router is None:
+                        self._messaging.publish_historical(message)
+                    else:
+                        for partition in range(self._historical_router.partition_count):
+                            self._messaging.publish_historical_to(
+                                f"{self._historical_router.queue_prefix}.{partition}",
+                                message,
+                            )
                     self._messaging.publish_candidates(message)
 
                 case _:
@@ -49,6 +59,14 @@ class Q5DateRouterController:
             raise
 
         ack()
+
+    def _publish_historical(self, message: Message) -> None:
+        if self._historical_router is None:
+            self._messaging.publish_historical(message)
+        else:
+            self._messaging.publish_historical_to(
+                self._historical_router.queue_for(message.execution_id), message
+            )
 
     def start(self) -> None:
         self._messaging.start_consuming(self.process_message)

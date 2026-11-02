@@ -50,6 +50,8 @@ def main() -> int:
     )
     controller = Q3WordAggregatorController(
         messaging=messaging,
+        partition_id=config.partition_id,
+        partition_count=config.partition_count,
     )
 
     signal.signal(

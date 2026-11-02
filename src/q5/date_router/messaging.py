@@ -17,13 +17,20 @@ class Q5DateRouterMessaging:
         input_queue: MessageMiddlewareQueue,
         historical_output_queue: MessageMiddlewareQueue,
         candidate_output_queue: MessageMiddlewareQueue,
+        historical_output_queues: dict[str, MessageMiddlewareQueue] | None = None,
     ) -> None:
         self._input_queue = input_queue
         self._historical_output_queue = historical_output_queue
+        self._historical_output_queues = historical_output_queues or {}
         self._candidate_output_queue = candidate_output_queue
 
     def publish_historical(self, message: Message) -> None:
         self._historical_output_queue.send(message.serialize())
+
+    def publish_historical_to(self, queue: str, message: Message) -> None:
+        self._historical_output_queues.get(queue, self._historical_output_queue).send(
+            message.serialize()
+        )
 
     def publish_candidates(self, message: Message) -> None:
         self._candidate_output_queue.send(message.serialize())
@@ -49,4 +56,7 @@ class Q5DateRouterMessaging:
             try:
                 self._historical_output_queue.close()
             finally:
+                for queue in self._historical_output_queues.values():
+                    if queue is not self._historical_output_queue:
+                        queue.close()
                 self._candidate_output_queue.close()

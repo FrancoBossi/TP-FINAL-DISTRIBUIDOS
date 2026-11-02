@@ -1,8 +1,12 @@
+import json
+
 from common.message_protocol.message import (
     Message,
+    Q4WordBatchMessage,
     RoutedInputEndMessage,
     TokenizedArticleBatchMessage,
 )
+from common.partition_router import PartitionRouter
 from q4_q5_word_projector.messaging import (
     Ack,
     Nack,
@@ -15,8 +19,10 @@ class Q4Q5WordProjectorController:
     def __init__(
         self,
         messaging: Q4Q5WordProjectorMessaging,
+        router: PartitionRouter | None = None,
     ) -> None:
         self._messaging = messaging
+        self._router = router
 
     def _handle_message(self, message: Message) -> None:
         match message:
@@ -24,13 +30,39 @@ class Q4Q5WordProjectorController:
                 q4_batch, q5_batch = project_batch(message)
 
                 if q4_batch.words:
-                    self._messaging.publish_q4(q4_batch)
+                    if self._router is None:
+                        self._messaging.publish_q4(q4_batch)
+                    else:
+                        by_queue: dict[str, list[str]] = {}
+                        for word in q4_batch.words:
+                            queue = self._router.queue_for(
+                                json.dumps(
+                                    [message.execution_id, word],
+                                    ensure_ascii=False,
+                                )
+                            )
+                            by_queue.setdefault(queue, []).append(word)
+                        for queue, words in by_queue.items():
+                            self._messaging.publish_q4_to(
+                                queue,
+                                Q4WordBatchMessage(
+                                    words=words,
+                                    execution_id=message.execution_id,
+                                    reply_queue=message.reply_queue,
+                                ),
+                            )
 
                 if q5_batch.articles:
                     self._messaging.publish_q5(q5_batch)
 
             case RoutedInputEndMessage():
-                self._messaging.publish_q4(message)
+                if self._router is None:
+                    self._messaging.publish_q4(message)
+                else:
+                    for partition in range(self._router.partition_count):
+                        self._messaging.publish_q4_to(
+                            f"{self._router.queue_prefix}.{partition}", message
+                        )
                 self._messaging.publish_q5(message)
 
             case _:

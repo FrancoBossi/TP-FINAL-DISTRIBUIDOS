@@ -180,6 +180,38 @@ services:
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q3_word_aggregator.input.0
       OUTPUT_QUEUE: result_sink.input
+      PARTITION_ID: "0"
+      PARTITION_COUNT: "3"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  q3-word-aggregator-1:
+    build:
+      context: .
+      dockerfile: src/q3/word_aggregator/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q3_word_aggregator.input.1
+      OUTPUT_QUEUE: result_sink.input
+      PARTITION_ID: "1"
+      PARTITION_COUNT: "3"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  q3-word-aggregator-2:
+    build:
+      context: .
+      dockerfile: src/q3/word_aggregator/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q3_word_aggregator.input.2
+      OUTPUT_QUEUE: result_sink.input
+      PARTITION_ID: "2"
+      PARTITION_COUNT: "3"
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -193,6 +225,7 @@ services:
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q3_word_projector.input
       OUTPUT_QUEUE_PREFIX: q3_word_aggregator.input
+      PARTITION_COUNT: "3"
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -220,7 +253,9 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q4_q5_word_projector.input
-      Q4_OUTPUT_QUEUE: q4_word_counter.input.0
+      Q4_OUTPUT_QUEUE: q4_word_counter.input
+      Q4_OUTPUT_QUEUE_PREFIX: q4_word_counter.input
+      Q4_PARTITION_COUNT: "3"
       Q5_OUTPUT_QUEUE: q5_date_router.input
     depends_on:
       rabbitmq:
@@ -240,6 +275,34 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  q4-word-counter-1:
+    build:
+      context: .
+      dockerfile: src/q4/word_counter/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q4_word_counter.input.1
+      OUTPUT_QUEUE: q4_top20_reducer.input
+      PARTITION_ID: "1"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  q4-word-counter-2:
+    build:
+      context: .
+      dockerfile: src/q4/word_counter/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q4_word_counter.input.2
+      OUTPUT_QUEUE: q4_top20_reducer.input
+      PARTITION_ID: "2"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   q4-top20-reducer:
     build:
       context: .
@@ -249,6 +312,7 @@ services:
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q4_top20_reducer.input
       OUTPUT_QUEUE: result_sink.input
+      PARTITION_COUNT: "3"
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -262,6 +326,8 @@ services:
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q5_date_router.input
       HISTORICAL_OUTPUT_QUEUE: q5_stats_worker.input
+      HISTORICAL_OUTPUT_QUEUE_PREFIX: q5_stats_worker.input
+      HISTORICAL_PARTITION_COUNT: "3"
       CANDIDATE_OUTPUT_QUEUE: q5_comparator.input
     depends_on:
       rabbitmq:
@@ -274,9 +340,37 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
-      INPUT_QUEUE: q5_stats_worker.input
+      INPUT_QUEUE: q5_stats_worker.input.0
       OUTPUT_QUEUE: q5_average_reducer.input
       PARTITION_ID: "0"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  q5-stats-worker-1:
+    build:
+      context: .
+      dockerfile: src/q5/stats_worker/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q5_stats_worker.input.1
+      OUTPUT_QUEUE: q5_average_reducer.input
+      PARTITION_ID: "1"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  q5-stats-worker-2:
+    build:
+      context: .
+      dockerfile: src/q5/stats_worker/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOM_HOST: rabbitmq
+      INPUT_QUEUE: q5_stats_worker.input.2
+      OUTPUT_QUEUE: q5_average_reducer.input
+      PARTITION_ID: "2"
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -290,7 +384,7 @@ services:
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q5_average_reducer.input
       OUTPUT_QUEUE: q5_comparator.input
-      PARTITION_COUNT: "1"
+      PARTITION_COUNT: "3"
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -375,7 +469,7 @@ services:
       INPUT_QUEUE: result_sink.input
       Q1_PARTITION_COUNT: "${Q1_PARTITION_COUNT:-1}"
       Q2_PARTITION_COUNT: "${Q2_PARTITION_COUNT:-1}"
-      Q3_PARTITION_COUNT: "${Q3_PARTITION_COUNT:-1}"
+      Q3_PARTITION_COUNT: "${Q3_PARTITION_COUNT:-3}"
       Q4_PARTITION_COUNT: "${Q4_PARTITION_COUNT:-1}"
       Q5_PARTITION_COUNT: "${Q5_PARTITION_COUNT:-1}"
     depends_on:
