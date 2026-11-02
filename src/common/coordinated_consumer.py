@@ -64,7 +64,8 @@ class CoordinatedConsumer:
             message = Message.deserialize(body)
             on_message(message, ack, nack)
 
-        self._stopped = False
+        if self._stopped:
+            return
         self._control_error = None
 
         control_thread = Thread(
@@ -83,7 +84,7 @@ class CoordinatedConsumer:
                 if self._stopped:
                     break
 
-                while True:
+                while not self._stopped:
                     try:
                         message = self._pending_control_messages.get_nowait()
                     except Empty:
