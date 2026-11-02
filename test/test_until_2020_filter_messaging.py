@@ -1,10 +1,10 @@
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from common.message_protocol.message import (
+    PartitionEndMessage,
     Q1CandidateBatchMessage,
     Q2CandidateBatchMessage,
-    RoutedInputEndMessage,
 )
 from until_2020_filter.messaging import Until2020FilterMessaging
 
@@ -14,11 +14,25 @@ class TestUntil2020FilterMessaging(unittest.TestCase):
         self.input_queue = Mock()
         self.q1_output_queue = Mock()
         self.q2_output_queue = Mock()
+        self.control_exchange_input = Mock()
+        self.control_exchange_output = Mock()
+
+        self.consumer_patcher = patch("until_2020_filter.messaging.CoordinatedConsumer")
+        consumer_class = self.consumer_patcher.start()
+        self.consumer = consumer_class.return_value
+        self.addCleanup(self.consumer_patcher.stop)
 
         self.messaging = Until2020FilterMessaging(
             input_queue=self.input_queue,
             q1_output_queue=self.q1_output_queue,
             q2_output_queue=self.q2_output_queue,
+            control_exchange_input=self.control_exchange_input,
+            control_exchange_output=self.control_exchange_output,
+        )
+
+        consumer_class.assert_called_once_with(
+            input_queue=self.input_queue,
+            control_exchange_input=self.control_exchange_input,
         )
 
     def test_publishes_each_message_to_its_output_queue(self):
@@ -52,32 +66,38 @@ class TestUntil2020FilterMessaging(unittest.TestCase):
         self.q1_output_queue.send.assert_called_once_with(q1_message.serialize())
         self.q2_output_queue.send.assert_called_once_with(q2_message.serialize())
 
-    def test_deserializes_input_and_preserves_acknowledgements(self):
-        on_message = Mock()
-        ack = Mock()
-        nack = Mock()
-
-        self.messaging.start_consuming(on_message)
-
-        self.input_queue.start_consuming.assert_called_once()
-        middleware_callback = self.input_queue.start_consuming.call_args.args[0]
-
-        message = RoutedInputEndMessage(
+    def test_broadcasts_serialized_control_message(self):
+        message = PartitionEndMessage(
+            stage="query_router",
+            partition_id=0,
             execution_id="execution-123",
             reply_queue="results.execution-123",
         )
-        middleware_callback(message.serialize(), ack, nack)
 
-        on_message.assert_called_once_with(message, ack, nack)
+        self.messaging.broadcast_control(message)
 
-    def test_stops_consumption_and_closes_all_queues(self):
+        self.control_exchange_output.send.assert_called_once_with(message.serialize())
+
+    def test_delegates_both_callbacks_to_coordinated_consumer(self):
+        on_message = Mock()
+        on_control_message = Mock()
+
+        self.messaging.start_consuming(on_message, on_control_message)
+
+        self.consumer.start_consuming.assert_called_once_with(
+            on_message,
+            on_control_message,
+        )
+
+    def test_stops_and_closes_consumer_and_output_connections(self):
         self.messaging.stop_consuming()
         self.messaging.close()
 
-        self.input_queue.stop_consuming.assert_called_once()
-        self.input_queue.close.assert_called_once()
+        self.consumer.stop_consuming.assert_called_once()
+        self.consumer.close.assert_called_once()
         self.q1_output_queue.close.assert_called_once()
         self.q2_output_queue.close.assert_called_once()
+        self.control_exchange_output.close.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -3,10 +3,10 @@ from unittest.mock import Mock, call, patch
 
 from common.message_protocol.message import (
     ImageCandidateBatchMessage,
+    PartitionEndMessage,
     Q1CandidateBatchMessage,
-    QueryEndMessage,
+    QueryPartitionEndMessage,
     ResultMessage,
-    RoutedInputEndMessage,
 )
 from q2.image_fetcher.controller import ImageFetcherController
 
@@ -19,6 +19,8 @@ class TestImageFetcherController(unittest.TestCase):
 
         self.controller = ImageFetcherController(
             messaging=self.messaging,
+            partition_id=0,
+            biography_filter_partition_count=3,
         )
 
         self.batch = ImageCandidateBatchMessage(
@@ -33,10 +35,15 @@ class TestImageFetcherController(unittest.TestCase):
             reply_queue="results.execution-123",
         )
 
-        self.input_end = RoutedInputEndMessage(
-            execution_id="execution-123",
-            reply_queue="results.execution-123",
-        )
+        self.partition_ends = [
+            PartitionEndMessage(
+                stage="q2_biography_filter",
+                partition_id=partition_id,
+                execution_id="execution-123",
+                reply_queue="results.execution-123",
+            )
+            for partition_id in range(3)
+        ]
 
         self.result = ResultMessage(
             query_id=2,
@@ -82,21 +89,67 @@ class TestImageFetcherController(unittest.TestCase):
         self.ack.assert_called_once()
         self.nack.assert_not_called()
 
-    def test_publishes_query_end_when_input_ends(self):
-        self.controller.process_message(
-            self.input_end,
-            self.ack,
-            self.nack,
-        )
+    def test_broadcasts_biography_filter_partition_end(self):
+        message = self.partition_ends[0]
+
+        self.controller.process_message(message, self.ack, self.nack)
+
+        self.messaging.broadcast_control.assert_called_once_with(message)
+        self.messaging.publish.assert_not_called()
+        self.ack.assert_called_once()
+        self.nack.assert_not_called()
+
+    def test_waits_for_all_biography_filter_partitions_on_control(self):
+        for message in self.partition_ends[:2]:
+            self.controller.process_control_message(message)
+
+        self.messaging.publish.assert_not_called()
+
+    def test_publishes_query_partition_end_after_control_barrier(self):
+        for message in self.partition_ends:
+            self.controller.process_control_message(message)
 
         self.messaging.publish.assert_called_once_with(
-            QueryEndMessage(
+            QueryPartitionEndMessage(
                 query_id=2,
+                partition_id=0,
                 execution_id="execution-123",
             )
         )
-        self.ack.assert_called_once()
-        self.nack.assert_not_called()
+
+    def test_does_not_count_same_control_partition_twice(self):
+        for message in (
+            self.partition_ends[0],
+            self.partition_ends[0],
+            self.partition_ends[1],
+        ):
+            self.controller.process_control_message(message)
+
+        self.messaging.publish.assert_not_called()
+
+    def test_keeps_execution_barriers_separate(self):
+        other_execution_ends = [
+            PartitionEndMessage(
+                stage="q2_biography_filter",
+                partition_id=partition_id,
+                execution_id="execution-456",
+                reply_queue="results.execution-456",
+            )
+            for partition_id in range(3)
+        ]
+
+        for message in self.partition_ends[:2]:
+            self.controller.process_control_message(message)
+        for message in other_execution_ends:
+            self.controller.process_control_message(message)
+
+        self.messaging.publish.assert_called_once_with(
+            QueryPartitionEndMessage(
+                query_id=2,
+                partition_id=0,
+                execution_id="execution-456",
+            )
+        )
 
     def test_nacks_when_publication_fails(self):
         error = RuntimeError("ResultSink unavailable")
@@ -120,6 +173,21 @@ class TestImageFetcherController(unittest.TestCase):
         self.nack.assert_called_once()
         self.ack.assert_not_called()
 
+    def test_nacks_when_control_broadcast_fails(self):
+        error = RuntimeError("control unavailable")
+        self.messaging.broadcast_control.side_effect = error
+
+        with self.assertRaises(RuntimeError) as raised:
+            self.controller.process_message(
+                self.partition_ends[0],
+                self.ack,
+                self.nack,
+            )
+
+        self.assertIs(raised.exception, error)
+        self.nack.assert_called_once()
+        self.ack.assert_not_called()
+
     def test_rejects_unexpected_message(self):
         message = Q1CandidateBatchMessage(
             articles=[],
@@ -129,7 +197,7 @@ class TestImageFetcherController(unittest.TestCase):
 
         with self.assertRaisesRegex(
             ValueError,
-            "IMAGE_CANDIDATE_BATCH or ROUTED_INPUT_END",
+            "IMAGE_CANDIDATE_BATCH or PARTITION_END",
         ):
             self.controller.process_message(
                 message,

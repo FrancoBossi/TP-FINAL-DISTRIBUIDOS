@@ -32,10 +32,10 @@ El sistema debe resolver las siguientes consultas:
 | InputBatcher con batches limitados por bytes | Implementado con tres particiones |
 | Validación y normalización de artículos en Preprocessor | Implementado |
 | Fan-out y proyecciones mínimas en QueryRouter | Implementado |
-| Filtro temporal compartido de Q1 y Q2 | Implementado con una réplica |
-| Filtro de idioma y resultados de Q1 | Implementado con una réplica |
-| Filtro de secciones biográficas de Q2 | Implementado con una réplica |
-| Descarga de imágenes y resultados de Q2 | Implementado secuencialmente con una réplica |
+| Filtro temporal compartido de Q1 y Q2 | Implementado con tres réplicas coordinadas |
+| Filtro de idioma y resultados de Q1 | Implementado con tres réplicas coordinadas |
+| Filtro de secciones biográficas de Q2 | Implementado con tres réplicas coordinadas |
+| Descarga de imágenes y resultados de Q2 | Implementado con tres réplicas y descarga secuencial por instancia |
 | Tokenización compartida en WordExtractor | Implementado con una réplica |
 | Proyección y agregación de palabras compartidas de Q3 | Implementado con una partición |
 | Proyección compartida de Q4/Q5 | Implementado con una réplica |
@@ -285,7 +285,7 @@ Publica solamente los campos requeridos por cada rama y no realiza filtros propi
 
 `word_extractor.input` recibe `TextArticleBatchMessage`. Cada artículo contiene `article_id`, `url`, `language`, `modification_date` y `abstract`. Mientras el dataset no provea un identificador independiente, `article_id` utiliza la URL como identidad estable.
 
-La implementación despliega tres QueryRouters como consumidores competidores. La instancia que recibe un `PARTITION_END` de Preprocessor lo difunde mediante `query_router.control`; cada réplica mantiene por `execution_id` el conjunto de Preprocessors finalizados. Después de completar `{0, 1, 2}`, cada QueryRouter publica su propio `PARTITION_END(stage="query_router")` en ambas ramas. Until2020Filter y WordExtractor mantienen barreras independientes y convierten los tres finales en un único `RoutedInputEndMessage` para sus respectivas salidas.
+La implementación despliega tres QueryRouters como consumidores competidores. La instancia que recibe un `PARTITION_END` de Preprocessor lo difunde mediante `query_router.control`; cada réplica mantiene por `execution_id` el conjunto de Preprocessors finalizados. Después de completar `{0, 1, 2}`, cada QueryRouter publica su propio `PARTITION_END(stage="query_router")` en ambas ramas. Las tres réplicas de Until2020Filter consumen una rama y WordExtractor mantiene la barrera singleton de la rama textual.
 
 El fan-out tiene semántica at-least-once. El mensaje de entrada se confirma solamente después de publicar ambas salidas. Si la primera publicación funciona y la segunda falla, se rechaza la entrada y una reentrega puede duplicar el mensaje en la primera rama. La idempotencia de las etapas posteriores queda pendiente para el hito de tolerancia a fallos.
 
@@ -294,13 +294,13 @@ El fan-out tiene semántica at-least-once. El mensaje de entrada se confirma sol
 ```text
 QueryRouter
     |
-Until2020Filter
+Until2020Filter ×3
     |-------------------|
     v                   v
-Q1EnglishFilter   Q2BiographyFilter
+Q1EnglishFilter ×3   Q2BiographyFilter ×3
                         |
                         v
-                   ImageFetcher
+                   ImageFetcher ×3
 ```
 
 `Until2020Filter` aplica una sola vez la condición `fecha <= 2020`.
@@ -310,13 +310,13 @@ Consume `Q1Q2ArticleBatchMessage` desde `until_2020.input`. Por cada batch que c
 - `Q1CandidateBatchMessage` en `q1_english_filter.input`, con `url`, `language` y `modification_date`.
 - `Q2CandidateBatchMessage` en `q2_biography_filter.input`, con `name`, `url`, `sections` e `image_url`.
 
-Los batches vacíos no se publican. El `RoutedInputEndMessage` se reenvía siempre a ambas ramas para que puedan finalizar incluso cuando una ejecución no tenga candidatos. Actualmente se ejecuta una sola réplica: antes de escalarla se debe reemplazar el fin simple por el protocolo de control y barrera, ya que una réplica podría reenviar el final mientras otra todavía procesa un batch anterior.
+Los batches vacíos no se publican. Las tres réplicas compiten por `until_2020.input`. La que recibe un final de QueryRouter lo difunde mediante `until_2020.control`; después de observar los tres IDs de QueryRouter, cada réplica publica su propio `PARTITION_END(stage="until_2020_filter")` hacia Q1 y Q2. Las tres réplicas de Q1 coordinan esos finales mediante `q1.control` y las tres de Q2BiographyFilter hacen lo mismo mediante `q2_biography_filter.control`. Una segunda ejecución real confirmó que las réplicas reanudan el consumo después de la barrera.
 
 - Q1 consume `Q1CandidateBatchMessage`, conserva los artículos cuyo idioma normalizado es `en` y publica un `ResultMessage` por artículo en `result_sink.input`. El registro contiene `url` y `modification_date` en el mismo formato ISO que la referencia serial.
 - `Q2BiographyFilter` consume `Q2CandidateBatchMessage`, busca una sección cuyo nombre completo sea `biography` o `biographie` ignorando mayúsculas y publica `ImageCandidateBatchMessage` en `image_fetcher.input`. La proyección contiene `name`, `url` e `image_url`; una URL ausente se conserva para que ImageFetcher registre y omita el candidato de forma explícita.
 - `ImageFetcher` utiliza `image.content_url` directamente, descarga con timeout y reintentos acotados para 429, 5xx y errores transitorios de red. Los 404 y demás 4xx se registran y no se reintentan. Si falta la URL o la descarga falla definitivamente, registra la omisión y continúa. Los bytes exitosos se codifican en Base64 y se publican como `ResultMessage(query_id=2)` en `result_sink.input`.
 
-En la primera iteración funcional, una única instancia de Q1 y una única instancia de ImageFetcher transforman `RoutedInputEndMessage` en los `QueryEndMessage` de Q1 y Q2. Estos finales son provisionales. En la iteración de escalabilidad del mismo trabajo, cada réplica emitirá `PARTITION_END` y ResultSink producirá un único `QUERY_END` después de completar cada barrera. ImageFetcher también deberá incorporar concurrencia limitada; actualmente descarga secuencialmente para priorizar el pipeline funcional.
+Las tres instancias de Q1 compiten por los batches de candidatos. La que recibe un final de Until2020Filter lo difunde mediante `q1.control`; cuando cada réplica observó los tres IDs de origen, emite `QueryPartitionEndMessage(query_id=1)` con su propio `partition_id`. ResultSink espera las tres particiones y transforma sus cierres en un único `QUERY_END`. Q2BiographyFilter utiliza el mismo patrón y cada una de sus tres réplicas publica un `PARTITION_END(stage="q2_biography_filter")`. Las tres instancias de ImageFetcher difunden esos finales mediante `image_fetcher.control`; después de observar los tres IDs biográficos, cada una emite su propio `QueryPartitionEndMessage(query_id=2)`. ResultSink espera las tres particiones de Q2. Cada instancia descarga secuencialmente, por lo que la cantidad de réplicas establece un límite explícito de tres batches de descarga simultáneos.
 
 ### Rama textual Q3/Q4/Q5
 
@@ -482,7 +482,7 @@ Antes de habilitar consumidores competidores en una etapa se implementará el si
 
 El `prefetch_count=1` limita a uno los mensajes en vuelo por réplica cuando se recibe el control. En Preprocessor, el hilo de control coloca el final en una cola local segura y pausa el consumidor; el hilo principal publica luego `PARTITION_END` por la misma conexión que los datos y reanuda el consumo. Esto conserva el orden por réplica y permite procesar varias ejecuciones.
 
-No se debe asumir orden entre una cola de datos y una cola o exchange de control diferentes. Por eso el primer mensaje de fin atraviesa la misma cola que los datos antes de ser difundido. `MessageMiddlewareExchangeRabbitMQ` implementa el exchange `direct`, las colas exclusivas por consumidor y el modo publicador sin cola. El patrón ya está integrado en los grupos de tres Preprocessors y tres QueryRouters; Until2020Filter y WordExtractor completan las barreras posteriores. Queda extenderlo a los demás grupos replicables.
+No se debe asumir orden entre una cola de datos y una cola o exchange de control diferentes. Por eso el primer mensaje de fin atraviesa la misma cola que los datos antes de ser difundido. `MessageMiddlewareExchangeRabbitMQ` implementa el exchange `direct`, las colas exclusivas por consumidor y el modo publicador sin cola. El patrón ya está integrado en los grupos de tres Preprocessors, QueryRouters, Until2020Filters, Q1EnglishFilters, Q2BiographyFilters e ImageFetchers; WordExtractor completa por ahora la barrera singleton de la rama textual. Queda extenderlo a los demás grupos replicables.
 
 ## Comunicación
 
@@ -858,13 +858,19 @@ make down
 | `INPUT_QUEUE` | Until2020Filter | `until_2020.input` | Cola compartida de Q1 y Q2 |
 | `Q1_OUTPUT_QUEUE` | Until2020Filter | `q1_english_filter.input` | Cola de candidatos para Q1 |
 | `Q2_OUTPUT_QUEUE` | Until2020Filter | `q2_biography_filter.input` | Cola de candidatos para Q2 |
+| `CONTROL_EXCHANGE` | Until2020Filter | `until_2020.control` | Exchange que difunde los finales de QueryRouter a sus réplicas |
+| `PARTITION_ID` | Until2020Filter/Q1/Q2BiographyFilter/ImageFetcher | `0` | Identificador de la réplica o partición productora |
 | `QUERY_ROUTER_PARTITION_COUNT` | Until2020Filter/WordExtractor | `1` | Cantidad de finales distintos de QueryRouter esperados; Compose configura `3` |
 | `INPUT_QUEUE` | Q1 | `q1_english_filter.input` | Cola de candidatos de Q1 |
-| `OUTPUT_QUEUE` | Q1 | `result_sink.input` | Cola de resultados y final provisional de Q1 |
+| `OUTPUT_QUEUE` | Q1 | `result_sink.input` | Cola de resultados y finales de partición de Q1 |
+| `UNTIL_2020_PARTITION_COUNT` | Q1/Q2BiographyFilter | `1` | Cantidad de finales de Until2020Filter esperados; Compose configura `3` |
 | `INPUT_QUEUE` | Q2BiographyFilter | `q2_biography_filter.input` | Cola de candidatos de Q2 |
 | `OUTPUT_QUEUE` | Q2BiographyFilter | `image_fetcher.input` | Cola de candidatos para descarga de imágenes |
+| `CONTROL_EXCHANGE` | Q2BiographyFilter | `q2_biography_filter.control` | Exchange que difunde los finales de Until2020Filter a las tres réplicas |
 | `INPUT_QUEUE` | ImageFetcher | `image_fetcher.input` | Cola de candidatos con sección biográfica |
-| `OUTPUT_QUEUE` | ImageFetcher | `result_sink.input` | Cola de resultados y final provisional de Q2 |
+| `OUTPUT_QUEUE` | ImageFetcher | `result_sink.input` | Cola de resultados y finales de partición de Q2 |
+| `CONTROL_EXCHANGE` | ImageFetcher | `image_fetcher.control` | Exchange que difunde los finales de Q2BiographyFilter a las tres réplicas |
+| `BIOGRAPHY_FILTER_PARTITION_COUNT` | ImageFetcher | `1` | Cantidad de finales de Q2BiographyFilter esperados; Compose configura `3` |
 | `INPUT_QUEUE` | WordExtractor | `word_extractor.input` | Batches de abstracts |
 | `Q3_OUTPUT_QUEUE` | WordExtractor | `q3_word_projector.input` | Artículos tokenizados para Q3 |
 | `Q4_Q5_OUTPUT_QUEUE` | WordExtractor | `q4_q5_word_projector.input` | Artículos tokenizados para Q4/Q5 |

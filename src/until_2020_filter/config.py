@@ -33,6 +33,15 @@ class Until2020FilterConfig:
             "q2_biography_filter.input",
         )
     )
+    control_exchange: str = field(
+        default_factory=lambda: os.environ.get(
+            "CONTROL_EXCHANGE",
+            "until_2020.control",
+        )
+    )
+    partition_id: int = field(
+        default_factory=lambda: int(os.environ.get("PARTITION_ID", "0"))
+    )
     query_router_partition_count: int = field(
         default_factory=lambda: int(os.environ.get("QUERY_ROUTER_PARTITION_COUNT", "1"))
     )

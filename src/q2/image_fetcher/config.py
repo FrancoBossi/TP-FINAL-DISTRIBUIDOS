@@ -27,3 +27,17 @@ class ImageFetcherConfig:
             "result_sink.input",
         )
     )
+    control_exchange: str = field(
+        default_factory=lambda: os.environ.get(
+            "CONTROL_EXCHANGE",
+            "image_fetcher.control",
+        )
+    )
+    partition_id: int = field(
+        default_factory=lambda: int(os.environ.get("PARTITION_ID", "0"))
+    )
+    biography_filter_partition_count: int = field(
+        default_factory=lambda: int(
+            os.environ.get("BIOGRAPHY_FILTER_PARTITION_COUNT", "1")
+        )
+    )
