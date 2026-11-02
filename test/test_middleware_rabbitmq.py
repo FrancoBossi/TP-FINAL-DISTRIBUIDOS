@@ -217,3 +217,61 @@ class TestMessageMiddlewareExchangeRabbitMQ(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRabbitMQShutdown(unittest.TestCase):
+    def setUp(self):
+        self.connection = Mock(is_closed=False)
+        self.channel = self.connection.channel.return_value
+        self.channel.is_closed = False
+        with patch(
+            "common.middleware.middleware_rabbitmq.pika.BlockingConnection",
+            return_value=self.connection,
+        ):
+            self.queue = MessageMiddlewareQueueRabbitMQ("rabbitmq", "input")
+
+    def test_stop_before_start_prevents_consumption(self):
+        self.queue.stop_consuming()
+        self.queue.start_consuming(Mock())
+        self.channel.basic_consume.assert_not_called()
+
+    def test_delivery_after_stop_is_requeued_without_processing(self):
+        callback = Mock()
+        self.queue.start_consuming(callback)
+        delivery = self.channel.basic_consume.call_args.kwargs["on_message_callback"]
+        self.queue.stop_consuming()
+        delivery(self.channel, Mock(delivery_tag=42), None, b"work")
+        callback.assert_not_called()
+        self.channel.basic_nack.assert_called_once_with(delivery_tag=42, requeue=True)
+
+    def test_publications_use_broker_confirms(self):
+        self.channel.confirm_delivery.assert_called_once_with()
+
+
+class TestRabbitMQInitializationCleanup(unittest.TestCase):
+    @patch("common.middleware.middleware_rabbitmq.pika.BlockingConnection")
+    def test_closes_connection_if_enabling_confirms_fails(self, connect):
+        connection = connect.return_value
+        connection.is_closed = False
+        error = pika.exceptions.ChannelWrongStateError("channel closed")
+        connection.channel.return_value.confirm_delivery.side_effect = error
+
+        from common.middleware.middleware import MessageMiddlewareMessageError
+
+        with self.assertRaises(MessageMiddlewareMessageError) as raised:
+            MessageMiddlewareQueueRabbitMQ("rabbitmq", "input")
+
+        self.assertIs(raised.exception.__cause__, error)
+        connection.close.assert_called_once_with()
+        connection.channel.return_value.queue_declare.assert_not_called()
+
+    @patch("common.middleware.middleware_rabbitmq.pika.BlockingConnection")
+    def test_closes_connection_if_channel_creation_fails(self, connect):
+        connection = connect.return_value
+        connection.is_closed = False
+        connection.channel.side_effect = RuntimeError("channel setup failed")
+
+        with self.assertRaisesRegex(RuntimeError, "channel setup failed"):
+            MessageMiddlewareQueueRabbitMQ("rabbitmq", "input")
+
+        connection.close.assert_called_once_with()

@@ -97,7 +97,9 @@ class TestClientGateway(unittest.TestCase):
                 def gateway():
                     with gateway_socket:
                         try:
-                            handle_client(gateway_socket, lambda _: messaging)
+                            handle_client(
+                                gateway_socket, lambda _: messaging, threading.Event()
+                            )
                         except Exception as error:
                             errors.append(error)
 
@@ -174,7 +176,7 @@ class TestClientGateway(unittest.TestCase):
             patch("gateway.handler.recv_msg", side_effect=EOFError("disconnected")),
             patch("gateway.handler.send_msg") as send,
         ):
-            handle_client(Mock(), lambda _: messaging)
+            handle_client(Mock(), lambda _: messaging, threading.Event())
 
         self.assertEqual(len(messaging.published), 1)
         self.assertIsInstance(messaging.published[0], RoutedInputEndMessage)
@@ -192,7 +194,7 @@ class TestClientGateway(unittest.TestCase):
                 "gateway.handler.send_msg", side_effect=[None, BrokenPipeError]
             ) as send,
         ):
-            handle_client(Mock(), lambda _: messaging)
+            handle_client(Mock(), lambda _: messaging, threading.Event())
         self.assertEqual(len(messaging.published), 1)
         self.assertEqual(len(messaging.acks), 6)
         self.assertEqual(messaging.nacks, [])
@@ -205,7 +207,7 @@ class TestClientGateway(unittest.TestCase):
             patch("gateway.handler.recv_msg", return_value=InputEndMessage()),
             patch("gateway.handler.send_msg", side_effect=BrokenPipeError),
         ):
-            handle_client(Mock(), lambda _: messaging)
+            handle_client(Mock(), lambda _: messaging, threading.Event())
         self.assertEqual(len(messaging.published), 1)
         self.assertEqual(len(messaging.acks), 6)
         self.assertTrue(messaging.closed)
@@ -231,7 +233,7 @@ class TestClientGateway(unittest.TestCase):
             patch("gateway.handler.send_msg") as send,
         ):
             with self.assertRaises(RuntimeError):
-                handle_client(Mock(), lambda _: messaging)
+                handle_client(Mock(), lambda _: messaging, threading.Event())
 
         send.assert_called_once()
         self.assertIsInstance(send.call_args.args[1], ErrorMessage)
@@ -247,7 +249,7 @@ class TestClientGateway(unittest.TestCase):
                 patch("gateway.handler.send_msg"),
             ):
                 with self.assertRaises(ValueError):
-                    handle_client(Mock(), lambda _: messaging)
+                    handle_client(Mock(), lambda _: messaging, threading.Event())
 
         messaging.publish.assert_not_called()
 
