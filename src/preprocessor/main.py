@@ -1,12 +1,11 @@
 import logging
-import signal
-from functools import partial
 from types import FrameType
 
 from common.middleware import (
     MessageMiddlewareExchangeRabbitMQ,
     MessageMiddlewareQueueRabbitMQ,
 )
+from common.shutdown import shutdown_signals
 from preprocessor.config import PreprocessorConfig, configure_logging
 from preprocessor.controller import PreprocessorController
 from preprocessor.messaging import PreprocessorMessaging
@@ -71,11 +70,6 @@ def main() -> int:
         partition_id=config.partition_id,
     )
 
-    signal.signal(
-        signal.SIGTERM,
-        partial(handle_sigterm, controller),
-    )
-
     logger.info(
         "Preprocessor partition %s consuming from %s and publishing to %s",
         config.partition_id,
@@ -84,7 +78,8 @@ def main() -> int:
     )
 
     try:
-        controller.start()
+        with shutdown_signals(controller.stop):
+            controller.start()
     except KeyboardInterrupt:
         return 0
     finally:

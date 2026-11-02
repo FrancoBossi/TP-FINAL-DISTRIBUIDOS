@@ -1,8 +1,7 @@
 import logging
-import signal
-from functools import partial
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
+from common.shutdown import shutdown_signals
 from q5.average_reducer.config import (
     Q5AverageReducerConfig,
     configure_logging,
@@ -37,10 +36,6 @@ def main() -> int:
         config.partition_count,
     )
 
-    signal.signal(
-        signal.SIGTERM,
-        partial(lambda c, _s, _f: c.stop(), controller),
-    )
     logger.info(
         "Q5AverageReducer consuming from %s and waiting for %s partitions",
         config.input_queue,
@@ -48,7 +43,8 @@ def main() -> int:
     )
 
     try:
-        controller.start()
+        with shutdown_signals(controller.stop):
+            controller.start()
     except KeyboardInterrupt:
         return 0
     finally:

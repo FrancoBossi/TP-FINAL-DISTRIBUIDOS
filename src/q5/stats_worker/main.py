@@ -1,9 +1,8 @@
 import logging
-import signal
-from functools import partial
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
 from common.partition_router import PartitionRouter
+from common.shutdown import shutdown_signals
 from q5.stats_worker.config import Q5StatsWorkerConfig, configure_logging
 from q5.stats_worker.controller import Q5StatsWorkerController
 from q5.stats_worker.messaging import Q5StatsWorkerMessaging
@@ -36,10 +35,6 @@ def main() -> int:
         config.date_router_partition_count,
     )
 
-    signal.signal(
-        signal.SIGTERM,
-        partial(lambda c, _s, _f: c.stop(), controller),
-    )
     logger.info(
         "Q5StatsWorker partition %s consuming from %s",
         config.partition_id,
@@ -47,7 +42,8 @@ def main() -> int:
     )
 
     try:
-        controller.start()
+        with shutdown_signals(controller.stop):
+            controller.start()
     except KeyboardInterrupt:
         return 0
     finally:

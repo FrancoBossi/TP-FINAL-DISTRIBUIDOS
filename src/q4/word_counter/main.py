@@ -1,9 +1,8 @@
 import logging
-import signal
-from functools import partial
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
 from common.partition_router import PartitionRouter
+from common.shutdown import shutdown_signals
 from q4.word_counter.config import Q4WordCounterConfig, configure_logging
 from q4.word_counter.controller import Q4WordCounterController
 from q4.word_counter.messaging import Q4WordCounterMessaging
@@ -31,10 +30,10 @@ def main() -> int:
         config.partition_id,
         config.projector_partition_count,
     )
-    signal.signal(signal.SIGTERM, partial(lambda c, _s, _f: c.stop(), controller))
     logger.info("Q4WordCounter consuming from %s", config.input_queue)
     try:
-        controller.start()
+        with shutdown_signals(controller.stop):
+            controller.start()
     except KeyboardInterrupt:
         return 0
     finally:

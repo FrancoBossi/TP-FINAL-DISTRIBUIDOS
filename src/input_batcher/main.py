@@ -1,9 +1,8 @@
 import logging
-import signal
-from functools import partial
 from types import FrameType
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
+from common.shutdown import shutdown_signals
 from input_batcher.batcher import BatchAccumulator
 from input_batcher.config import InputBatcherConfig, configure_logging
 from input_batcher.controller import InputBatcherController
@@ -57,11 +56,6 @@ def main() -> int:
         messaging=messaging,
     )
 
-    signal.signal(
-        signal.SIGTERM,
-        partial(handle_sigterm, controller),
-    )
-
     logger.info(
         "InputBatcher partition %d consuming from %s",
         config.partition_id,
@@ -69,7 +63,8 @@ def main() -> int:
     )
 
     try:
-        controller.start()
+        with shutdown_signals(controller.stop):
+            controller.start()
     except KeyboardInterrupt:
         return 0
     finally:
