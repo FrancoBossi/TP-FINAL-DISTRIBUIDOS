@@ -9,10 +9,8 @@ La comunicación entre procesos se realiza mediante RabbitMQ, oculto por la capa
 El diseño separa tres etapas de evolución:
 
 1. **Pipeline funcional:** una réplica por componente y finales simples para validar las cinco consultas de punta a punta.
-2. **Escalabilidad, dentro de este mismo hito:** múltiples réplicas, protocolo de control, `PARTITION_END`, barreras, clientes concurrentes y graceful shutdown completo.
-3. **Tolerancia a fallos, en el hito posterior:** persistencia, recuperación ante caídas, deduplicación e idempotencia frente a reentregas.
-
-Al corte de este documento se encuentran implementados el cliente, el Gateway concurrente, el ingreso incremental desde Parquet, el batching por bytes, el preprocesamiento, el fan-out del QueryRouter, las ramas Q1-Q5 y ResultSink. El recorrido punta a punta se validó con 50.000 artículos: el cliente recibió los cinco finales y los cinco archivos coincidieron con la referencia serial. El pipeline despliega tres réplicas o particiones en InputBatcher, Preprocessor, QueryRouter y en las etapas de Q1-Q5 que procesan o mantienen estado distribuido. Los componentes stateless coordinan su cierre mediante exchanges de control; los stateful aplican routing estable y barreras. Q1, Q2, Q3 y Q5 entregan tres finales de partición a ResultSink. En Q4, los parciales de cada ejecución convergen en uno de tres reducers físicos, que produce un único final. Gateway y ResultSink permanecen como instancias únicas. El cierre por señales está implementado; resta validarlo bajo carga y comparar nuevamente el dataset completo bajo la topología replicada.
+2. **Escalabilidad, dentro de este mismo TP:** múltiples réplicas, protocolo de control, `PARTITION_END`, barreras, clientes concurrentes y graceful shutdown completo.
+3. **Tolerancia a fallos, en el TP posterior.**
 
 ---
 
@@ -44,31 +42,22 @@ Cada cliente realiza una única ejecución. Distintos clientes deben poder ejecu
 - Comparar automáticamente la salida distribuida con una ejecución serial de referencia.
 - Propagar solamente las columnas necesarias a cada etapa.
 
-### 2.3 Fuera de alcance del hito actual
-
-La consigna del hito de escalabilidad todavía supone que no fallan el cliente ni el servidor. Por eso la recuperación completa ante caída de procesos, la persistencia de mensajes, la entrega exactly-once al cliente y el escenario Chaos Monkey pertenecen al hito posterior de tolerancia a fallos.
-
-Esto no elimina la necesidad actual de manejar errores funcionales, cerrar recursos, confirmar mensajes correctamente y realizar graceful shutdown. Solamente separa esos problemas de la recuperación automática luego de una caída.
-
 ---
 
 ## 3. Fuente de datos y referencia funcional
 
 ### 3.1 Dataset
 
-Se utiliza Wikipedia Structured Contents, publicado en Kaggle. Durante el desarrollo se esta trabajando con una muestra reproducible de 50.000 artículos:
+Se utiliza Wikipedia Structured Contents, publicado en Kaggle. Para la demo trabajmos con una muestra reproducible de 4.500.000 artículos.
 
-- 25.000 artículos en inglés.
-- 25.000 artículos en francés.
-
-La muestra se genera en Kaggle mediante el notebook del grupo y se descarga como `wikipedia_sample.parquet`. El archivo no se versiona en Git debido a su tamaño. El cliente lo recorre incrementalmente con PyArrow en lugar de cargarlo completo en memoria.
+La muestra se genera en Kaggle mediante el notebook del grupo y se descarga como `wikipedia_test.parquet`. El archivo no se versiona en Git debido a su tamaño. El cliente lo recorre incrementalmente con PyArrow en lugar de cargarlo completo en memoria.
 
 ### 3.2 Ejecución serial
 
 Antes de distribuir el procesamiento se implementó una referencia serial propia para Q1-Q5. Esta referencia tiene dos propósitos:
 
 - Fijar una interpretación ejecutable de las consultas.
-- Actuar como oráculo para validar la salida distribuida.
+- Actuar como test para validar la salida distribuida.
 
 La comparación automática ignora el orden de las líneas y de las claves JSON, pero conserva la multiplicidad. De esta manera detecta tanto resultados faltantes como resultados duplicados o adicionales. Esta decisión es importante porque un sistema distribuido puede cambiar legítimamente el orden, pero no el conjunto ni la cantidad de resultados.
 
@@ -183,7 +172,6 @@ de Q5 y el perfil opcional de monitoreo.
 7. **Afinidad explícita cuando hay estado:** las claves relacionadas convergen mediante hash estable.
 8. **Finalización explícita:** `INPUT_END`, `PARTITION_END` y `QUERY_END` representan hechos diferentes.
 9. **Estado de aplicación fuera de RabbitMQ:** MOM transporta mensajes, pero no reemplaza un almacenamiento temporal propio.
-10. **Evolución verificable:** primero se obtiene una versión funcional y luego se habilita la replicación con su coordinación correcta.
 
 ### 5.2 Componentes, responsabilidades y estado
 
@@ -286,10 +274,19 @@ Gateway adapta el protocolo externo a mensajes internos:
 4. Asigna la ejecución a una partición de InputBatcher.
 5. Agrega `execution_id` y `reply_queue` a artículos y al final de entrada.
 6. Publica en RabbitMQ.
-7. Confirma al cliente cada publicación aceptada.
+7. Después de publicar cada artículo individual en RabbitMQ, envía al cliente un ACK por TCP; también confirma `INPUT_END` de la misma manera.
 8. Cuando recibe `INPUT_END`, deja de recibir artículos y comienza la fase de resultados: consume mensajes desde `results.<execution_id>` en RabbitMQ y envía cada `RESULT` o `QUERY_END` al cliente por la misma conexión TCP.
 
-La conexión tiene entonces dos fases. Primero el cliente envía artículos y Gateway los publica en RabbitMQ. Después de `INPUT_END`, el flujo se invierte: Gateway recibe los resultados producidos por el sistema distribuido y los transmite al cliente. Por cada resultado, espera el ACK del cliente antes de confirmarlo en RabbitMQ.
+El ACK del ítem 7 pertenece al protocolo externo y se produce una vez por
+artículo, antes del batching. El cliente envía un `ARTICLE` y espera; Gateway lo
+transforma en `ROUTED_ARTICLE`, lo publica en la partición de InputBatcher y,
+cuando RabbitMQ acepta la publicación mediante publisher confirms, responde
+`ACK` por TCP. Recién entonces el cliente envía el artículo siguiente. Al
+terminar la entrada se repite la secuencia con `INPUT_END`. Este ACK significa
+que el broker aceptó el mensaje, no que el artículo ya recorrió el pipeline ni
+que sus resultados fueron calculados.
+
+La conexión tiene entonces dos fases. Primero el cliente envía artículos y Gateway los publica en RabbitMQ. Después de `INPUT_END`, el flujo se invierte: Gateway recibe los resultados producidos por el sistema distribuido y los transmite al cliente. Por cada resultado, espera el ACK por TCP del cliente antes de ejecutar el ACK de consumo en RabbitMQ.
 
 La implementación actual acepta conexiones concurrentes y ejecuta cada sesión en un thread independiente, con conexiones RabbitMQ y una cola exclusiva de resultados propias. Si un cliente se desconecta durante el upload, Gateway publica `INPUT_END` y cierra inmediatamente la sesión sin esperar su salida. El cierre elimina `results.<execution_id>`; los resultados que lleguen posteriormente se descartan de forma ordenada en ResultSink.
 
@@ -307,12 +304,6 @@ Para cada artículo:
 6. Ante `INPUT_END`, se publica el último batch parcial antes del final.
 
 El InputBatcher mantiene estado por ejecución. Por eso todos los artículos y el final de una ejecución deben llegar a la misma partición. Distintas ejecuciones sí pueden asignarse a distintas particiones. Compose despliega tres colas e instancias con identificadores `0`, `1` y `2`; Gateway calcula la partición mediante SHA-256 sobre `execution_id`. Cada cola tiene un solo consumidor, mientras las tres instancias comparten `preprocessor.input` como salida.
-
-### 7.4 Protección frente a entradas sobredimensionadas
-
-El framing TCP limita actualmente cada mensaje a 64 MiB y el InputBatcher rechaza un artículo que no cabe en un batch. Esto evita un mensaje individual ilimitado, pero no constituye protección completa frente a un cliente malicioso que envía repetidamente mensajes grandes.
-
-Se posterga hasta después del pipeline funcional la incorporación de límites por tipo, cuota total por ejecución, timeouts, rate limiting, validación temprana y propagación de un error terminal. Esta postergación es aceptable mientras la entrada sea el dataset conocido, pero debe quedar resuelta antes de tratar entradas no confiables.
 
 ---
 
@@ -338,7 +329,7 @@ QueryRouter publica dos proyecciones mínimas:
 - **Q1/Q2:** `name`, `url`, `language`, `modification_date`, `sections`, `image_url`.
 - **Q3/Q4/Q5:** `article_id`, `url`, `language`, `modification_date`, `abstract`.
 
-No filtra fecha, idioma, secciones ni palabras. Su responsabilidad es el fan-out y la reducción de columnas. El ACK de entrada ocurre después de publicar ambas salidas.
+No filtra fecha, idioma, secciones ni palabras. Su responsabilidad es el fan-out y la reducción de columnas. El ACK de consumo en RabbitMQ ocurre después de publicar ambas salidas.
 
 El fan-out actual tiene semántica at-least-once: si una publicación funciona y la siguiente falla, una reentrega podría repetir la primera.
 
@@ -419,7 +410,37 @@ Esta sección describe la rama textual replicada implementada para Q3, Q4 y Q5.
 
 ### 10.1 WordExtractor
 
-WordExtractor realiza solamente transformaciones comunes: minúsculas, tokenización y descarte de tokens exclusivamente numéricos. Conserva identidad, idioma, fecha y URL. No elimina stopwords ni filtra por fecha, porque esas reglas no son comunes a las tres consultas. Tres réplicas transforman `TextArticleBatchMessage` en `TokenizedArticleBatchMessage` y publican el mismo batch en las colas independientes de Q3 y Q4/Q5. Cada artículo tokenizado incluye `has_abstract`, que distingue un abstract ausente (`None`) de uno presente pero vacío; esta diferencia es necesaria para reproducir el denominador de Q5 de la referencia serial. Las réplicas coordinan los tres finales de QueryRouter mediante `word_extractor.control` y cada una emite su propio `PARTITION_END` hacia ambas ramas.
+WordExtractor realiza solamente las transformaciones textuales comunes a Q3,
+Q4 y Q5. Para cada abstract convierte el texto a minúsculas y aplica la expresión
+regular `\b\w+\b`, que extrae secuencias de caracteres de palabra y utiliza los
+espacios y signos de puntuación como separadores. Luego descarta los tokens
+formados exclusivamente por números. Por ejemplo:
+
+```text
+"Python is great! Python was created in 1991"
+-> ["python", "is", "great", "python", "was", "created", "in"]
+```
+
+Un token alfanumérico como `covid19` se conserva.
+
+En esta etapa se preservan tanto las repeticiones como las stopwords. Tokenizar
+no implica todavía deduplicar, contar palabras ni eliminar términos como `the`,
+`is`, `de` o `la`: Q3 y Q4/Q5 aplican después reglas diferentes sobre la misma
+representación tokenizada. WordExtractor tampoco filtra por fecha. Conserva
+`article_id`, URL, idioma y fecha de modificación junto con la lista `words`.
+
+Cada artículo tokenizado incluye además `has_abstract`. Un abstract ausente
+(`None`) y uno presente pero vacío producen la misma lista de palabras vacía,
+pero no representan el mismo caso para Q5. `has_abstract` mantiene esa diferencia
+y permite reproducir correctamente el denominador de la referencia serial.
+
+Tres réplicas transforman `TextArticleBatchMessage` en
+`TokenizedArticleBatchMessage` y publican el mismo batch en las colas
+independientes de Q3 y Q4/Q5. Q3 deduplica posteriormente las palabras dentro de
+cada artículo sin eliminar stopwords. Q4/Q5 deduplican y eliminan stopwords antes
+de contabilizarlas. Las réplicas coordinan los tres finales de QueryRouter
+mediante `word_extractor.control` y cada una emite su propio `PARTITION_END` hacia
+ambas ramas.
 
 ### 10.2 Q3: palabras compartidas
 
@@ -470,7 +491,7 @@ average = global_sum / global_count
 
 Los parciales de una ejecución se enrutan hacia uno de tres AverageReducers físicos. El reducer lógico espera los finales de los tres StatsWorkers y luego difunde `Q5AverageMessage` a las tres colas de comparadores, porque una ejecución puede tener candidatos en las tres particiones.
 
-Los candidatos pueden llegar antes que el promedio. No se mantienen sin ACK dentro de RabbitMQ porque eso usaría la MOM como base de datos y limitaría el flujo. Cada comparator los confirma después de incorporarlos a un `CandidateBuffer` de la aplicación, separado por ejecución. La implementación utiliza un archivo JSONL append-only por `execution_id`, cuyo nombre se deriva mediante SHA-256. Cada una de las tres particiones usa un subdirectorio propio de `/var/lib/q5-candidates`, respaldado por el volumen Docker `q5_candidate_buffer`, y recorre los archivos línea por línea para evitar memoria ilimitada.
+Los candidatos pueden llegar antes que el promedio. No se mantienen sin ACK de consumo dentro de RabbitMQ porque eso usaría la MOM como base de datos y limitaría el flujo. Cada comparator ejecuta ese ACK después de incorporarlos a un `CandidateBuffer` de la aplicación, separado por ejecución. La implementación utiliza un archivo JSONL append-only por `execution_id`, cuyo nombre se deriva mediante SHA-256. Cada una de las tres particiones usa un subdirectorio propio de `/var/lib/q5-candidates`, respaldado por el volumen Docker `q5_candidate_buffer`, y recorre los archivos línea por línea para evitar memoria ilimitada.
 
 El comparator mantiene una máquina de estados con:
 
@@ -487,7 +508,7 @@ Antes del promedio persiste candidatos; después del promedio compara directamen
 
 ## 11. ResultSink y entrega al cliente
 
-La implementación actual de ResultSink consume `result_sink.input` y reenvía cada `ResultMessage` a `results.<execution_id>` sin acumular resultados. Para el cierre mantiene una barrera genérica por `(execution_id, query_id)`: cada `QueryPartitionEndMessage` agrega un `partition_id` a un conjunto y, al alcanzar la cantidad configurada para esa query, ResultSink publica exactamente un `QueryEndMessage`. Los duplicados recibidos antes de completar la barrera no incrementan el conjunto. Q1, Q2, Q3 y Q5 utilizan esta barrera con tres particiones. Q4 publica un `QueryEndMessage` directo porque todos los parciales de una ejecución convergen en un único reducer lógico. ResultSink publica mediante el exchange por defecto de RabbitMQ con enrutamiento obligatorio y publisher confirms; recién después de confirmar esa publicación ejecuta el ACK del mensaje de entrada.
+La implementación actual de ResultSink consume `result_sink.input` y reenvía cada `ResultMessage` a `results.<execution_id>` sin acumular resultados. Para el cierre mantiene una barrera genérica por `(execution_id, query_id)`: cada `QueryPartitionEndMessage` agrega un `partition_id` a un conjunto y, al alcanzar la cantidad configurada para esa query, ResultSink publica exactamente un `QueryEndMessage`. Los duplicados recibidos antes de completar la barrera no incrementan el conjunto. Q1, Q2, Q3 y Q5 utilizan esta barrera con tres particiones. Q4 publica un `QueryEndMessage` directo porque todos los parciales de una ejecución convergen en un único reducer lógico. ResultSink publica mediante el exchange por defecto de RabbitMQ con enrutamiento obligatorio y publisher confirms; recién después de que el broker confirma esa publicación ejecuta el ACK de consumo del mensaje de entrada.
 
 ResultSink no declara las colas de salida. Cada cola `results.<execution_id>` es exclusiva, temporal y pertenece a la conexión de Gateway que inició la ejecución. El publicador dinámico solamente la utiliza como destino. Si la cola no existe porque el cliente se desconectó, la publicación obligatoria produce un error de mensaje no enrutable: ResultSink registra el descarte y confirma la entrada. Los demás errores de publicación continúan produciendo NACK.
 
@@ -498,14 +519,14 @@ La versión actual utiliza una sola instancia, por lo que toda la salida converg
 - Producir exactamente un `QUERY_END` por query, ya implementado para productores que adopten `QUERY_PARTITION_END`.
 - Limpiar el estado de barrera cuando finalicen las cinco consultas o falle la ejecución.
 
-Gateway consume la cola temporal de la ejecución y aplica el siguiente ACK encadenado:
+Gateway consume la cola temporal de la ejecución y aplica las dos clases de ACK de forma encadenada:
 
 ```text
 RabbitMQ entrega resultado
   -> Gateway valida
   -> Gateway envía por TCP
-  -> Client escribe y responde ACK
-  -> Gateway confirma el mensaje en RabbitMQ
+  -> Client escribe y responde ACK por TCP
+  -> Gateway ejecuta el ACK de consumo en RabbitMQ
 ```
 
 Esta secuencia evita confirmar un resultado antes de entregarlo al cliente. Sin embargo, todavía no garantiza una entrega **exactly-once**, es decir, que cada resultado lógico llegue al cliente una única vez incluso si ocurren reintentos o caídas.
@@ -522,7 +543,7 @@ Los componentes no importan Pika ni administran conexiones RabbitMQ directamente
 
 Esto cumple dos objetivos:
 
-- Oculta detalles de conectividad, colas y ACK a la lógica funcional.
+- Oculta detalles de conectividad, colas y ACK/NACK de RabbitMQ a la lógica funcional.
 - Permite extender la comunicación con grupos sin modificar cada controller.
 
 ### 12.2 Capacidades actuales
@@ -532,7 +553,7 @@ La implementación actual ofrece `MessageMiddlewareQueueRabbitMQ` con:
 - Declaración de colas.
 - Publicación.
 - Consumo bloqueante.
-- ACK y NACK manuales.
+- ACK y NACK manuales de consumo.
 - Configuración `prefetch_count=1`.
 - Detención del consumo.
 - Cierre explícito de conexión.
@@ -548,16 +569,28 @@ RabbitMQ la cerraría aunque el proceso continúe sano. Este comportamiento se
 observó al ejecutar 50.000 artículos: varios componentes llegaron al final con
 la conexión publicadora vencida. La configuración funcional usa `heartbeat=0`
 para evitar falsos positivos. El costo es que una partición de red puede tardar
-más en detectarse; reconexión, detección de conexiones zombis e idempotencia
-quedan para tolerancia a fallos.
+más en detectarse.
 
 ### 12.3 Comunicación por grupos
 
 `MessageMiddlewareExchangeRabbitMQ` toma como base la versión utilizada en el TP de Coordinación. Declara un exchange `direct`; cada instancia consumidora crea su propia cola exclusiva y la vincula con las routing keys configuradas. Una instancia usada solamente para publicar declara el exchange sin crear una cola innecesaria. Cuando varias réplicas vinculan sus colas con la misma clave, una publicación de control llega a todas ellas. El negocio no conoce bindings ni detalles de RabbitMQ. DATA continúa usando colas compartidas o particionadas y el control de finalización utiliza este broadcast al grupo. El patrón está integrado en Preprocessor, QueryRouter, Until2020Filter, Q1EnglishFilter, Q2BiographyFilter, ImageFetcher, WordExtractor, Q3WordProjector, Q4Q5WordProjector y Q5DateRouter.
 
-### 12.4 ACK, NACK y prefetch
+### 12.4 Publisher confirms, ACK, NACK y prefetch
 
-Un mensaje se confirma solamente después de aplicar su efecto y publicar todas las salidas derivadas. Ante una excepción, el controller hace NACK según la política de la etapa.
+RabbitMQ interviene en dos momentos diferentes. Un **publisher confirm** informa
+al productor que el broker aceptó su publicación. En cambio, un **ACK de
+consumo** informa que el consumidor terminó de procesar el mensaje que RabbitMQ
+le había entregado y permite retirarlo de la cola. Un NACK rechaza esa entrega y,
+según la política utilizada, puede solicitar su reencolado.
+
+El ACK de consumo se produce por mensaje de RabbitMQ, no necesariamente por
+artículo. Entre Gateway e InputBatcher cada mensaje contiene un solo artículo o
+el final de entrada. Después de InputBatcher, un mensaje de DATA normalmente
+contiene un batch. Más adelante también existen mensajes con parciales,
+resultados y señales de control. En todos los controllers, el mensaje de entrada
+se confirma solamente después de aplicar su efecto y publicar todas las salidas
+derivadas. Ante una excepción, el controller hace NACK según la política de la
+etapa.
 
 `prefetch_count=1` limita a uno los mensajes no confirmados reservados por consumidor y favorece el reparto entre réplicas. No es un algoritmo estricto de “menos cargado” ni reemplaza la coordinación de finales.
 
@@ -616,12 +649,6 @@ Para la demo se utiliza tres como cantidad inicial en los grupos coordinados y s
 ### 14.2 Escalamiento por clientes
 
 `execution_id` aísla los mensajes y estados. Gateway mantiene una sesión independiente por conexión y puede atender varios clientes concurrentemente. Cada thread posee su socket, conexiones RabbitMQ y cola temporal, mientras el pipeline separa los estados de las corridas mediante el identificador.
-
-### 14.3 Límites del escalamiento actual
-
-Docker Compose despliega tres particiones o réplicas de todos los componentes escalables de Q1-Q5. Las etapas stateless usan consumidores competidores y broadcast de control; las stateful usan colas particionadas y hash estable; los reducers se distribuyen por ejecución. Gateway y ResultSink permanecen como instancias únicas. La validación pendiente incluye el cierre por señales y la ejecución completa bajo carga con esta topología.
-
-La cantidad de particiones de una etapa stateful deberá permanecer fija mientras existan ejecuciones activas, salvo que se implemente migración explícita de estado.
 
 ---
 
@@ -694,21 +721,21 @@ Esta separación hace que Gateway sea quien genere `execution_id`, `reply_queue`
 Docker Compose contiene:
 
 - RabbitMQ 3.13 con interfaz de administración.
-- Gateway.
+- Gateway como instancia única.
 - InputBatcher particiones 0, 1 y 2.
 - Preprocessor réplicas 0, 1 y 2.
 - QueryRouter réplicas 0, 1 y 2.
 - Until2020Filter réplicas 0, 1 y 2.
-- Q1.
-- Q2BiographyFilter.
-- ImageFetcher.
+- Q1EnglishFilter réplicas 0, 1 y 2.
+- Q2BiographyFilter réplicas 0, 1 y 2.
+- ImageFetcher réplicas 0, 1 y 2.
 - WordExtractor réplicas 0, 1 y 2.
 - Q3WordProjector réplicas 0, 1 y 2; Q3WordAggregator particiones 0, 1 y 2.
 - Q4Q5WordProjector réplicas 0, 1 y 2.
 - Q4WordCounter particiones 0, 1 y 2; Q4Top20Reducer instancias 0, 1 y 2.
 - Q5DateRouter réplicas 0, 1 y 2.
 - Q5StatsWorker, Q5AverageReducer y Q5Comparator particiones 0, 1 y 2.
-- ResultSink.
+- ResultSink como instancia única.
 - Client bajo el profile `client`.
 - Herramientas cAdvisor, Prometheus y Grafana bajo el profile opcional `monitoring`.
 
@@ -728,11 +755,14 @@ Compose permite demostrar la topología con múltiples containers. La expansión
 
 - Un mensaje inválido produce una excepción identificable, no se ignora silenciosamente.
 - Un artículo mayor que el batch máximo se rechaza explícitamente.
-- Los errores HTTP permanentes de imágenes se registran y omiten sin detener toda la ejecución.
-- Los errores transitorios de imágenes tienen timeout y reintentos acotados.
+- Una URL de imagen ausente se registra junto con el nombre y la URL del artículo; no se realiza una solicitud HTTP y el candidato se omite.
+- Un HTTP 404 se considera permanente: se registra la URL de imagen, no se reintenta y el candidato se omite.
+- Los demás HTTP 4xx también se consideran permanentes y se omiten sin reintentar, con la excepción de HTTP 429.
+- Un HTTP 429 o cualquier HTTP 5xx se considera transitorio. La implementación actual realiza como máximo dos intentos totales y espera un segundo entre ellos.
+- Un timeout o un error transitorio de red se maneja con la misma política de dos intentos. Cada solicitud tiene un timeout máximo de diez segundos.
+- Cuando se agotan los intentos, se registra el fallo definitivo y el candidato se omite. ImageFetcher continúa con los demás artículos del batch, por lo que una imagen inaccesible no detiene la ejecución completa.
+- Una excepción no contemplada por esta política se propaga al controller. En ese caso se ejecuta NACK sobre el batch de entrada en lugar de confirmarlo silenciosamente.
 - Gateway envía un mensaje `ERROR` al cliente cuando una sesión falla.
-
-Queda pendiente definir una política completa de poison messages y propagar fallos internos terminales como `QUERY_FAILED` hasta el cliente.
 
 ### 17.2 Cierre por señales implementado
 
@@ -749,7 +779,8 @@ la cola local de control durante el cierre y espera su thread de control. No se
 reinicia la misma instancia después de detenerla. El middleware reencola entregas
 que todavía no iniciaron su callback al detectar el stop.
 
-InputBatcher confirma artículos después de incorporarlos al buffer. Cuando el
+InputBatcher ejecuta el ACK de consumo de cada `ROUTED_ARTICLE` después de
+incorporarlo al buffer. Cuando el
 consumo retorna normalmente, publica los batches parciales y después los elimina
 del acumulador. Si el consumo lanza una excepción,
 este drenaje no se ejecuta. Si falla la publicación o se fuerza la terminación,
@@ -920,37 +951,7 @@ La demo final deberá ensayarse y ser reproducible. El recorrido previsto es:
 
 ---
 
-## 24. Limitaciones actuales y trabajo pendiente
-
-### 24.1 Pipeline funcional
-
-El pipeline funcional está completo y fue comparado con la referencia serial sobre la muestra de 50.000 artículos.
-
-### 24.2 Para completar el hito de escalabilidad
-
-1. Repetir la comparación completa con 50.000 artículos bajo la topología replicada.
-2. Ejecutar escenarios de múltiples clientes y justificar las cantidades mediante métricas.
-3. Actualizar y exportar los diagramas 4+1 restantes.
-
-### 24.3 Mejoras posteriores al pipeline funcional
-
-- Límites y cuotas para entradas no confiables.
-- Propagación integral de `QUERY_FAILED`.
-- Política explícita de poison messages.
-- Limpieza completa de recursos de ejecuciones abortadas.
-
-### 24.4 Hito posterior de tolerancia a fallos
-
-- Colas y mensajes persistentes donde corresponda.
-- Recuperación del estado de aplicación.
-- Idempotencia y deduplicación.
-- Exactly-once hacia el cliente.
-- Chaos Monkey automatizado.
-- Recuperación y limpieza de CandidateBuffer.
-
----
-
-## 25. Invariantes arquitectónicos
+## 24. Invariantes arquitectónicos
 
 1. Todos los artículos y `INPUT_END` de una ejecución llegan a la misma partición de InputBatcher.
 2. Ningún batch supera `MAX_BATCH_BYTES`.
@@ -962,7 +963,7 @@ El pipeline funcional está completo y fue comparado con la referencia serial so
 8. Q4 y Q5 usan el mismo criterio de conteo.
 9. RabbitMQ no almacena candidatos de Q5 a la espera del promedio.
 10. Q5Comparator no finaliza sin promedio, cierre de candidatos y buffer vacío.
-11. Un ACK ocurre después de completar el efecto y publicar las salidas.
+11. Un ACK de consumo en RabbitMQ ocurre después de completar el efecto y publicar las salidas.
 12. Un `SIGTERM` no produce finales falsos.
 13. Todos los estados mutables se aíslan al menos por `execution_id`.
 14. Las proyecciones no transportan columnas innecesarias.
@@ -970,10 +971,11 @@ El pipeline funcional está completo y fue comparado con la referencia serial so
 
 ---
 
-## 26. Glosario
+## 25. Glosario
 
-- **ACK:** confirmación de que un mensaje fue procesado correctamente.
-- **NACK:** rechazo de un mensaje; puede permitir su reentrega.
+- **ACK:** Confirmación positiva. En el protocolo TCP confirma la recepción de un frame de aplicación; en RabbitMQ confirma que un consumidor terminó de procesar una entrega.
+- **Publisher confirm:** Confirmación de RabbitMQ al productor de que el broker aceptó una publicación.
+- **NACK:** Rechazo de una entrega de RabbitMQ; puede solicitar su reencolado y posterior reentrega.
 - **Backpressure:** mecanismo por el cual una etapa lenta limita la velocidad de las anteriores.
 - **Batch:** conjunto de registros transportados en un único mensaje.
 - **Barrera:** coordinación que espera la finalización de todas las particiones necesarias.
