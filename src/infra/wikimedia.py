@@ -1,12 +1,14 @@
 import logging
+import os
 from time import sleep
 from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-TIMEOUT = 10.0
-MAX_ATTEMPTS = 2
-RETRY_DELAY = 1.0
+TIMEOUT = float(os.environ.get("IMAGE_FETCH_TIMEOUT", "10"))
+MAX_ATTEMPTS = int(os.environ.get("IMAGE_FETCH_MAX_ATTEMPTS", "5"))
+RETRY_DELAY = float(os.environ.get("IMAGE_FETCH_RETRY_DELAY", "1"))
+REQUEST_DELAY = float(os.environ.get("IMAGE_FETCH_REQUEST_DELAY", "0.5"))
 
 USER_AGENT = (
     "TP-FINAL-DISTRIBUIDOS/0.1 (https://github.com/FrancoBossi/TP-FINAL-DISTRIBUIDOS)"
@@ -20,13 +22,22 @@ def download_image_bytes(
     timeout: float = TIMEOUT,
     max_attempts: int = MAX_ATTEMPTS,
     retry_delay: float = RETRY_DELAY,
+    request_delay: float = REQUEST_DELAY,
 ) -> Optional[bytes]:
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be positive")
+    if timeout <= 0 or retry_delay < 0 or request_delay < 0:
+        raise ValueError("timeout must be positive and delays must be nonnegative")
+
     request = Request(
         image_url,
         headers={"User-Agent": USER_AGENT},
     )
 
     for attempt in range(1, max_attempts + 1):
+        if request_delay:
+            sleep(request_delay)
+
         try:
             with urlopen(request, timeout=timeout) as response:
                 return response.read()
