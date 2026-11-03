@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Optional
 
 from common.message_protocol.message import (
@@ -6,6 +7,8 @@ from common.message_protocol.message import (
     RoutedArticleMessage,
     RoutedInputEndMessage,
 )
+
+logger = logging.getLogger(__name__)
 
 SEPARATOR_LENGTH = 2  # ", " in JSON encoding
 
@@ -37,9 +40,15 @@ class BatchAccumulator:
 
         single_size = envelope_size + article_size
         if single_size > self.batch_size:
-            raise ValueError(
-                f"Single article exceeds batch size limit of {self.batch_size} bytes"
+            logger.warning(
+                "Article batch is %d bytes, exceeding target %d; "
+                "keeping article in a singleton batch (execution %s)",
+                single_size,
+                self.batch_size,
+                message.execution_id,
             )
+            self._start_batch(message, single_size, envelope_size)
+            return current
 
         if current is not None:
             candidate_size = (

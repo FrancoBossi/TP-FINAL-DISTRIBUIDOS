@@ -28,5 +28,5 @@ class InputBatcherConfig:
         )
     )
     max_batch_bytes: int = field(
-        default_factory=lambda: int(os.environ.get("MAX_BATCH_BYTES", "1048576"))
+        default_factory=lambda: int(os.environ.get("MAX_BATCH_BYTES", "10485760"))
     )
