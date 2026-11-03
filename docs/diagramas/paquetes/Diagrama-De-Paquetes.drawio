@@ -1,0 +1,114 @@
+<mxfile host="app.diagrams.net" agent="Codex">
+  <diagram id="packages-current" name="Paquetes actuales">
+    <mxGraphModel dx="1900" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="external" parent="1" style="swimlane;horizontal=1;startSize=42;rounded=1;html=1;whiteSpace=wrap;container=0;fillColor=#eff6ff;swimlaneFillColor=#ffffff;strokeColor=#2563eb;strokeWidth=2;fontFamily=Helvetica;fontSize=19;align=left;spacingLeft=14;" value="&lt;b&gt;Frontera externa y entrega&lt;/b&gt;" vertex="1">
+          <mxGeometry x="30" y="30" width="1594" height="170" as="geometry" />
+        </mxCell>
+        <mxCell id="client" parent="external" style="shape=folder;tabWidth=70;tabHeight=20;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontFamily=Helvetica;fontSize=17;align=left;spacingLeft=14;" value="&lt;b&gt;client&lt;/b&gt;&lt;br&gt;Lectura incremental de Parquet y protocolo TCP" vertex="1">
+          <mxGeometry x="35" y="65" width="430" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="gateway" parent="external" style="shape=folder;tabWidth=70;tabHeight=20;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontFamily=Helvetica;fontSize=17;align=left;spacingLeft=14;" value="&lt;b&gt;gateway&lt;/b&gt;&lt;br&gt;Adaptación TCP ↔ mensajes internos y sesiones" vertex="1">
+          <mxGeometry x="582" y="65" width="430" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="result_sink" parent="external" style="shape=folder;tabWidth=70;tabHeight=20;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontFamily=Helvetica;fontSize=17;align=left;spacingLeft=14;" value="&lt;b&gt;result_sink&lt;/b&gt;&lt;br&gt;Barreras finales y entrega de Q1–Q5" vertex="1">
+          <mxGeometry x="1129" y="65" width="430" height="75" as="geometry" />
+        </mxCell>
+
+        <mxCell id="processing" parent="1" style="swimlane;horizontal=1;startSize=42;rounded=1;html=1;whiteSpace=wrap;container=0;fillColor=#f0fdf4;swimlaneFillColor=#ffffff;strokeColor=#16a34a;strokeWidth=2;fontFamily=Helvetica;fontSize=19;align=left;spacingLeft=14;" value="&lt;b&gt;Procesamiento distribuido&lt;/b&gt;" vertex="1">
+          <mxGeometry x="30" y="240" width="1030" height="880" as="geometry" />
+        </mxCell>
+        <mxCell id="ingress_group" parent="processing" style="swimlane;horizontal=1;startSize=34;rounded=1;html=1;whiteSpace=wrap;container=0;fillColor=#ecfdf5;swimlaneFillColor=#ffffff;strokeColor=#059669;strokeWidth=1.5;fontFamily=Helvetica;fontSize=17;align=left;spacingLeft=12;" value="&lt;b&gt;Ingreso y distribución&lt;/b&gt;" vertex="1">
+          <mxGeometry x="30" y="65" width="970" height="175" as="geometry" />
+        </mxCell>
+        <mxCell id="input_batcher" parent="ingress_group" style="shape=folder;tabWidth=54;tabHeight=18;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#059669;fontFamily=Helvetica;fontSize=15;align=left;spacingLeft=10;" value="&lt;b&gt;input_batcher&lt;/b&gt;&lt;br&gt;Batches limitados por bytes" vertex="1">
+          <mxGeometry x="20" y="55" width="285" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="preprocessor" parent="ingress_group" style="shape=folder;tabWidth=54;tabHeight=18;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#059669;fontFamily=Helvetica;fontSize=15;align=left;spacingLeft=10;" value="&lt;b&gt;preprocessor&lt;/b&gt;&lt;br&gt;Validación y normalización" vertex="1">
+          <mxGeometry x="342" y="55" width="285" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="query_router" parent="ingress_group" style="shape=folder;tabWidth=54;tabHeight=18;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#059669;fontFamily=Helvetica;fontSize=15;align=left;spacingLeft=10;" value="&lt;b&gt;query_router&lt;/b&gt;&lt;br&gt;Fan-out hacia las ramas" vertex="1">
+          <mxGeometry x="664" y="55" width="285" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="shared_group" parent="processing" style="swimlane;horizontal=1;startSize=34;rounded=1;html=1;whiteSpace=wrap;container=0;fillColor=#f0fdf4;swimlaneFillColor=#ffffff;strokeColor=#16a34a;strokeWidth=1.5;fontFamily=Helvetica;fontSize=17;align=left;spacingLeft=12;" value="&lt;b&gt;Etapas compartidas&lt;/b&gt;" vertex="1">
+          <mxGeometry x="30" y="270" width="970" height="175" as="geometry" />
+        </mxCell>
+        <mxCell id="until_2020" parent="shared_group" style="shape=folder;tabWidth=54;tabHeight=18;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#16a34a;fontFamily=Helvetica;fontSize=15;align=left;spacingLeft=10;" value="&lt;b&gt;until_2020_filter&lt;/b&gt;&lt;br&gt;Filtro común de Q1 y Q2" vertex="1">
+          <mxGeometry x="20" y="55" width="285" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="word_extractor" parent="shared_group" style="shape=folder;tabWidth=54;tabHeight=18;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#16a34a;fontFamily=Helvetica;fontSize=15;align=left;spacingLeft=10;" value="&lt;b&gt;word_extractor&lt;/b&gt;&lt;br&gt;Tokenización de Q3/Q4/Q5" vertex="1">
+          <mxGeometry x="342" y="55" width="285" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="q4q5_projector" parent="shared_group" style="shape=folder;tabWidth=54;tabHeight=18;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#16a34a;fontFamily=Helvetica;fontSize=15;align=left;spacingLeft=10;" value="&lt;b&gt;q4_q5_word_projector&lt;/b&gt;&lt;br&gt;Proyecciones específicas" vertex="1">
+          <mxGeometry x="664" y="55" width="285" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="queries_group" parent="processing" style="swimlane;horizontal=1;startSize=34;rounded=1;html=1;whiteSpace=wrap;container=0;fillColor=#f0fdf4;swimlaneFillColor=#ffffff;strokeColor=#15803d;strokeWidth=1.5;fontFamily=Helvetica;fontSize=17;align=left;spacingLeft=12;" value="&lt;b&gt;Consultas&lt;/b&gt;" vertex="1">
+          <mxGeometry x="30" y="475" width="970" height="375" as="geometry" />
+        </mxCell>
+        <mxCell id="q1" parent="queries_group" style="shape=folder;tabWidth=48;tabHeight=18;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#15803d;fontFamily=Helvetica;fontSize=15;align=left;spacingLeft=10;" value="&lt;b&gt;q1&lt;/b&gt;&lt;br&gt;Filtro de idioma" vertex="1">
+          <mxGeometry x="20" y="55" width="170" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="q2" parent="queries_group" style="shape=folder;tabWidth=48;tabHeight=18;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#15803d;fontFamily=Helvetica;fontSize=15;align=left;spacingLeft=10;" value="&lt;b&gt;q2&lt;/b&gt;&lt;br&gt;biography_filter - image_fetcher" vertex="1">
+          <mxGeometry x="210" y="55" width="220" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="q3" parent="queries_group" style="shape=folder;tabWidth=48;tabHeight=18;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#15803d;fontFamily=Helvetica;fontSize=14;align=left;spacingLeft=10;" value="&lt;b&gt;q3&lt;/b&gt;&lt;br&gt;word_projector - word_aggregator" vertex="1">
+          <mxGeometry x="450" y="55" width="220" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="q4" parent="queries_group" style="shape=folder;tabWidth=48;tabHeight=18;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#15803d;fontFamily=Helvetica;fontSize=15;align=left;spacingLeft=10;" value="&lt;b&gt;q4&lt;/b&gt;&lt;br&gt;word_counter - top20_reducer" vertex="1">
+          <mxGeometry x="690" y="55" width="250" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="q5" parent="queries_group" style="shape=folder;tabWidth=48;tabHeight=18;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#15803d;fontFamily=Helvetica;fontSize=15;align=left;spacingLeft=10;" value="&lt;b&gt;q5&lt;/b&gt;&lt;br&gt;date_router - stats_worker&lt;br&gt;average_reducer - comparator" vertex="1">
+          <mxGeometry x="210" y="205" width="520" height="120" as="geometry" />
+        </mxCell>
+
+        <mxCell id="common" parent="1" style="swimlane;horizontal=1;startSize=42;rounded=1;html=1;whiteSpace=wrap;container=0;fillColor=#faf5ff;swimlaneFillColor=#ffffff;strokeColor=#9333ea;strokeWidth=2;fontFamily=Helvetica;fontSize=19;align=left;spacingLeft=14;" value="&lt;b&gt;Código compartido: common&lt;/b&gt;" vertex="1">
+          <mxGeometry x="1100" y="240" width="524" height="350" as="geometry" />
+        </mxCell>
+        <mxCell id="protocol" parent="common" style="shape=folder;tabWidth=60;tabHeight=18;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#9333ea;fontFamily=Helvetica;fontSize=15;align=left;spacingLeft=10;" value="&lt;b&gt;message_protocol&lt;/b&gt;&lt;br&gt;DTOs, tipos y framing externo" vertex="1">
+          <mxGeometry x="25" y="65" width="474" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="middleware" parent="common" style="shape=folder;tabWidth=60;tabHeight=18;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#9333ea;fontFamily=Helvetica;fontSize=15;align=left;spacingLeft=10;" value="&lt;b&gt;middleware&lt;/b&gt;&lt;br&gt;Interfaces y adaptación RabbitMQ" vertex="1">
+          <mxGeometry x="25" y="165" width="474" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="helpers" parent="common" style="shape=folder;tabWidth=60;tabHeight=18;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#9333ea;fontFamily=Helvetica;fontSize=15;align=left;spacingLeft=10;" value="&lt;b&gt;modelos y coordinación&lt;/b&gt;&lt;br&gt;Article, particionado, barreras,&lt;br&gt;shutdown y texto" vertex="1">
+          <mxGeometry x="25" y="265" width="474" height="75" as="geometry" />
+        </mxCell>
+
+        <mxCell id="adapters" parent="1" style="swimlane;horizontal=1;startSize=42;rounded=1;html=1;whiteSpace=wrap;container=0;fillColor=#fff7ed;swimlaneFillColor=#ffffff;strokeColor=#ea580c;strokeWidth=2;fontFamily=Helvetica;fontSize=19;align=left;spacingLeft=14;" value="&lt;b&gt;Entrada de datos y adaptadores&lt;/b&gt;" vertex="1">
+          <mxGeometry x="1100" y="630" width="524" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="dataset" parent="adapters" style="shape=folder;tabWidth=54;tabHeight=18;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#ea580c;fontFamily=Helvetica;fontSize=15;align=left;spacingLeft=10;" value="&lt;b&gt;dataset&lt;/b&gt;&lt;br&gt;Parquet para client y reference" vertex="1">
+          <mxGeometry x="25" y="65" width="225" height="85" as="geometry" />
+        </mxCell>
+        <mxCell id="infra" parent="adapters" style="shape=folder;tabWidth=54;tabHeight=18;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#ea580c;fontFamily=Helvetica;fontSize=15;align=left;spacingLeft=10;" value="&lt;b&gt;infra&lt;/b&gt;&lt;br&gt;Wikimedia para Q2 y reference" vertex="1">
+          <mxGeometry x="274" y="65" width="225" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="reference" parent="1" style="swimlane;horizontal=1;startSize=42;rounded=1;html=1;whiteSpace=wrap;container=0;fillColor=#f8fafc;swimlaneFillColor=#ffffff;strokeColor=#64748b;strokeWidth=2;fontFamily=Helvetica;fontSize=19;align=left;spacingLeft=14;" value="&lt;b&gt;Herramienta de verificación&lt;/b&gt;" vertex="1">
+          <mxGeometry x="1100" y="850" width="524" height="210" as="geometry" />
+        </mxCell>
+        <mxCell id="reference_pkg" parent="reference" style="shape=folder;tabWidth=64;tabHeight=20;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#64748b;strokeWidth=1.5;fontFamily=Helvetica;fontSize=16;align=left;spacingLeft=12;" value="&lt;b&gt;reference&lt;/b&gt;&lt;br&gt;Ejecución serial Q1–Q5 y comparación de resultados&lt;br&gt;&lt;br&gt;&lt;i&gt;No forma parte del pipeline distribuido.&lt;/i&gt;" vertex="1">
+          <mxGeometry x="25" y="65" width="474" height="115" as="geometry" />
+        </mxCell>
+
+        <mxCell id="dep-external-common" edge="1" parent="1" source="gateway" target="protocol" value="usa contratos y mensajería" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;endFill=0;dashed=1;strokeWidth=1.5;strokeColor=#64748b;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="dep-processing-common" edge="1" parent="1" source="processing" target="middleware" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;endFill=0;dashed=1;strokeWidth=1.5;strokeColor=#64748b;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="dep-reference-common" edge="1" parent="1" source="reference_pkg" target="helpers" value="reutiliza modelo y funciones" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;endFill=0;dashed=1;strokeWidth=1.5;strokeColor=#64748b;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="dep-reference-adapters" edge="1" parent="1" source="reference_pkg" target="adapters" value="lee Parquet y descarga imágenes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;endFill=0;dashed=1;strokeWidth=1.5;strokeColor=#64748b;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -58,8 +58,8 @@ Esto no elimina la necesidad actual de manejar errores funcionales, cerrar recur
 
 Se utiliza Wikipedia Structured Contents, publicado en Kaggle. Durante el desarrollo se esta trabajando con una muestra reproducible de 50.000 artículos:
 
-- 25.000 artículos en inglés
-- 25.000 artículos en francés
+- 25.000 artículos en inglés.
+- 25.000 artículos en francés.
 
 La muestra se genera en Kaggle mediante el notebook del grupo y se descarga como `wikipedia_sample.parquet`. El archivo no se versiona en Git debido a su tamaño. El cliente lo recorre incrementalmente con PyArrow en lugar de cargarlo completo en memoria.
 
@@ -110,18 +110,61 @@ El siguiente DAG representa el flujo completo de datos de la arquitectura objeti
 
 #### Vista de desarrollo - Paquetes
 
+El siguiente diagrama representa la organización real del código fuente. Los
+paquetes se agrupan por responsabilidad y las flechas punteadas indican
+dependencias de código relevantes, no el recorrido de los mensajes.
+
+![Diagrama de paquetes de Wikipedia Article Analysis](docs/diagramas/paquetes/Diagrama-De-Paquetes.png)
+
 
 #### Vista de procesos - Actividades
+
+Este diagrama separa el procesamiento de datos del protocolo de control. Permite
+observar que `INPUT_END` solamente cierra la entrada, mientras las réplicas aún
+pueden tener trabajo en vuelo, y que la ejecución termina recién cuando se
+completan las barreras de las cinco consultas.
+
+![Ciclo de vida distribuido de una ejecución](docs/diagramas/actividades/Actividad-Ciclo-De-Vida.png)
+
+La Query 5 requiere una coordinación adicional porque sus dos ramas avanzan en
+paralelo: una calcula el promedio histórico y la otra recibe los artículos que
+deberán compararse contra ese promedio. El siguiente diagrama muestra la
+separación temporal, el almacenamiento transitorio de candidatos y las
+condiciones necesarias para cerrar la consulta.
+
+![Actividad distribuida de la Query 5](docs/diagramas/actividades/Actividad-Q5.png)
 
 
 #### Vista de procesos - Secuencia
 
+La siguiente secuencia muestra una ejecución completa desde la conexión del
+cliente hasta el cierre de sus archivos de salida. Para conservar la
+legibilidad, cada línea de vida representa un rol lógico: el pipeline agrupa a
+los componentes y réplicas de Q1-Q5, mientras las flechas explicitan dónde se
+producen las confirmaciones que aplican contrapresión y preservan la entrega.
+
+![Secuencia completa de una ejecución](docs/diagramas/secuencia/Secuencia-Ejecucion-Completa.png)
+
 
 #### Vista de escenarios - Robustez
+
+Esta vista aplica los estereotipos de robustez al cierre iniciado por una señal
+`SIGTERM` o `SIGINT`. Separa a los actores externos, las fronteras tecnológicas,
+los controllers que coordinan el cierre y las entidades que representan estado
+en vuelo o almacenado. El controller apilado representa a los workers
+replicados; las asociaciones muestran qué recurso detiene o libera cada parte,
+no el orden temporal exacto.
+
+![Robustez del cierre por SIGTERM](docs/diagramas/robustez/Robustez-SIGTERM.png)
 
 
 #### Vista física - Despliegue
 
+El siguiente diagrama representa el entorno ejecutado durante la demo: un host
+con Docker Compose, los grupos replicados, RabbitMQ, el almacenamiento temporal
+de Q5 y el perfil opcional de monitoreo.
+
+![Diagrama de despliegue del entorno de demo](docs/diagramas/despliegue/Diagrama-De-Despliegue.png)
 
 
 ---
@@ -279,12 +322,12 @@ Se posterga hasta después del pipeline funcional la incorporación de límites 
 
 El Preprocessor convierte el registro crudo en un `NormalizedArticle`:
 
-- Valida `name` y `url`
-- Extrae y normaliza el identificador de idioma
-- Parsea la fecha ISO
-- Transforma las secciones, almacenadas como JSON dentro del Parquet, en una lista de nombres
-- Obtiene `image.content_url` cuando existe
-- Conserva el abstract opcional
+- Valida `name` y `url`.
+- Extrae y normaliza el identificador de idioma.
+- Parsea la fecha ISO.
+- Transforma las secciones, almacenadas como JSON dentro del Parquet, en una lista de nombres.
+- Obtiene `image.content_url` cuando existe.
+- Conserva el abstract opcional.
 
 Esta separación evita repetir parsing en cada consulta.
 
@@ -346,7 +389,27 @@ La API REST se descartó porque no agrega información cuando la página no pose
 
 Como los mensajes internos de RabbitMQ y el archivo `query2.jsonl` utilizan JSON, los bytes se codifican en Base64 para formar un string transportable y escribible. Base64 aumenta el tamaño aproximadamente un 33 %. Aunque el protocolo externo admite bytes, el resultado ya llega al Gateway representado como Base64; cambiar solamente el último tramo no elimina ese overhead dentro del pipeline.
 
-Cada ImageFetcher descarga secuencialmente. Las tres réplicas permiten procesar hasta tres batches de descarga simultáneamente y funcionan como límite explícito de concurrencia, evitando agregar un pool interno que podría generar carga descontrolada sobre Wikimedia. La cantidad puede ajustarse a partir de las métricas de cola, CPU y latencia observadas en la demo.
+#### 9.4.1 Rate limiting de Wikimedia
+
+Aunque el sistema no consulta la API REST, las descargas directas realizadas a
+`upload.wikimedia.org` están alcanzadas por la
+[Robot policy de Wikimedia](https://wikitech.wikimedia.org/wiki/Robot_policy).
+Para recursos multimedia, la política indica una concurrencia total máxima de
+dos solicitudes y una velocidad total máxima de 25 Mbps, medida en ventanas de
+diez segundos. También exige identificar el cliente mediante un `User-Agent`
+significativo y respetar el header HTTP `Retry-After` recibido junto con un
+`429`. La documentación general de
+[rate limits](https://www.mediawiki.org/wiki/Wikimedia_APIs/Rate_limits)
+recomienda, cuando ese header no está presente, esperar al menos cinco segundos
+o aplicar exponential backoff.
+
+Un `429` no expresa una cantidad máxima fija de imágenes. Es una instrucción del
+servidor para reducir temporalmente el ritmo y su respuesta puede indicar mediante
+`Retry-After` cuánto debe esperar el cliente. Los límites se aplican al tráfico
+agregado hacia las propiedades de Wikimedia, no de manera independiente por URL,
+archivo o proceso. Además, Wikimedia advierte que los valores y mecanismos de
+rate limiting pueden cambiar, por lo que el cliente debe reaccionar al protocolo
+HTTP y no depender de una cantidad de solicitudes observada experimentalmente.
 
 ---
 
@@ -385,12 +448,15 @@ Cada Q4WordCounter mantiene un `Counter` por `execution_id`. Después de recibir
 
 ### 10.4 Q5: promedio y comparación
 
+Esta coordinación se resume visualmente en el segundo diagrama de la
+[vista de procesos - Actividades](#vista-de-procesos---actividades).
+
 `Q4Q5WordProjector` calcula también `word_count = len(unique_words)`, garantizando el mismo criterio que Q4, y publica un `Q5ArticleWordCountBatchMessage` en `q5_date_router.input`. La proyección conserva `article_id`, URL y fecha. Los artículos sin abstract se omiten, mientras que los abstracts presentes pero vacíos se conservan con conteo cero, como en la ejecución serial.
 
 Tres Q5DateRouters consumen `Q5ArticleWordCountBatchMessage`, omiten las salidas vacías y dividen el flujo:
 
-- Conteos hasta 2020 en `Q5HistoricalWordCountBatchMessage`, enrutados por `execution_id` hacia un StatsWorker;
-- `article_id`, URL y conteo desde 2021 en `Q5CandidateBatchMessage`, enrutados por `(execution_id, article_id)` hacia un Comparator.
+- Conteos hasta 2020 en `Q5HistoricalWordCountBatchMessage`, enrutados por `execution_id` hacia un StatsWorker.
+- Identificador `article_id`, URL y conteo desde 2021 en `Q5CandidateBatchMessage`, enrutados por `(execution_id, article_id)` hacia un Comparator.
 
 Los DateRouters coordinan los finales de los tres Q4Q5WordProjectors y cada uno publica su propio `PARTITION_END` en todas las colas de StatsWorker y Comparator.
 
@@ -467,7 +533,7 @@ La implementación actual ofrece `MessageMiddlewareQueueRabbitMQ` con:
 - Publicación.
 - Consumo bloqueante.
 - ACK y NACK manuales.
-- `prefetch_count=1`.
+- Configuración `prefetch_count=1`.
 - Detención del consumo.
 - Cierre explícito de conexión.
 - Heartbeats AMQP deshabilitados para las conexiones bloqueantes actuales.
@@ -498,6 +564,9 @@ Un mensaje se confirma solamente después de aplicar su efecto y publicar todas 
 ---
 
 ## 13. Protocolo de finalización y barreras
+
+El ciclo completo, desde el streaming inicial hasta los cinco `QUERY_END`, se
+resume visualmente en el diagrama de actividades de la sección 4.1.
 
 ### 13.1 Tipos de final
 
@@ -558,6 +627,13 @@ La cantidad de particiones de una etapa stateful deberá permanecer fija mientra
 
 ## 15. Vista de desarrollo: paquetes y dependencias
 
+La implementación se organiza principalmente por componente o capacidad, en
+lugar de imponer una jerarquía de capas artificial. Cada proceso mantiene juntos
+su punto de entrada, configuración, controller, mensajería y lógica específica;
+el código verdaderamente reutilizado se concentra en `common`. Esta organización
+y sus dependencias principales se resumen en el diagrama de paquetes de la
+sección 4.1.
+
 ### 15.1 Organización actual
 
 ```text
@@ -617,24 +693,24 @@ Esta separación hace que Gateway sea quien genere `execution_id`, `reply_queue`
 
 Docker Compose contiene:
 
-- RabbitMQ 3.13 con interfaz de administración
-- Gateway
-- InputBatcher particiones 0, 1 y 2
-- Preprocessor réplicas 0, 1 y 2
-- QueryRouter réplicas 0, 1 y 2
-- Until2020Filter réplicas 0, 1 y 2
-- Q1
-- Q2BiographyFilter
-- ImageFetcher
-- WordExtractor réplicas 0, 1 y 2
-- Q3WordProjector réplicas 0, 1 y 2; Q3WordAggregator particiones 0, 1 y 2
-- Q4Q5WordProjector réplicas 0, 1 y 2
-- Q4WordCounter particiones 0, 1 y 2; Q4Top20Reducer instancias 0, 1 y 2
-- Q5DateRouter réplicas 0, 1 y 2
-- Q5StatsWorker, Q5AverageReducer y Q5Comparator particiones 0, 1 y 2
-- ResultSink
-- Client bajo el profile `client`
-- cAdvisor, Prometheus y Grafana bajo el profile opcional `monitoring`
+- RabbitMQ 3.13 con interfaz de administración.
+- Gateway.
+- InputBatcher particiones 0, 1 y 2.
+- Preprocessor réplicas 0, 1 y 2.
+- QueryRouter réplicas 0, 1 y 2.
+- Until2020Filter réplicas 0, 1 y 2.
+- Q1.
+- Q2BiographyFilter.
+- ImageFetcher.
+- WordExtractor réplicas 0, 1 y 2.
+- Q3WordProjector réplicas 0, 1 y 2; Q3WordAggregator particiones 0, 1 y 2.
+- Q4Q5WordProjector réplicas 0, 1 y 2.
+- Q4WordCounter particiones 0, 1 y 2; Q4Top20Reducer instancias 0, 1 y 2.
+- Q5DateRouter réplicas 0, 1 y 2.
+- Q5StatsWorker, Q5AverageReducer y Q5Comparator particiones 0, 1 y 2.
+- ResultSink.
+- Client bajo el profile `client`.
+- Herramientas cAdvisor, Prometheus y Grafana bajo el profile opcional `monitoring`.
 
 Cada componente funcional posee su Dockerfile y se comunica por nombre de servicio dentro de la red de Compose. RabbitMQ expone 5672 para AMQP y 15672 para administración. Los tres Q5Comparators montan el volumen nombrado `q5_candidate_buffer` en `/var/lib/q5-candidates` y utilizan subdirectorios separados por partición.
 
@@ -659,6 +735,9 @@ Compose permite demostrar la topología con múltiples containers. La expansión
 Queda pendiente definir una política completa de poison messages y propagar fallos internos terminales como `QUERY_FAILED` hasta el cliente.
 
 ### 17.2 Cierre por señales implementado
+
+El escenario y las responsabilidades involucradas se resumen en la
+[vista de escenarios - Robustez](#vista-de-escenarios---robustez).
 
 Los workers registran un handler compartido para `SIGTERM` y `SIGINT`. La primera
 señal solicita detener el consumo; las siguientes no repiten la solicitud. El
@@ -700,13 +779,13 @@ Las colas `results.<execution_id>` son deliberadamente temporales, exclusivas y 
 
 En el hito de tolerancia a fallos se revisarán:
 
-- Persistencia de mensajes y estado
-- Reanudación de ejecuciones
-- Deduplicación mediante `message_id` o `article_id`
-- Exactly-once hacia el cliente
-- Recuperación de CandidateBuffer
-- Chaos Monkey automatizado
-- Limpieza de ejecuciones resueltas o fallidas
+- Persistencia de mensajes y estado.
+- Reanudación de ejecuciones.
+- Deduplicación mediante `message_id` o `article_id`.
+- Exactly-once hacia el cliente.
+- Recuperación de CandidateBuffer.
+- Chaos Monkey automatizado.
+- Limpieza de ejecuciones resueltas o fallidas.
 
 ---
 
@@ -714,10 +793,10 @@ En el hito de tolerancia a fallos se revisarán:
 
 El monitoreo es opcional y está aislado mediante el profile `monitoring`. La solución utiliza:
 
-- cAdvisor para métricas de containers
-- Prometheus para scraping y almacenamiento temporal de métricas
-- el plugin nativo de RabbitMQ para métricas del broker
-- Grafana con datasource y dos dashboards aprovisionados
+- Métricas de containers mediante cAdvisor.
+- Prometheus para scraping y almacenamiento temporal de métricas.
+- Plugin nativo de RabbitMQ para métricas del broker.
+- Grafana con datasource y dos dashboards aprovisionados.
 
 **System Overview** presenta el estado general de containers, scrapes y RabbitMQ. **Pipeline Details** organiza CPU, memoria, disco, red, mensajes pendientes y consumidores por componente y por rama Q1-Q5. Ambas vistas incluyen filtros de proyecto, servicio y cola. Esta separación permite relacionar la acumulación de mensajes con el consumo del componente correspondiente, justificar dónde agregar réplicas y comprobar si el cuello de botella se desplaza al escalar una etapa.
 
@@ -827,18 +906,17 @@ El pipeline funcional y las barreras replicadas quedan validados mediante prueba
 
 La demo final deberá ensayarse y ser reproducible. El recorrido previsto es:
 
-1. Preparar la muestra Parquet
-2. Ejecutar la referencia serial
-3. Levantar el sistema distribuido con Docker Compose
-4. Mostrar múltiples containers y, si corresponde, varias réplicas
-5. Ejecutar uno o más clientes
-6. Observar resultados progresivos y métricas
-7. Esperar los cinco `QUERY_END`
-8. Ejecutar la comparación automática
-9. Demostrar igualdad de los cinco archivos
-10. Enviar SIGTERM y mostrar el cierre ordenado
-11. Explicar con los diagramas dónde se encuentra el estado y cómo se completan las barreras
-
+1. Preparar la muestra Parquet.
+2. Ejecutar la referencia serial.
+3. Levantar el sistema distribuido con Docker Compose.
+4. Mostrar múltiples containers y, si corresponde, varias réplicas.
+5. Ejecutar uno o más clientes.
+6. Observar resultados progresivos y métricas.
+7. Esperar los cinco `QUERY_END`.
+8. Ejecutar la comparación automática.
+9. Demostrar igualdad de los cinco archivos.
+10. Enviar SIGTERM y mostrar el cierre ordenado.
+11. Explicar con los diagramas dónde se encuentra el estado y cómo se completan las barreras.
 
 ---
 
@@ -852,24 +930,23 @@ El pipeline funcional está completo y fue comparado con la referencia serial so
 
 1. Repetir la comparación completa con 50.000 artículos bajo la topología replicada.
 2. Ejecutar escenarios de múltiples clientes y justificar las cantidades mediante métricas.
-3. Medir la concurrencia HTTP limitada por las tres réplicas de ImageFetcher y ajustar su cantidad si las métricas lo justifican.
-4. Actualizar y exportar los diagramas 4+1 restantes.
+3. Actualizar y exportar los diagramas 4+1 restantes.
 
 ### 24.3 Mejoras posteriores al pipeline funcional
 
-- límites y cuotas para entradas no confiables
-- propagación integral de `QUERY_FAILED`
-- política explícita de poison messages
-- limpieza completa de recursos de ejecuciones abortadas
+- Límites y cuotas para entradas no confiables.
+- Propagación integral de `QUERY_FAILED`.
+- Política explícita de poison messages.
+- Limpieza completa de recursos de ejecuciones abortadas.
 
 ### 24.4 Hito posterior de tolerancia a fallos
 
-- colas y mensajes persistentes donde corresponda
-- recuperación del estado de aplicación
-- idempotencia y deduplicación
-- exactly-once hacia el cliente
-- Chaos Monkey automatizado
-- recuperación y limpieza de CandidateBuffer
+- Colas y mensajes persistentes donde corresponda.
+- Recuperación del estado de aplicación.
+- Idempotencia y deduplicación.
+- Exactly-once hacia el cliente.
+- Chaos Monkey automatizado.
+- Recuperación y limpieza de CandidateBuffer.
 
 ---
 

@@ -1,0 +1,137 @@
+<mxfile host="app.diagrams.net" agent="Codex">
+  <diagram id="q5-activity" name="Procesamiento de Q5">
+    <mxGraphModel dx="2213" dy="952" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="1450" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="input_phase" parent="1" style="swimlane;horizontal=1;startSize=42;rounded=1;html=1;container=0;fillColor=#eff6ff;swimlaneFillColor=#ffffff;strokeColor=#2563eb;strokeWidth=2;fontFamily=Helvetica;fontSize=19;align=left;spacingLeft=14;" value="&lt;b&gt;1. Separación temporal&lt;/b&gt;" vertex="1">
+          <mxGeometry height="240" width="1300" x="50" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="projected" parent="input_phase" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontFamily=Helvetica;fontSize=17;" value="&lt;b&gt;Q4Q5WordProjector ×3&lt;/b&gt;&lt;br&gt;article_id - URL - fecha - word_count" vertex="1">
+          <mxGeometry height="100" width="345" x="55" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="date_router" parent="input_phase" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontFamily=Helvetica;fontSize=17;" value="&lt;b&gt;Q5DateRouter ×3&lt;/b&gt;&lt;br&gt;Espera los 3 finales upstream&lt;br&gt;y separa cada artículo por fecha" vertex="1">
+          <mxGeometry height="100" width="345" x="480" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="year_decision" parent="input_phase" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#7c2d12;" value="¿Año ≤ 2020?" vertex="1">
+          <mxGeometry height="135" width="270" x="930" y="62" as="geometry" />
+        </mxCell>
+        <mxCell id="e-input1" edge="1" parent="input_phase" source="projected" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#2563eb;" target="date_router">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-input2" edge="1" parent="input_phase" source="date_router" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#2563eb;" target="year_decision">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="parallel_phase" parent="1" style="swimlane;horizontal=1;startSize=42;rounded=1;html=1;container=0;fillColor=#f8fafc;swimlaneFillColor=#ffffff;strokeColor=#475569;strokeWidth=2;fontFamily=Helvetica;fontSize=19;align=left;spacingLeft=14;" value="&lt;b&gt;2. Dos ramas que avanzan en paralelo&lt;/b&gt;" vertex="1">
+          <mxGeometry height="720" width="1300" x="50" y="310" as="geometry" />
+        </mxCell>
+        <mxCell id="historical_lane" parent="parallel_phase" style="swimlane;horizontal=1;startSize=38;rounded=1;html=1;container=0;fillColor=#f0fdf4;swimlaneFillColor=#ffffff;strokeColor=#16a34a;strokeWidth=2;fontFamily=Helvetica;fontSize=18;align=left;spacingLeft=12;" value="&lt;b&gt;Históricos hasta 2020 - cálculo del promedio&lt;/b&gt;" vertex="1">
+          <mxGeometry height="620" width="600" x="30" y="65" as="geometry" />
+        </mxCell>
+        <mxCell id="stats" parent="historical_lane" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#14532d;" value="&lt;b&gt;Q5StatsWorker ×3&lt;/b&gt;&lt;br&gt;La ejecución se asigna por hash a una partición&lt;br&gt;que acumula suma y cantidad" vertex="1">
+          <mxGeometry height="105" width="520" x="40" y="65" as="geometry" />
+        </mxCell>
+        <mxCell id="partials" parent="historical_lane" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#14532d;" value="Al finalizar, las 3 particiones emiten&lt;br&gt;Q5_PARTIAL_STATS + Q5_STATS_PARTITION_END" vertex="1">
+          <mxGeometry height="90" width="520" x="40" y="205" as="geometry" />
+        </mxCell>
+        <mxCell id="average_reducer" parent="historical_lane" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bbf7d0;strokeColor=#15803d;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#14532d;" value="&lt;b&gt;Q5AverageReducer&lt;/b&gt;&lt;br&gt;El reducer asignado a la ejecución espera 3 finales&lt;br&gt;y calcula suma total / cantidad total" vertex="1">
+          <mxGeometry height="105" width="520" x="40" y="335" as="geometry" />
+        </mxCell>
+        <mxCell id="average" parent="historical_lane" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#bbf7d0;strokeColor=#15803d;strokeWidth=2;fontFamily=Helvetica;fontSize=18;fontColor=#14532d;" value="Publica &lt;b&gt;Q5_AVERAGE&lt;/b&gt;&lt;br&gt;en las 3 colas de Comparator" vertex="1">
+          <mxGeometry height="85" width="520" x="40" y="485" as="geometry" />
+        </mxCell>
+        <mxCell id="e-h1" edge="1" parent="historical_lane" source="stats" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#16a34a;" target="partials">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-h2" edge="1" parent="historical_lane" source="partials" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#16a34a;" target="average_reducer">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-h3" edge="1" parent="historical_lane" source="average_reducer" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#16a34a;" target="average">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="candidate_lane" parent="parallel_phase" style="swimlane;horizontal=1;startSize=38;rounded=1;html=1;container=0;fillColor=#fff7ed;swimlaneFillColor=#ffffff;strokeColor=#ea580c;strokeWidth=2;fontFamily=Helvetica;fontSize=18;align=left;spacingLeft=12;" value="&lt;b&gt;Candidatos desde 2021 - espera del promedio&lt;/b&gt;" vertex="1">
+          <mxGeometry height="620" width="600" x="670" y="65" as="geometry" />
+        </mxCell>
+        <mxCell id="candidate_partition" parent="candidate_lane" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#7c2d12;" value="DateRouter distribuye por hash estable de&lt;br&gt;execution_id + article_id entre&lt;br&gt;&lt;b&gt;Q5Comparator ×3&lt;/b&gt;" vertex="1">
+          <mxGeometry height="105" width="520" x="40" y="65" as="geometry" />
+        </mxCell>
+        <mxCell id="average_decision" parent="candidate_lane" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;strokeWidth=2;fontFamily=Helvetica;fontSize=16;fontColor=#78350f;" value="¿Llegó Q5_AVERAGE?" vertex="1">
+          <mxGeometry height="130" width="300" x="150" y="195" as="geometry" />
+        </mxCell>
+        <mxCell id="disk" parent="candidate_lane" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#7c2d12;" value="&lt;b&gt;No: CandidateBuffer JSONL&lt;/b&gt;&lt;br&gt;subdirectorio por Comparator&lt;br&gt;archivo por execution_id" vertex="1">
+          <mxGeometry height="110" width="520" x="40" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="compare" parent="candidate_lane" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fed7aa;strokeColor=#c2410c;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#7c2d12;" value="&lt;b&gt;Sí: comparar candidatos&lt;/b&gt;&lt;br&gt;Lee primero el JSONL y procesa directamente&lt;br&gt;los candidatos posteriores" vertex="1">
+          <mxGeometry height="90" width="520" x="40" y="505" as="geometry" />
+        </mxCell>
+        <mxCell id="e-c1" edge="1" parent="candidate_lane" source="candidate_partition" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#ea580c;" target="average_decision">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-c2" edge="1" parent="candidate_lane" source="average_decision" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#ea580c;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;" target="disk" value="No">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-c3" edge="1" parent="candidate_lane" source="disk" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#ea580c;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;" target="compare" value="al recibir promedio">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-c4" edge="1" parent="candidate_lane" source="average_decision" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#ea580c;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;" target="compare" value="Sí">
+          <mxGeometry relative="1" x="-0.2203" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="500" y="260" />
+              <mxPoint x="500" y="550" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="finish_phase" parent="1" style="swimlane;horizontal=1;startSize=42;rounded=1;html=1;container=0;fillColor=#faf5ff;swimlaneFillColor=#ffffff;strokeColor=#9333ea;strokeWidth=2;fontFamily=Helvetica;fontSize=19;align=left;spacingLeft=14;" value="&lt;b&gt;3. Comparación y cierre de Q5&lt;/b&gt;" vertex="1">
+          <mxGeometry height="330" width="1300" x="50" y="1070" as="geometry" />
+        </mxCell>
+        <mxCell id="publish_matches" parent="finish_phase" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#581c87;" value="Cada Comparator publica RESULT cuando&lt;br&gt;&lt;b&gt;word_count &gt; promedio histórico&lt;/b&gt;" vertex="1">
+          <mxGeometry height="100" width="360" x="55" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="finish_condition" parent="finish_phase" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#581c87;" value="Cada Comparator espera dos condiciones:&lt;br&gt;promedio recibido + finales de los 3 DateRouter" vertex="1">
+          <mxGeometry height="100" width="360" x="470" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="query_end" parent="finish_phase" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e9d5ff;strokeColor=#7e22ce;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#581c87;" value="Cada Comparator emite&lt;br&gt;QUERY_PARTITION_END&lt;br&gt;ResultSink espera 3 y publica QUERY_END(Q5)" vertex="1">
+          <mxGeometry height="110" width="390" x="870" y="75" as="geometry" />
+        </mxCell>
+        <mxCell id="e-f1" edge="1" parent="finish_phase" source="publish_matches" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#9333ea;" target="finish_condition">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-f2" edge="1" parent="finish_phase" source="finish_condition" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#9333ea;" target="query_end">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cleanup" parent="finish_phase" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#64748b;strokeWidth=1.5;fontFamily=Helvetica;fontSize=16;fontColor=#334155;" value="Después de procesar el promedio se elimina el JSONL de la ejecución; si no existen históricos, el promedio es None y no se emiten resultados." vertex="1">
+          <mxGeometry height="70" width="790" x="255" y="225" as="geometry" />
+        </mxCell>
+        <mxCell id="e-year-h" edge="1" parent="1" source="year_decision" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#16a34a;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;" target="stats" value="Sí">
+          <mxGeometry relative="1" x="0.1953" as="geometry">
+            <Array as="points">
+              <mxPoint x="1065" y="290" />
+              <mxPoint x="530" y="290" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-year-c" edge="1" parent="1" source="year_decision" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#ea580c;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;" target="candidate_partition" value="No - 2021+">
+          <mxGeometry relative="1" x="-0.1976" as="geometry">
+            <mxPoint y="-1" as="offset" />
+            <Array as="points">
+              <mxPoint x="1190" y="270" />
+              <mxPoint x="1190" y="270" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-average-broadcast" edge="1" parent="1" source="average" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#15803d;" target="compare">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-to-results" edge="1" parent="1" source="compare" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#9333ea;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;" target="publish_matches" value="candidatos comparados">
+          <mxGeometry relative="1" x="0.145" as="geometry">
+            <Array as="points">
+              <mxPoint x="1020" y="1050" />
+              <mxPoint x="400" y="1050" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

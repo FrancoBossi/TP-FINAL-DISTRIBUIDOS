@@ -1,0 +1,102 @@
+<mxfile host="app.diagrams.net" agent="Codex">
+  <diagram id="deployment-current" name="Despliegue actual">
+    <mxGraphModel dx="2633" dy="1133" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="client" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#0f172a;" value="&lt;b&gt;Cliente(s)&lt;/b&gt;&lt;br&gt;Lee Parquet y recibe Q1–Q5" vertex="1">
+          <mxGeometry height="105" width="195" x="25" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="operator" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0f2fe;strokeColor=#0284c7;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#0f172a;" value="&lt;b&gt;Navegador de la demo&lt;/b&gt;&lt;br&gt;Métricas y estado" vertex="1">
+          <mxGeometry height="100" width="195" x="10" y="832.5" as="geometry" />
+        </mxCell>
+        <mxCell id="host" parent="1" style="swimlane;horizontal=1;startSize=44;rounded=1;html=1;whiteSpace=wrap;container=0;fillColor=#f8fafc;swimlaneFillColor=#ffffff;strokeColor=#334155;strokeWidth=2;fontFamily=Helvetica;fontSize=20;fontStyle=0;align=left;spacingLeft=14;" value="&lt;b&gt;«device» Host de la demo&lt;/b&gt;&amp;nbsp;- Docker Compose" vertex="1">
+          <mxGeometry height="1010" width="1100" x="260" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="q12" parent="host" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef2ff;strokeColor=#4f46e5;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#312e81;align=left;verticalAlign=top;spacing=14;" value="&lt;b&gt;Rama Q1 / Q2&lt;/b&gt;&lt;br&gt;&lt;br&gt;Until2020Filter ×3&lt;br&gt;Q1EnglishFilter ×3&lt;br&gt;Q2BiographyFilter ×3&lt;br&gt;ImageFetcher ×3" vertex="1">
+          <mxGeometry height="185" width="295" x="760" y="455" as="geometry" />
+        </mxCell>
+        <mxCell id="q345" parent="host" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f3ff;strokeColor=#7c3aed;strokeWidth=2;fontFamily=Helvetica;fontSize=16;fontColor=#4c1d95;align=left;verticalAlign=top;spacing=14;" value="&lt;b&gt;Rama Q3 / Q4 / Q5&lt;/b&gt;&lt;br&gt;&lt;br&gt;&lt;b&gt;Stateless ×3&lt;/b&gt;&lt;br&gt;WordExtractor - Q3WordProjector&lt;br&gt;Q4Q5WordProjector - Q5DateRouter&lt;br&gt;&lt;br&gt;&lt;b&gt;Particiones stateful ×3&lt;/b&gt;&lt;br&gt;Q3WordAggregator - Q4WordCounter&lt;br&gt;Q5StatsWorker - Q5Comparator&lt;br&gt;&lt;br&gt;&lt;b&gt;Reducers físicos ×3&lt;/b&gt;&lt;br&gt;Q4Top20Reducer - Q5AverageReducer" vertex="1">
+          <mxGeometry height="275" width="320" x="390" y="455" as="geometry" />
+        </mxCell>
+        <mxCell id="monitor" parent="host" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfeff;strokeColor=#0891b2;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#164e63;align=left;verticalAlign=top;spacing=14;" value="&lt;b&gt;Perfil opcional monitoring&lt;/b&gt;&lt;br&gt;&lt;br&gt;cAdvisor ×1  →  Prometheus ×1  →  Grafana ×1&lt;br&gt;&lt;br&gt;Prometheus scrapea containers y métricas de RabbitMQ" vertex="1">
+          <mxGeometry height="145" width="665" x="40" y="750" as="geometry" />
+        </mxCell>
+        <mxCell id="volume" parent="host" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#7c2d12;" value="&lt;b&gt;Docker volume&lt;/b&gt;&lt;br&gt;q5_candidate_buffer&lt;br&gt;subdirectorio por Comparator" vertex="1">
+          <mxGeometry height="115" width="250" x="790" y="710" as="geometry" />
+        </mxCell>
+        <mxCell id="e-volume" edge="1" parent="host" source="q345" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=block;startFill=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#ea580c;fontFamily=Helvetica;fontSize=15;labelBackgroundColor=#ffffff;" target="volume" value="JSONL">
+          <mxGeometry relative="1" x="0.28" as="geometry">
+            <Array as="points">
+              <mxPoint x="740" y="612.5" />
+              <mxPoint x="740" y="767.5" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend" parent="host" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#94a3b8;strokeWidth=1.5;fontFamily=Helvetica;fontSize=15;fontColor=#334155;align=left;spacing=10;" value="×3 representa tres containers actuales. Consumidores competidores comparten cola; las etapas stateful usan colas particionadas; los reducers distribuyen ejecuciones completas." vertex="1">
+          <mxGeometry height="65" width="985" x="40" y="920" as="geometry" />
+        </mxCell>
+        <mxCell id="rabbit" parent="host" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;strokeWidth=2;fontFamily=Helvetica;fontSize=18;fontColor=#422006;" value="&lt;b&gt;RabbitMQ ×1&lt;/b&gt;&lt;br&gt;Colas DATA/END - exchanges de control - ACK/NACK" vertex="1">
+          <mxGeometry height="145" width="480" x="310" y="230" as="geometry" />
+        </mxCell>
+        <mxCell id="e-q12" edge="1" parent="host" source="rabbit" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=block;startFill=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#4f46e5;fontFamily=Helvetica;fontSize=15;labelBackgroundColor=#ffffff;" target="q12" value="DATA / END">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-q345" edge="1" parent="host" source="rabbit" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=block;startFill=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#7c3aed;fontFamily=Helvetica;fontSize=15;labelBackgroundColor=#ffffff;" target="q345" value="DATA / END">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-scrape" edge="1" parent="host" source="monitor" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=1.5;dashed=1;strokeColor=#0891b2;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;" target="rabbit" value="scrape">
+          <mxGeometry relative="1" x="-0.0727" as="geometry">
+            <Array as="points">
+              <mxPoint x="20" y="780" />
+              <mxPoint x="20" y="320" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="gateway" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontFamily=Helvetica;fontSize=18;fontColor=#0f172a;" value="&lt;b&gt;Gateway ×1&lt;/b&gt;&lt;br&gt;TCP :5000&lt;br&gt;host :5001" vertex="1">
+          <mxGeometry height="115" width="230" x="310" y="155" as="geometry" />
+        </mxCell>
+        <mxCell id="result" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontFamily=Helvetica;fontSize=18;fontColor=#0f172a;" value="&lt;b&gt;ResultSink ×1&lt;/b&gt;&lt;br&gt;Resultados y barreras&lt;br&gt;results.&amp;lt;execution_id&amp;gt;" vertex="1">
+          <mxGeometry height="115" width="230" x="1080" y="155" as="geometry" />
+        </mxCell>
+        <mxCell id="ingress" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfdf5;strokeColor=#059669;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#064e3b;align=left;verticalAlign=top;spacing=14;" value="&lt;b&gt;Ingreso y distribución&lt;/b&gt;&lt;br&gt;&lt;br&gt;InputBatcher ×3 - particiones&lt;br&gt;Preprocessor ×3 - competidores&lt;br&gt;QueryRouter ×3 - competidores" vertex="1">
+          <mxGeometry height="145" width="315" x="300" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="wiki" parent="1" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;strokeWidth=2;fontFamily=Helvetica;fontSize=18;fontColor=#581c87;" value="&lt;b&gt;Wikimedia&lt;/b&gt;&lt;br&gt;image.content_url" vertex="1">
+          <mxGeometry height="120" width="185" x="1460" y="535" as="geometry" />
+        </mxCell>
+        <mxCell id="e-client" edge="1" parent="1" source="client" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=block;startFill=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#2563eb;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;" target="gateway" value="TCP binario">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-gateway" edge="1" parent="1" source="gateway" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=block;startFill=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#64748b;fontFamily=Helvetica;fontSize=15;labelBackgroundColor=#ffffff;" target="rabbit" value="AMQP">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-result" edge="1" parent="1" source="result" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=block;startFill=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#64748b;fontFamily=Helvetica;fontSize=15;labelBackgroundColor=#ffffff;" target="rabbit" value="AMQP">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-ingress" edge="1" parent="1" source="rabbit" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=block;startFill=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#059669;fontFamily=Helvetica;fontSize=15;labelBackgroundColor=#ffffff;" target="ingress" value="DATA / END">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-wiki" edge="1" parent="1" source="q12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#9333ea;fontFamily=Helvetica;fontSize=15;labelBackgroundColor=#ffffff;" target="wiki" value="HTTPS directo - solo ImageFetcher">
+          <mxGeometry relative="1" x="-0.1429" y="15" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="1385" y="595" />
+              <mxPoint x="1385" y="595" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-browser" edge="1" parent="1" source="operator" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=block;startFill=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#0284c7;fontFamily=Helvetica;fontSize=15;labelBackgroundColor=#ffffff;" target="monitor" value="HTTP :3000">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-admin" edge="1" parent="1" source="operator" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=1.5;dashed=1;strokeColor=#d97706;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;" target="rabbit" value="RabbitMQ UI">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="100" y="340" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
