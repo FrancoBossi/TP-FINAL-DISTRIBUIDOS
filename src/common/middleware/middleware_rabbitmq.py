@@ -69,7 +69,7 @@ class _MessageMiddlewareRabbitMQBase:
         if self._channel.is_closed:
             raise MessageMiddlewareMessageError("Channel to RabbitMQ is closed")
 
-    def start_consuming(self, on_message_callback) -> None:
+    def start_consuming(self, on_message_callback, on_idle=None) -> None:
         self._check_connection()
         if self._stop_requested.is_set():
             self._stop_requested.clear()
@@ -100,9 +100,22 @@ class _MessageMiddlewareRabbitMQBase:
                 auto_ack=False,
             )
             try:
-                self._channel.start_consuming()
+                if on_idle is None:
+                    self._channel.start_consuming()
+                else:
+                    while not self._stop_requested.is_set():
+                        self._connection.process_data_events(time_limit=0.1)
+                        if self._stop_requested.is_set():
+                            break
+                        if not self._stop_requested.is_set():
+                            on_idle()
             finally:
                 self._stop_requested.clear()
+
+    def drain_pending(self) -> None:
+        """Fence assigned deliveries, then dispatch them on their owner thread."""
+        self._channel.queue_declare(queue=self._queue_name, passive=True)
+        self._connection.process_data_events(time_limit=0)
 
     def stop_consuming(self) -> None:
         self._stop_requested.set()

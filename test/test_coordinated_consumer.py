@@ -25,7 +25,7 @@ class TestCoordinatedConsumer(unittest.TestCase):
         ack = Mock()
         nack = Mock()
 
-        def consume_input(middleware_callback):
+        def consume_input(middleware_callback, on_idle=None):
             middleware_callback(self.message.serialize(), ack, nack)
             self.consumer.stop_consuming()
 
@@ -36,54 +36,50 @@ class TestCoordinatedConsumer(unittest.TestCase):
         on_message.assert_called_once_with(self.message, ack, nack)
         on_control_message.assert_not_called()
 
-    def test_processes_control_message_after_pausing_data(self):
-        input_started = Event()
-        input_stopped = Event()
-        control_ack = Mock()
-        control_nack = Mock()
+    def test_control_waits_for_prefetched_data_without_cancelling_consumer(self):
+        control_received = Event()
+        events = []
+        ack = Mock()
+        nack = Mock()
 
-        def consume_input(_middleware_callback):
-            input_started.set()
-            self.assertTrue(input_stopped.wait(timeout=1))
+        def consume_control(callback):
+            callback(self.message.serialize(), ack, nack)
+            control_received.set()
 
-        def stop_input():
-            input_stopped.set()
+        def consume_input(callback, on_idle):
+            self.assertTrue(control_received.wait(timeout=1))
+            self.input_queue.stop_consuming.assert_not_called()
+            on_idle()
 
-        def consume_control(middleware_callback):
-            self.assertTrue(input_started.wait(timeout=1))
-            middleware_callback(
-                self.message.serialize(),
-                control_ack,
-                control_nack,
-            )
-
-        self.input_queue.start_consuming.side_effect = consume_input
-        self.input_queue.stop_consuming.side_effect = stop_input
         self.control_exchange_input.start_consuming.side_effect = consume_control
-
-        on_control_message = Mock(
-            side_effect=lambda _message: self.consumer.stop_consuming()
+        self.input_queue.start_consuming.side_effect = consume_input
+        self.input_queue.drain_pending.side_effect = lambda: events.append("data")
+        self.consumer.start_consuming(
+            lambda *args: events.append("data"),
+            lambda message: events.append("end"),
         )
-
-        self.consumer.start_consuming(Mock(), on_control_message)
-
-        on_control_message.assert_called_once_with(self.message)
-        control_ack.assert_called_once()
-        control_nack.assert_not_called()
+        self.assertEqual(events, ["data", "end"])
+        ack.assert_called_once()
+        nack.assert_not_called()
 
     def test_propagates_control_consumer_error_to_data_thread(self):
-        input_stopped = Event()
+        failed = Event()
         error = RuntimeError("control unavailable")
 
-        self.control_exchange_input.start_consuming.side_effect = error
-        self.input_queue.stop_consuming.side_effect = input_stopped.set
-        self.input_queue.start_consuming.side_effect = lambda _callback: (
-            self.assertTrue(input_stopped.wait(timeout=1))
-        )
+        def consume_control(callback):
+            failed.set()
+            raise error
 
+        def consume_input(callback, on_idle):
+            self.assertTrue(failed.wait(timeout=1))
+            # Wait for the control thread to record its failure.
+            self.consumer._control_error = error
+            on_idle()
+
+        self.control_exchange_input.start_consuming.side_effect = consume_control
+        self.input_queue.start_consuming.side_effect = consume_input
         with self.assertRaises(RuntimeError) as raised:
             self.consumer.start_consuming(Mock(), Mock())
-
         self.assertIs(raised.exception, error)
 
     def test_stops_and_closes_both_input_connections(self):
