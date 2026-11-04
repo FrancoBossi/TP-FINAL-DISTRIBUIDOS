@@ -1,0 +1,198 @@
+<?xml version="1.0"?>
+<mxfile host="app.diagrams.net" agent="Codex">
+  <diagram id="activity-q1-barrier" name="Actividad - Barrera Q1">
+    <mxGraphModel dx="1600" dy="1900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="1530" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="lane_data" parent="1" style="swimlane;horizontal=1;startSize=44;rounded=1;html=1;container=0;fillColor=#eff6ff;swimlaneFillColor=#ffffff;strokeColor=#2563eb;strokeWidth=2;fontFamily=Helvetica;fontSize=19;fontStyle=1;align=left;spacingLeft=14;" value="1. Cola DATA - una r&#xE9;plica de Q1" vertex="1">
+          <mxGeometry height="600" width="1100" x="50" y="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane_control" parent="1" style="swimlane;horizontal=1;startSize=44;rounded=1;html=1;container=0;fillColor=#fff7ed;swimlaneFillColor=#ffffff;strokeColor=#ea580c;strokeWidth=2;fontFamily=Helvetica;fontSize=19;fontStyle=1;align=left;spacingLeft=14;" value="2. Exchange de control - barrera local de cada r&#xE9;plica" vertex="1">
+          <mxGeometry height="500" width="1100" x="50" y="700" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane_sink" parent="1" style="swimlane;horizontal=1;startSize=44;rounded=1;html=1;container=0;fillColor=#faf5ff;swimlaneFillColor=#ffffff;strokeColor=#9333ea;strokeWidth=2;fontFamily=Helvetica;fontSize=19;fontStyle=1;align=left;spacingLeft=14;" value="3. ResultSink - barrera global de Query 1" vertex="1">
+          <mxGeometry height="270" width="1100" x="50" y="1220" as="geometry"/>
+        </mxCell>
+        <mxCell id="start" parent="1" style="ellipse;html=1;aspect=fixed;fillColor=#0f172a;strokeColor=#0f172a;" value="" vertex="1">
+          <mxGeometry height="24" width="24" x="588" y="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="receive" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontColor=#0f172a;" value="Recibir mensaje desde&lt;br&gt;&lt;b&gt;q1.input&lt;/b&gt;" vertex="1">
+          <mxGeometry height="66" width="260" x="470" y="185" as="geometry"/>
+        </mxCell>
+        <mxCell id="type_decision" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#334155;strokeWidth=2;fontFamily=Helvetica;fontSize=16;fontColor=#0f172a;" value="Tipo de&lt;br&gt;mensaje" vertex="1">
+          <mxGeometry height="100" width="150" x="525" y="280" as="geometry"/>
+        </mxCell>
+        <mxCell id="process_batch" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;strokeWidth=2;fontFamily=Helvetica;fontSize=16;fontColor=#14532d;" value="Procesar&lt;br&gt;&lt;b&gt;Q1_CANDIDATE_BATCH&lt;/b&gt;" vertex="1">
+          <mxGeometry height="70" width="285" x="95" y="395" as="geometry"/>
+        </mxCell>
+        <mxCell id="publish_results" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;strokeWidth=2;fontFamily=Helvetica;fontSize=16;fontColor=#14532d;" value="Publicar RESULT por cada&lt;br&gt;art&#xED;culo en ingl&#xE9;s" vertex="1">
+          <mxGeometry height="66" width="285" x="95" y="485" as="geometry"/>
+        </mxCell>
+        <mxCell id="ack_batch" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontFamily=Helvetica;fontSize=16;fontColor=#0f172a;" value="Ejecutar ACK de consumo&lt;br&gt;del batch" vertex="1">
+          <mxGeometry height="60" width="285" x="95" y="565" as="geometry"/>
+        </mxCell>
+        <mxCell id="validate_end" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;strokeWidth=2;fontFamily=Helvetica;fontSize=16;fontColor=#7c2d12;" value="Validar stage y partition_id&lt;br&gt;del PARTITION_END" vertex="1">
+          <mxGeometry height="68" width="285" x="460" y="405" as="geometry"/>
+        </mxCell>
+        <mxCell id="broadcast_end" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;strokeWidth=2;fontFamily=Helvetica;fontSize=16;fontColor=#7c2d12;" value="Publicar PARTITION_END&lt;br&gt;en &lt;b&gt;q1.control&lt;/b&gt;" vertex="1">
+          <mxGeometry height="66" width="285" x="460" y="490" as="geometry"/>
+        </mxCell>
+        <mxCell id="ack_data_end" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontFamily=Helvetica;fontSize=16;fontColor=#0f172a;" value="Ejecutar ACK de consumo&lt;br&gt;en la cola DATA" vertex="1">
+          <mxGeometry height="60" width="285" x="460" y="570" as="geometry"/>
+        </mxCell>
+        <mxCell id="nack_invalid" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#dc2626;strokeWidth=2;fontFamily=Helvetica;fontSize=16;fontColor=#7f1d1d;" value="Rechazar mensaje y ejecutar&lt;br&gt;NACK de consumo" vertex="1">
+          <mxGeometry height="68" width="260" x="835" y="410" as="geometry"/>
+        </mxCell>
+        <mxCell id="control_receive" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;strokeWidth=2;fontFamily=Helvetica;fontSize=16;fontColor=#7c2d12;" value="Cada r&#xE9;plica recibe una copia&lt;br&gt;desde &lt;b&gt;q1.control&lt;/b&gt;" vertex="1">
+          <mxGeometry height="68" width="300" x="450" y="770" as="geometry"/>
+        </mxCell>
+        <mxCell id="control_enqueue" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;strokeWidth=2;fontFamily=Helvetica;fontSize=16;fontColor=#7c2d12;" value="Encolar control localmente y&lt;br&gt;ejecutar ACK en su cola de control" vertex="1">
+          <mxGeometry height="68" width="300" x="450" y="860" as="geometry"/>
+        </mxCell>
+        <mxCell id="control_add" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#ffedd5;strokeColor=#ea580c;strokeWidth=2;fontFamily=Helvetica;fontSize=16;fontColor=#7c2d12;" value="Agregar partition_id al set&lt;br&gt;de la execution_id" vertex="1">
+          <mxGeometry height="68" width="300" x="450" y="950" as="geometry"/>
+        </mxCell>
+        <mxCell id="local_decision" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#ea580c;strokeWidth=2;fontFamily=Helvetica;fontSize=15;fontColor=#7c2d12;" value="&#xBF;Set contiene&lt;br&gt;{0, 1, 2}?" vertex="1">
+          <mxGeometry height="105" width="165" x="518" y="1040" as="geometry"/>
+        </mxCell>
+        <mxCell id="wait_local" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#64748b;strokeWidth=2;fontFamily=Helvetica;fontSize=15;fontColor=#334155;" value="Conservar el set y esperar&lt;br&gt;el siguiente control" vertex="1">
+          <mxGeometry height="66" width="260" x="815" y="1060" as="geometry"/>
+        </mxCell>
+        <mxCell id="publish_partition_end" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#e9d5ff;strokeColor=#9333ea;strokeWidth=2;fontFamily=Helvetica;fontSize=15;fontColor=#581c87;" value="Publicar QUERY_PARTITION_END&lt;br&gt;con partition_id propio" vertex="1">
+          <mxGeometry height="70" width="300" x="135" y="1050" as="geometry"/>
+        </mxCell>
+        <mxCell id="clear_local" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;strokeWidth=2;fontFamily=Helvetica;fontSize=15;fontColor=#581c87;" value="Eliminar el set local&lt;br&gt;de la ejecuci&#xF3;n" vertex="1">
+          <mxGeometry height="62" width="300" x="135" y="1135" as="geometry"/>
+        </mxCell>
+        <mxCell id="sink_register" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;strokeWidth=2;fontFamily=Helvetica;fontSize=16;fontColor=#581c87;" value="Registrar partition_id de Q1&lt;br&gt;en la barrera de ResultSink" vertex="1">
+          <mxGeometry height="68" width="300" x="135" y="1280" as="geometry"/>
+        </mxCell>
+        <mxCell id="sink_decision" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9333ea;strokeWidth=2;fontFamily=Helvetica;fontSize=15;fontColor=#581c87;" value="&#xBF;Finalizaron las&lt;br&gt;3 r&#xE9;plicas Q1?" vertex="1">
+          <mxGeometry height="110" width="180" x="510" y="1260" as="geometry"/>
+        </mxCell>
+        <mxCell id="sink_wait" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#64748b;strokeWidth=2;fontFamily=Helvetica;fontSize=15;fontColor=#334155;" value="Conservar la barrera y esperar&lt;br&gt;otro QUERY_PARTITION_END" vertex="1">
+          <mxGeometry height="68" width="285" x="805" y="1282" as="geometry"/>
+        </mxCell>
+        <mxCell id="publish_query_end" parent="1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;strokeWidth=2;fontFamily=Helvetica;fontSize=17;fontStyle=1;fontColor=#14532d;" value="Publicar QUERY_END(Q1)" vertex="1">
+          <mxGeometry height="64" width="280" x="460" y="1400" as="geometry"/>
+        </mxCell>
+        <mxCell id="final_batch" parent="1" style="ellipse;html=1;aspect=fixed;fillColor=#ffffff;strokeColor=#0f172a;strokeWidth=2;" value="" vertex="1">
+          <mxGeometry height="28" width="28" x="223" y="650" as="geometry"/>
+        </mxCell>
+        <mxCell id="final_batch_inner" parent="1" style="ellipse;html=1;aspect=fixed;fillColor=#0f172a;strokeColor=#0f172a;" value="" vertex="1">
+          <mxGeometry height="14" width="14" x="230" y="657" as="geometry"/>
+        </mxCell>
+        <mxCell id="final_invalid" parent="1" style="ellipse;html=1;aspect=fixed;fillColor=#ffffff;strokeColor=#0f172a;strokeWidth=2;" value="" vertex="1">
+          <mxGeometry height="28" width="28" x="951" y="515" as="geometry"/>
+        </mxCell>
+        <mxCell id="final_invalid_inner" parent="1" style="ellipse;html=1;aspect=fixed;fillColor=#0f172a;strokeColor=#0f172a;" value="" vertex="1">
+          <mxGeometry height="14" width="14" x="958" y="522" as="geometry"/>
+        </mxCell>
+        <mxCell id="final_wait_local" parent="1" style="ellipse;html=1;aspect=fixed;fillColor=#ffffff;strokeColor=#0f172a;strokeWidth=2;" value="" vertex="1">
+          <mxGeometry height="28" width="28" x="931" y="1150" as="geometry"/>
+        </mxCell>
+        <mxCell id="final_wait_local_inner" parent="1" style="ellipse;html=1;aspect=fixed;fillColor=#0f172a;strokeColor=#0f172a;" value="" vertex="1">
+          <mxGeometry height="14" width="14" x="938" y="1157" as="geometry"/>
+        </mxCell>
+        <mxCell id="final_wait_sink" parent="1" style="ellipse;html=1;aspect=fixed;fillColor=#ffffff;strokeColor=#0f172a;strokeWidth=2;" value="" vertex="1">
+          <mxGeometry height="28" width="28" x="933" y="1390" as="geometry"/>
+        </mxCell>
+        <mxCell id="final_wait_sink_inner" parent="1" style="ellipse;html=1;aspect=fixed;fillColor=#0f172a;strokeColor=#0f172a;" value="" vertex="1">
+          <mxGeometry height="14" width="14" x="940" y="1397" as="geometry"/>
+        </mxCell>
+        <mxCell id="final_success" parent="1" style="ellipse;html=1;aspect=fixed;fillColor=#ffffff;strokeColor=#0f172a;strokeWidth=2;" value="" vertex="1">
+          <mxGeometry height="30" width="30" x="585" y="1480" as="geometry"/>
+        </mxCell>
+        <mxCell id="final_success_inner" parent="1" style="ellipse;html=1;aspect=fixed;fillColor=#0f172a;strokeColor=#0f172a;" value="" vertex="1">
+          <mxGeometry height="16" width="16" x="592" y="1487" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_start" edge="1" parent="1" source="start" target="receive" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#334155;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_receive" edge="1" parent="1" source="receive" target="type_decision" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#334155;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_type_batch" edge="1" parent="1" source="type_decision" target="process_batch" value="[Q1_CANDIDATE_BATCH]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#16a34a;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="420" y="330"/>
+              <mxPoint x="238" y="330"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_type_end" edge="1" parent="1" source="type_decision" target="validate_end" value="[PARTITION_END]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#ea580c;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_type_invalid" edge="1" parent="1" source="type_decision" target="nack_invalid" value="[Otro]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#dc2626;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="780" y="330"/>
+              <mxPoint x="965" y="330"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_batch_results" edge="1" parent="1" source="process_batch" target="publish_results" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#16a34a;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_results_ack" edge="1" parent="1" source="publish_results" target="ack_batch" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#16a34a;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_ack_batch_final" edge="1" parent="1" source="ack_batch" target="final_batch" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#334155;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_validate_broadcast" edge="1" parent="1" source="validate_end" target="broadcast_end" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#ea580c;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_broadcast_ack" edge="1" parent="1" source="broadcast_end" target="ack_data_end" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#ea580c;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_ack_control" edge="1" parent="1" source="ack_data_end" target="control_receive" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#ea580c;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;" value="Broadcast a las 3 r&#xE9;plicas">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_invalid_final" edge="1" parent="1" source="nack_invalid" target="final_invalid" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#dc2626;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_control_enqueue" edge="1" parent="1" source="control_receive" target="control_enqueue" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#ea580c;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_enqueue_add" edge="1" parent="1" source="control_enqueue" target="control_add" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#ea580c;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_add_decision" edge="1" parent="1" source="control_add" target="local_decision" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#ea580c;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_local_no" edge="1" parent="1" source="local_decision" target="wait_local" value="[No]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#64748b;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_wait_local_final" edge="1" parent="1" source="wait_local" target="final_wait_local" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#64748b;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_local_yes" edge="1" parent="1" source="local_decision" target="publish_partition_end" value="[S&#xED;]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#9333ea;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_publish_clear" edge="1" parent="1" source="publish_partition_end" target="clear_local" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#9333ea;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_clear_sink" edge="1" parent="1" source="clear_local" target="sink_register" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#9333ea;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_sink_decision" edge="1" parent="1" source="sink_register" target="sink_decision" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#9333ea;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_sink_no" edge="1" parent="1" source="sink_decision" target="sink_wait" value="[No]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#64748b;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_sink_wait_final" edge="1" parent="1" source="sink_wait" target="final_wait_sink" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#64748b;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_sink_yes" edge="1" parent="1" source="sink_decision" target="publish_query_end" value="[S&#xED;]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#16a34a;fontFamily=Helvetica;fontSize=14;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_success_final" edge="1" parent="1" source="publish_query_end" target="final_success" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#16a34a;">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

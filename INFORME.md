@@ -123,6 +123,30 @@ condiciones necesarias para cerrar la consulta.
 
 ![Actividad distribuida de la Query 5](docs/diagramas/actividades/Actividad-Q5.png)
 
+Los dos diagramas anteriores priorizan una lectura arquitectónica del flujo. Los
+dos siguientes complementan esa vista con notación propia de diagramas de
+actividades UML: nodo inicial, acciones, decisiones con guardas, particiones de
+responsabilidad y nodos finales.
+
+El primer diagrama detalla la coordinación de cierre de Query 1. Distingue el
+`PARTITION_END` consumido desde la cola DATA de la copia que cada réplica recibe
+mediante el exchange de control. La barrera local de cada réplica espera los
+tres `partition_id` de entrada antes de publicar su propio
+`QUERY_PARTITION_END`; después, ResultSink aplica una segunda barrera y publica
+`QUERY_END(Q1)` únicamente cuando finalizaron las tres réplicas de Q1.
+
+![Actividad UML de las barreras de Query 1](docs/diagramas/actividades/Actividad-Barrera-Q1.png)
+
+El segundo diagrama sigue el recorrido de un artículo desde el cliente hasta un
+posible resultado de Query 2. Explicita que el ACK TCP del ingreso se envía
+después de publicar `ROUTED_ARTICLE`, que InputBatcher puede conservar un batch
+abierto sin enviarlo todavía y que un candidato sin `image_url`, o cuya descarga
+falla, se omite de manera ordenada. En la entrega del resultado también muestra
+el orden de confirmación: el cliente persiste el registro y responde por TCP
+antes de que Gateway confirme el consumo del mensaje en RabbitMQ.
+
+![Actividad UML del recorrido de un artículo en Query 2](docs/diagramas/actividades/Actividad-Flujo-Q2.png)
+
 
 #### Vista de procesos - Secuencia
 
