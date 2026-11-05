@@ -38,7 +38,6 @@ class CoordinatedConsumer:
             try:
                 message = Message.deserialize(body)
                 self._pending_control_messages.put(message)
-                self._input_queue.stop_consuming()
             except Exception:
                 nack()
                 raise
@@ -49,7 +48,6 @@ class CoordinatedConsumer:
             self._control_exchange_input.start_consuming(enqueue_control_message)
         except Exception as error:
             self._control_error = error
-            self._input_queue.stop_consuming()
 
     def start_consuming(
         self,
@@ -74,23 +72,29 @@ class CoordinatedConsumer:
         )
         control_thread.start()
 
-        try:
+        def process_pending_control() -> None:
+            if self._control_error is not None:
+                raise self._control_error
+            pending = []
             while not self._stopped:
-                self._input_queue.start_consuming(deserialize_message)
-
-                if self._control_error is not None:
-                    raise self._control_error
-
+                try:
+                    pending.append(self._pending_control_messages.get_nowait())
+                except Empty:
+                    break
+            if not pending:
+                return
+            # Snapshot controls BEFORE the broker fence: controls arriving during
+            # the fence belong to the next pass and may precede newer deliveries.
+            self._input_queue.drain_pending()
+            for message in pending:
                 if self._stopped:
                     break
+                on_control_message(message)
 
-                while not self._stopped:
-                    try:
-                        message = self._pending_control_messages.get_nowait()
-                    except Empty:
-                        break
-
-                    on_control_message(message)
+        try:
+            self._input_queue.start_consuming(
+                deserialize_message, on_idle=process_pending_control
+            )
         finally:
             self._control_exchange_input.stop_consuming()
             control_thread.join()

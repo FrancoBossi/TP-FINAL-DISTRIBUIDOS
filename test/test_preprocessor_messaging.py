@@ -55,7 +55,7 @@ class TestPreprocessorMessaging(unittest.TestCase):
             reply_queue="results.execution-123",
         )
 
-        def consume_input(middleware_callback):
+        def consume_input(middleware_callback, on_idle=None):
             middleware_callback(message.serialize(), ack, nack)
             self.messaging.stop_consuming()
 
@@ -80,9 +80,10 @@ class TestPreprocessorMessaging(unittest.TestCase):
             reply_queue="results.execution-123",
         )
 
-        def consume_input(_middleware_callback):
+        def consume_input(_middleware_callback, on_idle):
             input_started.set()
             self.assertTrue(input_stopped.wait(timeout=1))
+            on_idle()
 
         def stop_input():
             input_stopped.set()
@@ -94,6 +95,7 @@ class TestPreprocessorMessaging(unittest.TestCase):
                 control_ack,
                 control_nack,
             )
+            input_stopped.set()
 
         self.input_queue.start_consuming.side_effect = consume_input
         self.input_queue.stop_consuming.side_effect = stop_input

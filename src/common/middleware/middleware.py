@@ -19,7 +19,7 @@ class MessageMiddlewareCloseError(Exception):
 
 class MessageMiddleware(ABC):
     @abstractmethod
-    def start_consuming(self, on_message_callback) -> None:
+    def start_consuming(self, on_message_callback, on_idle=None) -> None:
         pass
 
     @abstractmethod
@@ -36,6 +36,10 @@ class MessageMiddleware(ABC):
 
 
 class MessageMiddlewareQueue(MessageMiddleware):
+    def drain_pending(self) -> None:
+        """Dispatch deliveries assigned before an owner-thread broker fence."""
+        raise NotImplementedError
+
     @abstractmethod
     def __init__(self, host: str, queue_name: str) -> None:
         pass

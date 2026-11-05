@@ -42,7 +42,7 @@ services:
       INPUT_BATCHER_QUEUE_PREFIX: ${INPUT_BATCHER_QUEUE_PREFIX:-input_batcher.input}
       INPUT_BATCHER_PARTITION_ID: "0"
       OUTPUT_QUEUE: preprocessor.input
-      MAX_BATCH_BYTES: "${MAX_BATCH_BYTES:-1048576}"
+      MAX_BATCH_BYTES: "${MAX_BATCH_BYTES:-10485760}"
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -58,7 +58,7 @@ services:
       INPUT_BATCHER_QUEUE_PREFIX: ${INPUT_BATCHER_QUEUE_PREFIX:-input_batcher.input}
       INPUT_BATCHER_PARTITION_ID: "1"
       OUTPUT_QUEUE: preprocessor.input
-      MAX_BATCH_BYTES: "${MAX_BATCH_BYTES:-1048576}"
+      MAX_BATCH_BYTES: "${MAX_BATCH_BYTES:-10485760}"
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -74,7 +74,7 @@ services:
       INPUT_BATCHER_QUEUE_PREFIX: ${INPUT_BATCHER_QUEUE_PREFIX:-input_batcher.input}
       INPUT_BATCHER_PARTITION_ID: "2"
       OUTPUT_QUEUE: preprocessor.input
-      MAX_BATCH_BYTES: "${MAX_BATCH_BYTES:-1048576}"
+      MAX_BATCH_BYTES: "${MAX_BATCH_BYTES:-10485760}"
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -684,7 +684,7 @@ services:
       PARTITION_ID: "0"
       DATE_ROUTER_PARTITION_COUNT: "3"
     volumes:
-      - q5_candidate_buffer:/var/lib/q5-candidates
+      - ./q5_candidate_buffer:/var/lib/q5-candidates
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -703,7 +703,7 @@ services:
       PARTITION_ID: "1"
       DATE_ROUTER_PARTITION_COUNT: "3"
     volumes:
-      - q5_candidate_buffer:/var/lib/q5-candidates
+      - ./q5_candidate_buffer:/var/lib/q5-candidates
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -722,7 +722,7 @@ services:
       PARTITION_ID: "2"
       DATE_ROUTER_PARTITION_COUNT: "3"
     volumes:
-      - q5_candidate_buffer:/var/lib/q5-candidates
+      - ./q5_candidate_buffer:/var/lib/q5-candidates
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -894,6 +894,10 @@ services:
       INPUT_QUEUE: image_fetcher.input
       OUTPUT_QUEUE: result_sink.input
       CONTROL_EXCHANGE: image_fetcher.control
+      IMAGE_FETCH_TIMEOUT: "${IMAGE_FETCH_TIMEOUT:-10}"
+      IMAGE_FETCH_MAX_ATTEMPTS: "${IMAGE_FETCH_MAX_ATTEMPTS:-5}"
+      IMAGE_FETCH_RETRY_DELAY: "${IMAGE_FETCH_RETRY_DELAY:-2}"
+      IMAGE_FETCH_REQUEST_DELAY: "${IMAGE_FETCH_REQUEST_DELAY:-1}"
       PARTITION_ID: "0"
       BIOGRAPHY_FILTER_PARTITION_COUNT: "3"
     depends_on:
@@ -911,24 +915,11 @@ services:
       INPUT_QUEUE: image_fetcher.input
       OUTPUT_QUEUE: result_sink.input
       CONTROL_EXCHANGE: image_fetcher.control
+      IMAGE_FETCH_TIMEOUT: "${IMAGE_FETCH_TIMEOUT:-10}"
+      IMAGE_FETCH_MAX_ATTEMPTS: "${IMAGE_FETCH_MAX_ATTEMPTS:-5}"
+      IMAGE_FETCH_RETRY_DELAY: "${IMAGE_FETCH_RETRY_DELAY:-2}"
+      IMAGE_FETCH_REQUEST_DELAY: "${IMAGE_FETCH_REQUEST_DELAY:-1}"
       PARTITION_ID: "1"
-      BIOGRAPHY_FILTER_PARTITION_COUNT: "3"
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-
-  image-fetcher-2:
-    stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
-    build:
-      context: .
-      dockerfile: src/q2/image_fetcher/Dockerfile
-    environment:
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      MOM_HOST: rabbitmq
-      INPUT_QUEUE: image_fetcher.input
-      OUTPUT_QUEUE: result_sink.input
-      CONTROL_EXCHANGE: image_fetcher.control
-      PARTITION_ID: "2"
       BIOGRAPHY_FILTER_PARTITION_COUNT: "3"
     depends_on:
       rabbitmq:
@@ -944,7 +935,7 @@ services:
       MOM_HOST: rabbitmq
       INPUT_QUEUE: result_sink.input
       Q1_PARTITION_COUNT: "${Q1_PARTITION_COUNT:-3}"
-      Q2_PARTITION_COUNT: "${Q2_PARTITION_COUNT:-3}"
+      Q2_PARTITION_COUNT: "${Q2_PARTITION_COUNT:-2}"
       Q3_PARTITION_COUNT: "${Q3_PARTITION_COUNT:-3}"
       Q4_PARTITION_COUNT: "${Q4_PARTITION_COUNT:-1}"
       Q5_PARTITION_COUNT: "${Q5_PARTITION_COUNT:-3}"
@@ -1025,4 +1016,3 @@ services:
 volumes:
   prometheus_data:
   grafana_data:
-  q5_candidate_buffer:

@@ -81,7 +81,7 @@ class TestBatchAccumulator(unittest.TestCase):
         self.assertEqual(second_batch.articles, [second_execution.article])
         self.assertIsNone(accumulator.flush(self._end("execution-1")))
 
-    def test_rejects_invalid_limit_and_oversized_article(self):
+    def test_rejects_invalid_limit_and_preserves_oversized_article(self):
         with self.assertRaises(ValueError):
             BatchAccumulator(0)
 
@@ -93,8 +93,10 @@ class TestBatchAccumulator(unittest.TestCase):
         )
         accumulator = BatchAccumulator(len(single_article_batch.serialize()) - 1)
 
-        with self.assertRaisesRegex(ValueError, "exceeds batch size"):
-            accumulator.add_article(article)
+        self.assertIsNone(accumulator.add_article(article))
+        self.assertEqual(
+            accumulator.flush(self._end(article.execution_id)), single_article_batch
+        )
 
     def test_nested_unicode_articles_match_exact_wire_size_at_boundary(self):
         first = RoutedArticleMessage(
@@ -127,15 +129,29 @@ class TestBatchAccumulator(unittest.TestCase):
                     self.assertLessEqual(len(published.serialize()), limit)
                 self.assertLessEqual(len(remaining.serialize()), limit)
 
-    def test_oversized_article_does_not_change_pending_batch(self):
+    def test_oversized_articles_are_isolated_without_losing_pending_articles(self):
         first = self._article("A")
+        oversized = self._article("X" * 1024)
+        another_oversized = self._article("Y" * 1024)
+        last = self._article("B")
         accumulator = BatchAccumulator(256)
-        accumulator.add_article(first)
-        with self.assertRaisesRegex(ValueError, "exceeds batch size"):
-            accumulator.add_article(self._article("X" * 1024))
-        accumulator.add_article(self._article("B"))
-        batch = accumulator.flush(self._end(first.execution_id))
-        self.assertEqual(batch.articles, [{"name": "A"}, {"name": "B"}])
+        self.assertIsNone(accumulator.add_article(first))
+        batches = [
+            accumulator.add_article(oversized),
+            accumulator.add_article(another_oversized),
+            accumulator.add_article(last),
+            accumulator.flush(self._end(first.execution_id)),
+        ]
+        self.assertEqual(
+            [batch.articles for batch in batches],
+            [
+                [first.article],
+                [oversized.article],
+                [another_oversized.article],
+                [last.article],
+            ],
+        )
+        self.assertIsNone(accumulator.flush(self._end(first.execution_id)))
 
 
 if __name__ == "__main__":

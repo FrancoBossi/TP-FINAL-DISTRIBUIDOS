@@ -12,6 +12,27 @@ from common.middleware.middleware import MessageMiddlewareDisconnectedError
 
 class TestMessageMiddlewareQueueRabbitMQ(unittest.TestCase):
     @patch("common.middleware.middleware_rabbitmq.pika.BlockingConnection")
+    def test_drain_fences_broker_before_dispatch_without_cancelling(self, connect):
+        connection = connect.return_value
+        channel = connection.channel.return_value
+        queue = MessageMiddlewareQueueRabbitMQ("rabbitmq", "input")
+        events = Mock()
+        events.attach_mock(channel.queue_declare, "fence")
+        events.attach_mock(connection.process_data_events, "dispatch")
+        events.reset_mock()
+
+        queue.drain_pending()
+
+        self.assertEqual(
+            events.mock_calls,
+            [
+                call.fence(queue="input", passive=True),
+                call.dispatch(time_limit=0),
+            ],
+        )
+        channel.stop_consuming.assert_not_called()
+
+    @patch("common.middleware.middleware_rabbitmq.pika.BlockingConnection")
     def test_configures_bounded_startup_retries(self, connect):
         MessageMiddlewareQueueRabbitMQ(host="rabbitmq", queue_name="input")
 

@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 from urllib.error import HTTPError, URLError
 
 from infra.wikimedia import download_image_bytes
@@ -16,6 +16,7 @@ class TestWikimedia(unittest.TestCase):
         ) as urlopen:
             result = download_image_bytes(
                 "https://example.com/image.jpg",
+                request_delay=0,
             )
 
         self.assertEqual(result, b"image bytes")
@@ -40,6 +41,7 @@ class TestWikimedia(unittest.TestCase):
         ):
             result = download_image_bytes(
                 "https://example.com/missing.jpg",
+                request_delay=0,
             )
 
         self.assertIsNone(result)
@@ -63,6 +65,7 @@ class TestWikimedia(unittest.TestCase):
         ):
             result = download_image_bytes(
                 "https://example.com/image.jpg",
+                request_delay=0,
                 retry_delay=0,
             )
 
@@ -90,12 +93,43 @@ class TestWikimedia(unittest.TestCase):
         ):
             result = download_image_bytes(
                 "https://example.com/image.jpg",
+                request_delay=0,
                 retry_delay=0,
             )
 
         self.assertEqual(result, b"image bytes")
         self.assertEqual(urlopen.call_count, 2)
         sleep.assert_called_once_with(0)
+
+    def test_default_attempts_and_delays_pace_all_requests(self):
+        events = []
+
+        def fail_request(*args, **kwargs):
+            events.append("request")
+            raise URLError("temporary failure")
+
+        with (
+            patch("infra.wikimedia.urlopen", side_effect=fail_request) as urlopen,
+            patch(
+                "infra.wikimedia.sleep", side_effect=lambda delay: events.append(delay)
+            ),
+        ):
+            self.assertIsNone(download_image_bytes("https://example.com/image.jpg"))
+
+        self.assertEqual(urlopen.call_count, 5)
+        self.assertEqual(events, [0.5, "request", 1.0] * 4 + [0.5, "request"])
+
+    def test_paces_requests_across_separate_images(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b"image bytes"
+        with (
+            patch("infra.wikimedia.urlopen", return_value=response),
+            patch("infra.wikimedia.sleep") as sleep,
+        ):
+            download_image_bytes("https://example.com/first.jpg")
+            download_image_bytes("https://example.com/second.jpg")
+
+        self.assertEqual(sleep.call_args_list, [call(0.5), call(0.5)])
 
     def test_returns_none_after_exhausting_retries(self):
         with (
@@ -108,6 +142,7 @@ class TestWikimedia(unittest.TestCase):
         ):
             result = download_image_bytes(
                 "https://example.com/image.jpg",
+                request_delay=0,
                 max_attempts=2,
                 retry_delay=0,
             )
