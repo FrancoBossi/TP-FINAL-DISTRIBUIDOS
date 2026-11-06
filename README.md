@@ -2,7 +2,7 @@
 
 Trabajo práctico grupal de Sistemas Distribuidos. El sistema procesa artículos de Wikipedia en inglés y francés y genera los resultados de cinco consultas mediante una arquitectura distribuida basada en RabbitMQ.
 
-> El proyecto se encuentra en desarrollo. Actualmente están implementadas la ejecución serial de referencia, la lectura del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware y el pipeline distribuido Q1-Q5. Los componentes replicables y las etapas stateful de las cinco consultas se despliegan con tres réplicas o particiones, salvo Gateway y ResultSink, que permanecen como instancias únicas. El pipeline funcional completo fue validado con 50.000 artículos y sus cinco archivos coinciden con la referencia serial. El cierre por señales está implementado; la recuperación después de reinicios queda para la etapa de tolerancia a fallos.
+> El hito de escalabilidad está terminado. Están implementadas la ejecución serial de referencia, la lectura incremental del dataset, el cliente, el Gateway, el protocolo externo, la capa común de middleware y el pipeline distribuido Q1-Q5. Los componentes replicables y las etapas stateful de las cinco consultas se despliegan con tres réplicas o particiones, salvo Gateway y ResultSink, que permanecen como instancias únicas. El pipeline completo fue validado con 50.000 artículos y sus cinco archivos coinciden con la referencia serial. El trabajo actual es el hito de tolerancia a fallos; su alcance, propuesta y plan se documentan debajo antes de modificar código funcional.
 
 ## Consultas
 
@@ -45,7 +45,365 @@ El sistema debe resolver las siguientes consultas:
 | ResultSink | Implementado como instancia única con barreras para Q1, Q2, Q3 y Q5; Q4 converge en un reducer lógico |
 | Atención concurrente de varios clientes | Implementada con una sesión por thread |
 | Graceful shutdown por SIGTERM/SIGINT | Implementado |
-| Estrategia de tolerancia a fallos y persistencia | Pendiente |
+| Estrategia de tolerancia a fallos y persistencia | Planificada; implementación pendiente |
+| Detección de procesos caídos mediante comunicación | Pendiente |
+| Consenso implementado por el grupo | Pendiente |
+| Reinicio automático de procesos caídos | Pendiente |
+| Recuperación e idempotencia después de reinicios | Pendiente |
+| Entrega exactly-once hacia el cliente | Pendiente |
+| Chaos Monkey y escenarios de fallos automatizados | Pendiente |
+| Comparación de performance contra el hito de escalabilidad | Pendiente |
+| Limpieza de recursos de ejecuciones resueltas o fallidas | Parcial; debe generalizarse y probarse |
+
+## Hito 3: tolerancia a fallos
+
+Esta sección es el tablero interno para el último hito. Distingue requisitos de
+la consigna, riesgos comprobados en el código actual, decisiones todavía abiertas
+y tareas verificables. Los checks deben marcarse únicamente cuando exista código,
+prueba automatizada y evidencia reproducible.
+
+### Alcance obligatorio y evidencia esperada
+
+| Requisito | Evidencia mínima para considerarlo cumplido |
+|---|---|
+| Tolerar fallas abruptas dentro de un proceso y caídas repentinas de otros nodos | Una ejecución iniciada antes de la caída termina con los cinco resultados correctos después de reiniciar el proceso afectado |
+| Reiniciar procesos caídos | Los supervisores reponen automáticamente el proceso sin intervención manual |
+| Verificar disponibilidad comunicándose con el nodo | La detección utiliza un protocolo de salud propio; no consulta estado, eventos ni metadatos de Docker |
+| Implementar un algoritmo de consenso | Tres supervisores implementan elección de líder y acuerdo por mayoría sin bibliotecas externas |
+| Chaos Monkey propio | Una herramienta del repositorio introduce fallas periódicas y configurables durante una ejecución |
+| Automatizar los escenarios de fallos | Un comando levanta el entorno, ejecuta cliente y fallas, espera la recuperación, compara resultados y verifica limpieza |
+| No usar bibliotecas externas de consenso, tolerancia o recuperación | El protocolo, la persistencia y la recuperación se implementan en el proyecto; cualquier dependencia nueva se consulta antes con la cátedra |
+| Limitar Docker-in-Docker o el socket de Docker al reinicio | Docker se usa únicamente para matar procesos en Chaos Monkey y para ejecutar un reinicio ya decidido por consenso |
+| Eliminar archivos y liberar recursos | Cada ejecución exitosa o fallida elimina colas temporales, journals, snapshots, outboxes y buffers propios cuando ya no son necesarios |
+| Entrega exactly-once al cliente | Una reentrega o reconexión nunca agrega dos veces el mismo resultado lógico al archivo del cliente |
+| Documento 4+1 o C4 actualizado | `INFORME.md` y los diagramas reflejan detección, consenso, reinicio, recuperación, limpieza y escenarios de fallos |
+| Comparar performance con escalabilidad | Benchmark automatizado con el mismo dataset y topología, varias corridas y métricas comparables con y sin tolerancia habilitada |
+| Demo con muestra significativa y fallas periódicas | Guion ensayado que muestra fallas, elección/acuerdo, reinicio, recuperación, resultados correctos y recursos finales limpios |
+
+Los requisitos del hito de escalabilidad siguen vigentes: no se puede degradar el
+streaming, la coordinación de barreras, el uso del middleware, la capacidad de
+escalar ni la comparación contra la referencia serial.
+
+### Diagnóstico del sistema actual
+
+| Área | Estado actual | Riesgo frente a una caída |
+|---|---|---|
+| RabbitMQ | Colas y exchanges no durables; mensajes no persistentes; sin volumen de datos | Reiniciar el broker pierde colas, mensajes y trabajo en curso |
+| Middleware | Las conexiones se crean al arrancar y no se reconstruyen; heartbeat deshabilitado | La caída o partición del broker termina los workers o puede tardar en detectarse |
+| Exchanges de control | Cada réplica usa una cola exclusiva y temporal | Una réplica caída puede perder un final de barrera y bloquear la ejecución al volver |
+| InputBatcher | Confirma cada artículo después de guardarlo solamente en memoria | Una caída pierde artículos ya confirmados y el batch parcial |
+| Barreras replicadas | Los conjuntos de particiones terminadas viven en memoria | Un reinicio olvida finales ya observados o vuelve a emitir finales |
+| Agregadores y reducers | Conteos, palabras, parciales y promedios viven en memoria | Q3, Q4 y Q5 pierden progreso y pueden producir resultados incompletos o duplicados |
+| Q5Comparator | Persiste candidatos en JSONL, pero promedio, finales y deduplicación viven en memoria | El archivo sobrevive, pero no alcanza para reconstruir el estado completo |
+| Publicación y ACK | Se publica la salida y luego se confirma la entrada, sin transacción entre ambos pasos | Una caída entre ambas operaciones puede duplicar la salida al redeliverarse la entrada |
+| Mensajes | No existe `message_id`, `result_id`, secuencia de entrada ni encadenamiento determinista | No se puede reconocer de forma general una reentrega |
+| ResultSink | Barreras en memoria y una única instancia | Su caída pierde coordinación; una reentrega puede volver a enviar resultados o finales |
+| Gateway | `execution_id` y sesión viven en memoria; la cola de resultados es exclusiva y autoeliminable | Su caída elimina la cola y el cliente no puede retomar la ejecución |
+| Cliente | Trunca los archivos al conectar y no guarda IDs confirmados | Una reconexión puede perder progreso o escribir duplicados |
+| Ciclo de vida | Hay limpiezas locales al finalizar correctamente, pero no existe un protocolo global de aborto/cleanup | Una ejecución fallida puede dejar estado, archivos o colas indefinidamente |
+| Control de fallos | No hay detectores, supervisores, consenso ni reinicio automático | Cualquier proceso caído queda fuera hasta una intervención manual |
+
+### Arquitectura propuesta para validar con la cátedra
+
+La propuesta separa el **plano de datos** del **plano de control de fallos**. El
+primero conserva y recupera el trabajo; el segundo detecta caídas, acuerda una
+decisión y repone procesos. Ningún supervisor decide a partir del estado de
+Docker.
+
+#### 1. Supervisores y protocolo de salud
+
+- Desplegar tres `FailureManager` con membresía e identificadores configurados de
+  forma estática.
+- Cada proceso funcional expone un endpoint de salud TCP pequeño y propio. La
+  respuesta identifica componente, partición e `incarnation_id`, de modo que una
+  respuesta vieja no se confunda con la nueva instancia de un proceso reiniciado.
+- El endpoint responde saludable únicamente si el loop funcional y sus threads
+  críticos —por ejemplo consumo DATA y control— siguen activos. No alcanza con
+  que el proceso o el socket de health permanezcan abiertos.
+- Los supervisores realizan pedidos activos `PING`/`PONG` con timeout. La falta de
+  respuesta genera una **sospecha**, no un reinicio inmediato.
+- Los tres supervisores también se controlan entre sí. Si el líder cae, los dos
+  restantes pueden elegir otro; una minoría aislada no puede ordenar reinicios.
+- El listado de procesos, endpoint de salud e identificador estático necesario
+  para reiniciarlo proviene de configuración. No se obtiene con `docker ps`,
+  `inspect`, eventos ni healthchecks de Docker.
+
+#### 2. Consenso y decisión de reinicio
+
+- Implementar dentro del proyecto una elección de líder por términos y mayoría,
+  inspirada en Raft: cada supervisor persiste `current_term` y `voted_for`, vota
+  como máximo una vez por término y solamente un candidato con mayoría puede
+  actuar como líder.
+- El líder mantiene su autoridad mediante mensajes entre supervisores. Los
+  timeouts usan relojes y eventos; no se utilizan sleeps para sincronizar el
+  protocolo.
+- Ante una sospecha, el líder propone
+  `RESTART(target_id, incarnation_id, term, proposal_id)`. Cada supervisor vuelve
+  a comunicarse con el target y vota la propuesta. El reinicio se ejecuta solo
+  después de reunir mayoría para esa misma propuesta.
+- Las decisiones aceptadas se persisten antes de actuar. `proposal_id` e
+  `incarnation_id` vuelven idempotente la orden y evitan reiniciar una instancia
+  nueva por una sospecha vieja.
+- Recién después del acuerdo, el líder invoca una operación estática de reinicio
+  mediante Docker Engine o Docker-in-Docker. Esa integración no consulta Docker
+  para decidir disponibilidad ni para descubrir targets.
+- El alcance inicial propuesto tolera una caída a la vez y una mayoría disponible
+  de supervisores. La cantidad de fallas simultáneas y el tratamiento de
+  particiones de red deben confirmarse con el corrector.
+
+#### 3. Transporte durable y reconexión
+
+- Declarar durables las colas y exchanges funcionales, publicar mensajes
+  persistentes y montar un volumen persistente para RabbitMQ.
+- Reemplazar las colas exclusivas de control por colas durables con nombre estable
+  por grupo y partición. Una réplica reiniciada debe recibir los controles que no
+  alcanzó a procesar.
+- Extender el middleware común para reconstruir conexión, canal, declaraciones y
+  consumidor después de una desconexión, con backoff acotado y detención
+  interrumpible.
+- Rehabilitar detección de conexión caída sin reproducir el problema de publishers
+  inactivos: la conexión debe atender eventos/heartbeats o recrearse de forma
+  segura desde su thread propietario.
+- Persistir los datos de RabbitMQ. Un reinicio del broker debe conservar las colas
+  y permitir que los procesos se reconecten sin intervención manual.
+
+#### 4. Identidad, idempotencia y recuperación local
+
+- Agregar identidad determinista al protocolo interno:
+  `message_id`, `causation_id`, `execution_id` y, cuando corresponda,
+  `article_id`, número de secuencia o partición productora.
+- Derivar los IDs de salida de la entrada y de la operación lógica, no de UUIDs
+  generados al reintentar. La misma entrada redeliverada debe producir los mismos
+  IDs.
+- Implementar un `RecoveryStore` propio, sin biblioteca de tolerancia a fallos,
+  con journal append-only, registros verificables, `fsync`, snapshots mediante
+  reemplazo atómico y recuperación que ignore únicamente una última escritura
+  incompleta.
+- Guardar por `execution_id` el estado necesario de batches, deduplicación,
+  barreras, agregaciones, reducers, promedio y finalización.
+- Usar el patrón **inbox + estado + outbox**: registrar atómicamente que una entrada
+  fue aplicada y qué salidas debe producir; publicar la outbox; recién entonces
+  confirmar la entrada. Si hay una caída después de publicar, la salida puede
+  repetirse físicamente, pero conserva su ID y el receptor la aplica una sola vez.
+- Compactar journals mediante snapshots para que la deduplicación no requiera
+  mantener indefinidamente todos los IDs en memoria.
+- Montar almacenamiento persistente separado por componente y partición. No se
+  comparte estado mutable entre dueños lógicos distintos.
+
+Los componentes que hoy parecen stateless también poseen estado de coordinación
+cuando participan de una barrera. Por eso Preprocessor, QueryRouter,
+Until2020Filter, Q1, Q2BiographyFilter, ImageFetcher, WordExtractor, proyectores y
+Q5DateRouter necesitan recuperar inbox, controles observados y finales emitidos,
+aunque su transformación de DATA sea pura.
+
+#### 5. Entrega exactly-once hacia el cliente
+
+- El cliente genera o conserva un `execution_id` antes de conectarse y lo reutiliza
+  al reconectar. El Gateway deja de crear una identidad irrecuperable por sesión.
+- Los artículos llevan una secuencia estable. Una reconexión reenvía desde el
+  último artículo confirmado y el ingreso deduplica por
+  `(execution_id, input_sequence)`.
+- La cola `results.<execution_id>` pasa a tener nombre y ciclo de vida recuperables;
+  no desaparece por la caída de una conexión del Gateway.
+- Cada `RESULT` y `QUERY_END` lleva `result_id` estable. El cliente persiste los IDs
+  aplicados y escribe cada registro lógico una sola vez antes de responder ACK.
+- Si se pierde el ACK, el servidor puede reenviar el mismo ID; el cliente lo
+  reconoce, no vuelve a escribirlo y confirma nuevamente. La garantía observable
+  es exactly-once en los archivos, construida sobre transporte at-least-once.
+- Gateway y cliente implementan un handshake de reanudación con
+  `execution_id`, progreso de upload y resultados confirmados. Los archivos no se
+  truncan al retomar una ejecución.
+- Al recibir los cinco finales, el cliente envía una confirmación durable de
+  ejecución completa. Solo entonces se habilita la limpieza del canal de salida.
+
+#### 6. Ciclo de vida, fallos terminales y limpieza
+
+- Incorporar mensajes explícitos `EXECUTION_FAILED`, `EXECUTION_COMPLETED` y
+  `EXECUTION_CLEANUP`, con causa y `execution_id`.
+- Definir un responsable durable del ciclo de vida que recupere ejecuciones activas
+  después de reiniciar y emita cleanup exactamente una vez de forma idempotente.
+- En éxito: esperar confirmación final del cliente, cerrar la cola de resultados y
+  ordenar a cada componente eliminar inbox, outbox, snapshot, journal y buffers de
+  esa ejecución.
+- En fallo terminal o abandono: notificar al cliente si sigue conectado, detener
+  nuevo trabajo, drenar o descartar de forma explícita los mensajes de la ejecución
+  y ejecutar la misma limpieza.
+- Conservar un tombstone mínimo durante una ventana acotada para que un mensaje
+  tardío no recree estado ya eliminado. Luego eliminar también el tombstone.
+- Automatizar una inspección final: no deben quedar archivos por ejecución, colas
+  temporales, mensajes listos o sin confirmar ni estados activos en memoria.
+
+### Herramienta Chaos Monkey
+
+La herramienta será propia y separada de los supervisores:
+
+- Recibe seed, intervalo, cantidad máxima de fallas y allowlist de targets.
+- Elige targets desde configuración estática y registra instante, target, señal y
+  seed para reproducir el escenario.
+- Inyecta caídas abruptas (`SIGKILL` o stop equivalente) sin ejecutar cleanup del
+  proceso víctima.
+- No mata cliente, infraestructura de prueba ni una mayoría de supervisores salvo
+  en escenarios específicos.
+- Puede incluir workers stateless, procesos con barreras, stateful, ResultSink,
+  Gateway, un FailureManager y RabbitMQ en escenarios separados.
+- Docker puede utilizarse aquí para **introducir** la falla; esta información no se
+  comparte como detector de disponibilidad con los supervisores.
+
+El escenario automatizado mínimo deberá:
+
+1. Generar o verificar la referencia serial.
+2. Levantar el sistema desde un estado limpio.
+3. Iniciar un cliente con una muestra significativa.
+4. Iniciar Chaos Monkey con seed conocida y fallas periódicas.
+5. Esperar recuperación y finalización con timeout global.
+6. Comparar Q1-Q5 contra la referencia, incluyendo duplicados.
+7. Verificar que los procesos caídos fueron reiniciados por una decisión de mayoría.
+8. Verificar que no quedaron recursos de la ejecución.
+9. Guardar logs y resumen del escenario como evidencia.
+
+### Plan de implementación
+
+Cada bloque se trabaja en una rama acordada y se integra después de revisar código,
+tests y documentación. No se debe empezar el bloque siguiente si la propiedad del
+anterior todavía no puede demostrarse.
+
+#### Bloque 0 - Acordar el modelo de fallos y congelar la línea base
+
+- [ ] Confirmar con el corrector las decisiones abiertas listadas debajo.
+- [ ] Etiquetar o registrar el commit exacto que representa el hito de escalabilidad.
+- [ ] Automatizar una corrida base sin fallas con 50.000 artículos.
+- [ ] Guardar tiempos, throughput, CPU, memoria, red y resultados de al menos tres corridas.
+- [ ] Definir qué procesos, cantidad de caídas y fallas simultáneas entran en la defensa.
+
+#### Bloque 1 - Contratos de identidad y pruebas de puntos de caída
+
+- [ ] Diseñar `message_id`, `causation_id`, secuencias y `result_id` para cada tipo de mensaje.
+- [ ] Documentar cuándo una entrada se considera aplicada y cuándo puede recibir ACK.
+- [ ] Enumerar puntos de caída antes/después de persistir, publicar y confirmar.
+- [ ] Agregar tests que reproduzcan redelivery y duplicación sin cambiar todavía la lógica funcional.
+
+#### Bloque 2 - RecoveryStore, inbox y outbox
+
+- [ ] Implementar y probar journal, checksum/versionado, `fsync`, snapshot y recuperación de escritura truncada.
+- [ ] Implementar inbox deduplicada y outbox reintentable con IDs deterministas.
+- [ ] Probar caídas en cada transición y compactación sin pérdida ni doble aplicación.
+- [ ] Definir layout y volúmenes persistentes por componente/partición.
+
+#### Bloque 3 - RabbitMQ durable y middleware recuperable
+
+- [ ] Hacer durables colas/exchanges funcionales y persistentes los mensajes.
+- [ ] Convertir el control a colas durables por réplica.
+- [ ] Agregar volumen del broker.
+- [ ] Implementar reconexión y redeclaración en el middleware común.
+- [ ] Probar reinicio de RabbitMQ y pérdida temporal de conexión durante DATA y control.
+
+#### Bloque 4 - Recuperar el pipeline por etapas
+
+- [ ] InputBatcher: batch parcial, secuencias, inbox y outbox.
+- [ ] Grupos coordinados: finales observados y finales ya emitidos.
+- [ ] Q3WordAggregator: palabras, idiomas, resultados emitidos y barrera.
+- [ ] Q4WordCounter y Q4Top20Reducer: conteos, parciales, top y finales.
+- [ ] Q5StatsWorker y Q5AverageReducer: suma, cantidad, promedio, parciales y finales.
+- [ ] Q5Comparator: candidatos, promedio, finales, resultados emitidos y buffer completo.
+- [ ] ResultSink: deduplicación, barreras, resultados/finales y salida durable.
+- [ ] Para cada etapa: matar antes y después de persistir/publicar/ACK, reiniciar y comparar salida.
+
+#### Bloque 5 - Supervisión, consenso y reinicio
+
+- [ ] Agregar endpoint de salud e `incarnation_id` a todos los procesos alcanzados.
+- [ ] Hacer que la salud agregue el estado del loop principal y threads críticos,
+  y probar una falla interna que deje vivo al proceso.
+- [ ] Implementar protocolo entre FailureManagers y transporte sin bibliotecas de consenso.
+- [ ] Implementar términos, voto persistente, elección, autoridad del líder y pérdida de liderazgo.
+- [ ] Implementar propuesta de reinicio y voto por mayoría después de verificar el target por red.
+- [ ] Implementar ejecutor Docker limitado a reinicios estáticos e idempotentes.
+- [ ] Probar caída de follower, líder, worker sano/reiniciado, sospecha falsa y partición minoritaria.
+
+#### Bloque 6 - Reanudación externa y exactly-once
+
+- [ ] Hacer recuperable la identidad de ejecución y el progreso del upload.
+- [ ] Implementar reconexión y handshake Cliente-Gateway.
+- [ ] Hacer durable la salida por ejecución.
+- [ ] Persistir deduplicación de resultados en el cliente y no truncar al reanudar.
+- [ ] Probar caída de Gateway, cliente y ResultSink, incluida pérdida del ACK después de escribir.
+
+#### Bloque 7 - Fallo terminal y cleanup distribuido
+
+- [ ] Implementar protocolo de éxito, aborto, timeout y cleanup idempotente.
+- [ ] Limpiar estado en memoria, archivos, volúmenes por ejecución y colas temporales.
+- [ ] Evitar recreación por mensajes tardíos mediante tombstones acotados.
+- [ ] Probar limpieza tanto de consultas resueltas como fallidas.
+
+#### Bloque 8 - Chaos Monkey, benchmark, informe y demo
+
+- [ ] Implementar Chaos Monkey reproducible y escenarios automatizados.
+- [ ] Ejecutar matriz de caídas sobre componentes representativos y luego sobre todos los tipos.
+- [ ] Comparar automáticamente resultados y recursos al terminar cada escenario.
+- [ ] Repetir benchmark sin fallas con tolerancia habilitada y calcular overhead contra el bloque 0.
+- [ ] Medir por separado el costo y tiempo de recuperación bajo fallas.
+- [ ] Actualizar `INFORME.md` y diagramas de robustez, despliegue, actividades, paquetes, secuencia y DAG.
+- [ ] Ensayar la demo completa con fallas periódicas y conservar logs de evidencia.
+
+### Matriz mínima de pruebas de fallos
+
+| Escenario | Invariante a comprobar |
+|---|---|
+| Caída antes de persistir una entrada | RabbitMQ redelivera y la entrada se aplica una vez |
+| Falla de un thread crítico con proceso todavía vivo | El endpoint informa degradación y el proceso se repone |
+| Caída después de persistir y antes de publicar | La outbox publica al recuperar |
+| Caída después de publicar y antes del ACK | La reentrega conserva ID y no duplica el efecto downstream |
+| Caída durante una barrera | Los finales observados sobreviven y se emite un solo final lógico |
+| Caída de InputBatcher con batch parcial | Ningún artículo confirmado se pierde ni se duplica |
+| Caída de cada stateful de Q3/Q4/Q5 | El estado reconstruido produce la misma salida que la referencia |
+| Caída de ResultSink | No se pierde ni duplica un resultado lógico o `QUERY_END` |
+| Caída de Gateway | El cliente retoma la misma ejecución y sus archivos |
+| ACK del cliente perdido | El resultado puede reenviarse, pero se escribe una sola vez |
+| Caída de RabbitMQ | Colas y mensajes sobreviven; los procesos se reconectan |
+| Caída del líder | Se elige otro por mayoría y no hay dos líderes con autoridad en el mismo término |
+| Minoría de supervisores aislada | No puede ordenar reinicios |
+| Ejecución fallida | Cliente informado y recursos eliminados |
+| Chaos Monkey periódico | Cinco salidas iguales a referencia, sin duplicados ni recursos huérfanos |
+
+### Comparación de performance
+
+La comparación debe separar el overhead normal de la recuperación:
+
+- **Baseline:** commit final de escalabilidad, sin fallas.
+- **Tolerancia habilitada:** misma muestra, topología, host y configuración, sin fallas.
+- **Con fallas:** misma configuración, seed y calendario de Chaos Monkey documentados.
+- Ejecutar al menos tres corridas por caso y reportar mediana y dispersión, no una
+  única medición.
+- Medir tiempo total, artículos por segundo, tiempo hasta primer resultado, CPU,
+  memoria, red, bytes escritos en journals y tiempo de recuperación.
+- Verificar Q1-Q5 en todas las corridas; una ejecución rápida pero incorrecta no
+  forma parte de la comparación.
+
+### Decisiones que deben confirmarse con el corrector
+
+1. Si el consenso de elección de líder por términos más el acuerdo mayoritario de
+   una propuesta de reinicio satisface el algoritmo de consenso exigido.
+2. Si el modelo requerido es una caída a la vez o incluye varias caídas
+   simultáneas y particiones de red.
+3. Si RabbitMQ, Gateway, cliente y los propios FailureManagers forman parte de los
+   procesos que deben caer durante la defensa.
+4. Si una implementación propia de journal/snapshot con biblioteca estándar es el
+   mecanismo esperado, y qué dependencias auxiliares —si alguna— se autorizan.
+5. Si se acepta montar el socket de Docker en los FailureManagers siempre que solo
+   ejecuten reinicios estáticos y jamás consulten disponibilidad o inventario.
+6. Si la garantía exigida hacia el cliente se interpreta como exactly-once del
+   efecto observable mediante IDs y deduplicación sobre transporte at-least-once.
+7. Qué muestra se considera significativa y cuántas fallas periódicas debe incluir
+   la demo.
+
+### Definition of Done del hito
+
+El hito no está terminado hasta que, desde un checkout limpio, un comando
+documentado pueda levantar el sistema, ejecutar una muestra significativa con
+fallas periódicas, recuperar automáticamente los procesos, obtener los cinco
+archivos idénticos a la referencia sin duplicados, demostrar las decisiones de
+consenso, verificar la limpieza de todas las ejecuciones y generar la evidencia
+de performance. Además, `make check`, la suite unitaria, los escenarios de
+recuperación y el informe 4+1/C4 deben estar actualizados y pasar.
 
 ### Concurrencia actual de clientes
 
@@ -288,7 +646,7 @@ Publica solamente los campos requeridos por cada rama y no realiza filtros propi
 
 La implementación despliega tres QueryRouters como consumidores competidores. La instancia que recibe un `PARTITION_END` de Preprocessor lo difunde mediante `query_router.control`; cada réplica mantiene por `execution_id` el conjunto de Preprocessors finalizados. Después de completar `{0, 1, 2}`, cada QueryRouter publica su propio `PARTITION_END(stage="query_router")` en ambas ramas. Cada rama es consumida por tres réplicas: Until2020Filter en Q1/Q2 y WordExtractor en Q3/Q4/Q5.
 
-El fan-out tiene semántica at-least-once. El mensaje de entrada se confirma solamente después de publicar ambas salidas. Si la primera publicación funciona y la segunda falla, se rechaza la entrada y una reentrega puede duplicar el mensaje en la primera rama. La idempotencia de las etapas posteriores queda pendiente para el hito de tolerancia a fallos.
+El fan-out tiene semántica at-least-once. El mensaje de entrada se confirma solamente después de publicar ambas salidas. Si la primera publicación funciona y la segunda falla, se rechaza la entrada y una reentrega puede duplicar el mensaje en la primera rama. La idempotencia de las etapas posteriores es una tarea explícita del hito actual de tolerancia a fallos.
 
 ### Rama Q1/Q2
 
@@ -430,8 +788,8 @@ transporte, no como almacenamiento prolongado de candidatos.
 
 El volumen limita el uso de memoria y conserva los archivos al recrear el
 container, pero todavía no implementa recuperación completa: el promedio, la
-señal de cierre y la idempotencia frente a publicaciones parciales pertenecen
-al hito de tolerancia a fallos.
+señal de cierre y la idempotencia frente a publicaciones parciales se incorporan
+en el plan del hito actual de tolerancia a fallos.
 
 ### ResultSink
 
@@ -555,7 +913,7 @@ loop durante toda una agregación. En una prueba con 50.000 artículos RabbitMQ
 cerró esas conexiones después de 60 segundos y los agregadores no pudieron
 publicar al finalizar. Por eso la configuración actual utiliza `heartbeat=0`.
 La detección rápida de conexiones zombis, la reconexión y la idempotencia ante
-una publicación ambigua se resolverán en el hito de tolerancia a fallos.
+una publicación ambigua forman parte del hito actual de tolerancia a fallos.
 
 `MessageMiddlewareExchangeRabbitMQ` adapta la implementación del TP de Coordinación. Utiliza un exchange `direct`: cada réplica consumidora declara una cola exclusiva y la vincula con las routing keys del grupo, mientras una instancia publicadora puede omitir la creación de cola. Varias colas vinculadas con la misma clave reciben una copia de cada control. Las conexiones de publicación y consumo permanecen separadas porque `BlockingConnection.start_consuming()` bloquea su thread.
 
@@ -589,11 +947,14 @@ durable = false
 
 y los mensajes no se publican como persistentes.
 
-Esto sigue el alcance actual del hito de escalabilidad, que todavía no supone recuperación ante la caída del servidor.
+Este es el punto de partida heredado del hito de escalabilidad y debe cambiar en
+el hito actual de tolerancia a fallos.
 
 Para que los mensajes sobrevivan a un reinicio de RabbitMQ no alcanza con declarar la cola como durable. También se necesitan mensajes persistentes, almacenamiento persistente de RabbitMQ y una estrategia de recuperación e idempotencia.
 
-Estas decisiones deberán revisarse en el hito de tolerancia a fallos.
+La estrategia concreta se encuentra en [Hito 3: tolerancia a fallos](#hito-3-tolerancia-a-fallos):
+colas y exchanges durables, mensajes persistentes, volumen del broker,
+reconexión, estado recuperable e idempotencia de extremo a extremo.
 
 Las colas `results.<execution_id>` son deliberadamente temporales:
 
@@ -946,18 +1307,33 @@ La implementación distribuida completa deberá respetar:
 
 ## Orden de implementación
 
-El desarrollo se divide en tres momentos distintos:
+Los dos primeros hitos ya completaron el pipeline funcional y su escalabilidad.
+El orden vigente es el del [plan de implementación de tolerancia a fallos](#plan-de-implementación):
 
-1. Completar primero un pipeline funcional de punta a punta con una réplica por componente y finales simples.
-2. Dentro de este mismo TP de escalabilidad, incorporar múltiples réplicas, mensajes de control, `PARTITION_END` y barreras que produzcan un único `QUERY_END` por consulta.
-3. En la instancia posterior de tolerancia a fallos, incorporar persistencia, recuperación ante caídas e idempotencia frente a reentregas.
+1. Confirmar modelo de fallos y propuesta de consenso con el corrector.
+2. Congelar y medir la línea base de escalabilidad.
+3. Introducir identidad determinista y pruebas de puntos de caída.
+4. Construir RecoveryStore, inbox y outbox.
+5. Hacer durable y reconectable el transporte.
+6. Recuperar el pipeline por etapas.
+7. Implementar supervisión, consenso y reinicio.
+8. Reanudar Cliente-Gateway y garantizar exactly-once observable.
+9. Completar cleanup, Chaos Monkey, benchmark, informe y demo.
 
 ## Próximos pasos
-1. Validar nuevamente el pipeline completo con múltiples clientes y el dataset de 50.000 artículos bajo la topología replicada.
-2. Completar la propagación de errores y los límites para entradas no confiables.
-3. Incorporar recuperación, persistencia coordinada e idempotencia en el siguiente hito.
 
-Para la demo de escalabilidad se parte de tres instancias en los grupos ya coordinados y de tres particiones de InputBatcher. Se comparan configuraciones de una, tres y, cuando las métricas lo justifiquen, hasta cinco réplicas. La cantidad no se replica mecánicamente entre componentes: las etapas stateless usan consumidores competidores, las stateful requieren particiones y routing estable, y los reducers se distribuyen por ejecución. CPU, consumidores y profundidad de colas se utilizan para justificar dónde aumentar la cantidad.
+1. Llevar al corrector las decisiones abiertas de consenso, modelo de fallos,
+   exactly-once y uso limitado del socket de Docker.
+2. Acordar con el grupo la rama y responsables del Bloque 0, evitando cambios
+   funcionales superpuestos.
+3. Registrar el commit base y automatizar tres mediciones de 50.000 artículos sin
+   fallas antes de agregar persistencia.
+4. Diseñar los IDs y la matriz de puntos de caída del Bloque 1.
+
+La topología base mantiene tres instancias en los grupos coordinados y tres
+particiones de InputBatcher. La comparación de performance del último hito debe
+usar exactamente la misma topología, dataset y host para aislar el costo de la
+tolerancia a fallos.
 
 ## Monitoreo
 
@@ -995,8 +1371,8 @@ el panel de administración de RabbitMQ, las estadísticas de Docker y el dashbo
 de Grafana para relacionar el comportamiento observable con las decisiones de la
 arquitectura.
 
-El guion de demostración deberá incluir, una vez implementadas las capacidades
-correspondientes:
+El guion de demostración de tolerancia deberá incluir, una vez implementadas las
+capacidades correspondientes:
 
 - Ejecutar dos clientes concurrentes y comprobar que sus ejecuciones, colas de
   respuesta y archivos de salida permanecen aislados.
@@ -1013,9 +1389,18 @@ correspondientes:
   ramas de queries durante una ejecución.
 - Relacionar los cambios de carga con el tamaño de las colas para detectar el
   componente que actúa como cuello de botella.
+- Mostrar los PING/PONG de salud sin consultar Docker, una elección de líder y el
+  acuerdo mayoritario de una propuesta de reinicio.
+- Ejecutar Chaos Monkey con una seed conocida y mostrar la caída abrupta, el
+  reinicio y la recuperación de progreso.
+- Cortar el Gateway o perder un ACK de resultado y comprobar que el cliente retoma
+  sin duplicar líneas.
+- Finalizar comparando Q1-Q5 y verificando que no queden journals, buffers, colas
+  temporales ni estado activo de la ejecución.
 
 La concurrencia de clientes y la desconexión durante el upload ya están
-implementadas. Todavía deben ensayarse con la carga definitiva de la demo y la recuperación ante la caída de procesos internos.
+implementadas. La reanudación de una misma ejecución y la recuperación ante
+caídas internas todavía están pendientes.
 
 cAdvisor accede al daemon de Docker mediante el socket
 `/var/run/docker.sock`, montado dentro del contenedor, y al runtime containerd
