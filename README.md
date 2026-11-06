@@ -54,6 +54,7 @@ El sistema debe resolver las siguientes consultas:
 | Chaos Monkey y escenarios de fallos automatizados | Pendiente |
 | Comparación de performance contra el hito de escalabilidad | Pendiente |
 | Limpieza de recursos de ejecuciones resueltas o fallidas | Parcial; debe generalizarse y probarse |
+| Gateway dentro del modelo de fallos | Excluido por indicación de la cátedra; se asume disponible y debe mantenerse mínimo |
 
 ## Hito 3: tolerancia a fallos
 
@@ -84,6 +85,30 @@ Los requisitos del hito de escalabilidad siguen vigentes: no se puede degradar e
 streaming, la coordinación de barreras, el uso del middleware, la capacidad de
 escalar ni la comparación contra la referencia serial.
 
+### Modelo de fallos acordado: Gateway estable y mínimo
+
+La cátedra indicó que para el desarrollo, las pruebas y la demo se puede asumir
+que el Gateway no se cae. Por lo tanto:
+
+- Gateway queda fuera del conjunto de procesos supervisados y fuera de los targets
+  de Chaos Monkey.
+- No se implementarán consenso, checkpointing, journal, inbox/outbox ni reinicio
+  automático específicos para una caída del Gateway.
+- Gateway no debe almacenar estado de negocio, agregaciones, deduplicación global
+  ni decisiones de recuperación.
+- Sus responsabilidades se limitan a la frontera: aceptar conexiones, adaptar el
+  protocolo TCP al protocolo interno, crear y propagar `execution_id`, aplicar el
+  routing inicial, reenviar resultados y coordinar el ACK del cliente.
+- La persistencia, deduplicación y recuperación del procesamiento pertenecen al
+  pipeline y a ResultSink. La deduplicación del efecto final pertenece al cliente.
+- Una nueva responsabilidad solo debe agregarse al Gateway si es indispensable
+  para adaptar ambos protocolos. La estabilidad asumida no debe convertirlo en un
+  coordinador central ni en un punto donde se acumule lógica del sistema.
+
+Este supuesto elimina del alcance la recuperación ante caída del proceso Gateway,
+pero no elimina la necesidad de manejar errores de conexión con RabbitMQ ni de
+garantizar exactly-once hacia un cliente conectado.
+
 ### Diagnóstico del sistema actual
 
 | Área | Estado actual | Riesgo frente a una caída |
@@ -98,7 +123,7 @@ escalar ni la comparación contra la referencia serial.
 | Publicación y ACK | Se publica la salida y luego se confirma la entrada, sin transacción entre ambos pasos | Una caída entre ambas operaciones puede duplicar la salida al redeliverarse la entrada |
 | Mensajes | No existe `message_id`, `result_id`, secuencia de entrada ni encadenamiento determinista | No se puede reconocer de forma general una reentrega |
 | ResultSink | Barreras en memoria y una única instancia | Su caída pierde coordinación; una reentrega puede volver a enviar resultados o finales |
-| Gateway | `execution_id` y sesión viven en memoria; la cola de resultados es exclusiva y autoeliminable | Su caída elimina la cola y el cliente no puede retomar la ejecución |
+| Gateway | Instancia única, deliberadamente mínima; la cátedra permite asumir que no cae | No se diseña recuperación de su proceso; debe evitarse trasladar estado de negocio o coordinación hacia él |
 | Cliente | Trunca los archivos al conectar y no guarda IDs confirmados | Una reconexión puede perder progreso o escribir duplicados |
 | Ciclo de vida | Hay limpiezas locales al finalizar correctamente, pero no existe un protocolo global de aborto/cleanup | Una ejecución fallida puede dejar estado, archivos o colas indefinidamente |
 | Control de fallos | No hay detectores, supervisores, consenso ni reinicio automático | Cualquier proceso caído queda fuera hasta una intervención manual |
@@ -108,13 +133,15 @@ escalar ni la comparación contra la referencia serial.
 La propuesta separa el **plano de datos** del **plano de control de fallos**. El
 primero conserva y recupera el trabajo; el segundo detecta caídas, acuerda una
 decisión y repone procesos. Ningún supervisor decide a partir del estado de
-Docker.
+Docker. Gateway queda fuera de ambos mecanismos de recuperación por el supuesto
+acordado con la cátedra.
 
 #### 1. Supervisores y protocolo de salud
 
 - Desplegar tres `FailureManager` con membresía e identificadores configurados de
   forma estática.
-- Cada proceso funcional expone un endpoint de salud TCP pequeño y propio. La
+- Cada proceso incluido en el modelo de fallos expone un endpoint de salud TCP
+  pequeño y propio. La
   respuesta identifica componente, partición e `incarnation_id`, de modo que una
   respuesta vieja no se confunda con la nueva instancia de un proceso reiniciado.
 - El endpoint responde saludable únicamente si el loop funcional y sus threads
@@ -122,31 +149,39 @@ Docker.
   que el proceso o el socket de health permanezcan abiertos.
 - Los supervisores realizan pedidos activos `PING`/`PONG` con timeout. La falta de
   respuesta genera una **sospecha**, no un reinicio inmediato.
-- Los tres supervisores también se controlan entre sí. Si el líder cae, los dos
+- Los tres supervisores también se controlan entre sí. Si el coordinador cae, los dos
   restantes pueden elegir otro; una minoría aislada no puede ordenar reinicios.
 - El listado de procesos, endpoint de salud e identificador estático necesario
   para reiniciarlo proviene de configuración. No se obtiene con `docker ps`,
   `inspect`, eventos ni healthchecks de Docker.
 
-#### 2. Consenso y decisión de reinicio
+#### 2. Bully, consenso y decisión de reinicio
 
-- Implementar dentro del proyecto una elección de líder por términos y mayoría,
-  inspirada en Raft: cada supervisor persiste `current_term` y `voted_for`, vota
-  como máximo una vez por término y solamente un candidato con mayoría puede
-  actuar como líder.
-- El líder mantiene su autoridad mediante mensajes entre supervisores. Los
-  timeouts usan relojes y eventos; no se utilizan sleeps para sincronizar el
-  protocolo.
-- Ante una sospecha, el líder propone
-  `RESTART(target_id, incarnation_id, term, proposal_id)`. Cada supervisor vuelve
-  a comunicarse con el target y vota la propuesta. El reinicio se ejecuta solo
-  después de reunir mayoría para esa misma propuesta.
-- Las decisiones aceptadas se persisten antes de actuar. `proposal_id` e
-  `incarnation_id` vuelven idempotente la orden y evitan reiniciar una instancia
-  nueva por una sospecha vieja.
-- Recién después del acuerdo, el líder invoca una operación estática de reinicio
-  mediante Docker Engine o Docker-in-Docker. Esa integración no consulta Docker
-  para decidir disponibilidad ni para descubrir targets.
+- Implementar el algoritmo **Bully**, visto en clase, para elegir un coordinador
+  entre los tres FailureManagers. Cada supervisor posee un ID total y estable.
+- Si un supervisor deja de recibir mensajes del coordinador, envía `ELECTION` a
+  los IDs superiores. Si ninguno responde se anuncia mediante `COORDINATOR`; si
+  recibe `OK`, espera que uno de los superiores complete la elección.
+- El coordinador mantiene su autoridad mediante mensajes entre supervisores. Cada
+  elección recibe un `coordinator_epoch` creciente para rechazar anuncios o
+  decisiones de coordinadores anteriores.
+- Bully resuelve quién coordina, mientras que el acuerdo sobre el reinicio se
+  realiza mediante votación. Ante una sospecha, el coordinador propone
+  `RESTART(target_id, incarnation_id, coordinator_epoch, proposal_id)`.
+- Cada FailureManager vuelve a comunicarse directamente con el target y vota
+  `HEALTHY` o `FAILED`. Con tres supervisores, el reinicio se acepta únicamente
+  con al menos dos votos `FAILED` para la misma propuesta.
+- La decisión incluye el supervisor que debe ejecutarla. Si ese coordinador cae,
+  Bully elige otro y se retoma o repite la propuesta sin depender de Docker para
+  conocer el estado del target.
+- Las elecciones y decisiones aceptadas se persisten antes de actuar.
+  `proposal_id`, `coordinator_epoch` e `incarnation_id` vuelven idempotente la
+  orden y evitan reiniciar una instancia nueva por una sospecha vieja.
+- Recién después del acuerdo, el coordinador invoca una operación estática de
+  reinicio mediante Docker Engine o Docker-in-Docker. Esa integración no consulta
+  Docker para decidir disponibilidad ni para descubrir targets.
+- Los timeouts usan relojes y eventos; no se utilizan sleeps para sincronizar la
+  elección ni la votación.
 - El alcance inicial propuesto tolera una caída a la vez y una mayoría disponible
   de supervisores. La cantidad de fallas simultáneas y el tratamiento de
   particiones de red deben confirmarse con el corrector.
@@ -198,21 +233,18 @@ aunque su transformación de DATA sea pura.
 
 #### 5. Entrega exactly-once hacia el cliente
 
-- El cliente genera o conserva un `execution_id` antes de conectarse y lo reutiliza
-  al reconectar. El Gateway deja de crear una identidad irrecuperable por sesión.
-- Los artículos llevan una secuencia estable. Una reconexión reenvía desde el
-  último artículo confirmado y el ingreso deduplica por
-  `(execution_id, input_sequence)`.
-- La cola `results.<execution_id>` pasa a tener nombre y ciclo de vida recuperables;
-  no desaparece por la caída de una conexión del Gateway.
+- Gateway conserva el rol mínimo actual: genera `execution_id`, adapta mensajes y
+  reenvía resultados. No mantiene journal ni deduplicación durable.
 - Cada `RESULT` y `QUERY_END` lleva `result_id` estable. El cliente persiste los IDs
   aplicados y escribe cada registro lógico una sola vez antes de responder ACK.
 - Si se pierde el ACK, el servidor puede reenviar el mismo ID; el cliente lo
   reconoce, no vuelve a escribirlo y confirma nuevamente. La garantía observable
   es exactly-once en los archivos, construida sobre transporte at-least-once.
-- Gateway y cliente implementan un handshake de reanudación con
-  `execution_id`, progreso de upload y resultados confirmados. Los archivos no se
-  truncan al retomar una ejecución.
+- ResultSink deduplica por `result_id` antes de publicar hacia la cola de respuesta
+  y recupera qué resultados y finales ya emitió.
+- La reanudación después de una caída del Gateway no forma parte del modelo. Si la
+  cátedra exige reanudar clientes desconectados, se diseñará un protocolo separado
+  sin trasladar estado de negocio al Gateway.
 - Al recibir los cinco finales, el cliente envía una confirmación durable de
   ejecución completa. Solo entonces se habilita la limpieza del canal de salida.
 
@@ -242,10 +274,11 @@ La herramienta será propia y separada de los supervisores:
   seed para reproducir el escenario.
 - Inyecta caídas abruptas (`SIGKILL` o stop equivalente) sin ejecutar cleanup del
   proceso víctima.
-- No mata cliente, infraestructura de prueba ni una mayoría de supervisores salvo
-  en escenarios específicos.
+- Nunca mata Gateway. Tampoco mata cliente, infraestructura de prueba ni una
+  mayoría de supervisores salvo en escenarios específicos acordados.
 - Puede incluir workers stateless, procesos con barreras, stateful, ResultSink,
-  Gateway, un FailureManager y RabbitMQ en escenarios separados.
+  un FailureManager y RabbitMQ en escenarios separados si estos últimos forman
+  parte del alcance confirmado.
 - Docker puede utilizarse aquí para **introducir** la falla; esta información no se
   comparte como detector de disponibilidad con los supervisores.
 
@@ -314,18 +347,22 @@ anterior todavía no puede demostrarse.
 - [ ] Hacer que la salud agregue el estado del loop principal y threads críticos,
   y probar una falla interna que deje vivo al proceso.
 - [ ] Implementar protocolo entre FailureManagers y transporte sin bibliotecas de consenso.
-- [ ] Implementar términos, voto persistente, elección, autoridad del líder y pérdida de liderazgo.
+- [ ] Implementar Bully con `ELECTION`, `OK`, `COORDINATOR`, prioridad estable,
+  epoch y reemplazo del coordinador caído.
 - [ ] Implementar propuesta de reinicio y voto por mayoría después de verificar el target por red.
 - [ ] Implementar ejecutor Docker limitado a reinicios estáticos e idempotentes.
-- [ ] Probar caída de follower, líder, worker sano/reiniciado, sospecha falsa y partición minoritaria.
+- [ ] Probar caída de un supervisor, coordinador, worker sano/reiniciado, sospecha
+  falsa y mensajes viejos de otra elección.
 
-#### Bloque 6 - Reanudación externa y exactly-once
+#### Bloque 6 - Exactly-once en la frontera externa
 
-- [ ] Hacer recuperable la identidad de ejecución y el progreso del upload.
-- [ ] Implementar reconexión y handshake Cliente-Gateway.
-- [ ] Hacer durable la salida por ejecución.
-- [ ] Persistir deduplicación de resultados en el cliente y no truncar al reanudar.
-- [ ] Probar caída de Gateway, cliente y ResultSink, incluida pérdida del ACK después de escribir.
+- [ ] Incorporar `result_id` determinista a resultados y finales.
+- [ ] Recuperar y deduplicar en ResultSink los IDs ya emitidos.
+- [ ] Persistir en el cliente los `result_id` aplicados y escribir cada resultado
+  de forma recuperable antes de enviar ACK.
+- [ ] Mantener Gateway como relay sin RecoveryStore ni estado de negocio nuevo.
+- [ ] Probar caída de cliente y ResultSink, duplicados internos y pérdida del ACK
+  después de escribir. No inyectar caídas del Gateway.
 
 #### Bloque 7 - Fallo terminal y cleanup distribuido
 
@@ -356,10 +393,9 @@ anterior todavía no puede demostrarse.
 | Caída de InputBatcher con batch parcial | Ningún artículo confirmado se pierde ni se duplica |
 | Caída de cada stateful de Q3/Q4/Q5 | El estado reconstruido produce la misma salida que la referencia |
 | Caída de ResultSink | No se pierde ni duplica un resultado lógico o `QUERY_END` |
-| Caída de Gateway | El cliente retoma la misma ejecución y sus archivos |
 | ACK del cliente perdido | El resultado puede reenviarse, pero se escribe una sola vez |
 | Caída de RabbitMQ | Colas y mensajes sobreviven; los procesos se reconectan |
-| Caída del líder | Se elige otro por mayoría y no hay dos líderes con autoridad en el mismo término |
+| Caída del coordinador | Bully elige otro y las propuestas anteriores no se ejecutan dos veces |
 | Minoría de supervisores aislada | No puede ordenar reinicios |
 | Ejecución fallida | Cliente informado y recursos eliminados |
 | Chaos Monkey periódico | Cinco salidas iguales a referencia, sin duplicados ni recursos huérfanos |
@@ -380,12 +416,13 @@ La comparación debe separar el overhead normal de la recuperación:
 
 ### Decisiones que deben confirmarse con el corrector
 
-1. Si el consenso de elección de líder por términos más el acuerdo mayoritario de
-   una propuesta de reinicio satisface el algoritmo de consenso exigido.
+1. Si la combinación de Bully para elegir coordinador y votación mayoritaria para
+   acordar cada reinicio satisface el algoritmo de consenso exigido.
 2. Si el modelo requerido es una caída a la vez o incluye varias caídas
    simultáneas y particiones de red.
-3. Si RabbitMQ, Gateway, cliente y los propios FailureManagers forman parte de los
-   procesos que deben caer durante la defensa.
+3. Si RabbitMQ, cliente y los propios FailureManagers forman parte de los procesos
+   que deben caer durante la defensa. Gateway ya está excluido por indicación de
+   la cátedra.
 4. Si una implementación propia de journal/snapshot con biblioteca estándar es el
    mecanismo esperado, y qué dependencias auxiliares —si alguna— se autorizan.
 5. Si se acepta montar el socket de Docker en los FailureManagers siempre que solo
@@ -1304,6 +1341,8 @@ La implementación distribuida completa deberá respetar:
 10. Un ACK se envía solamente después de completar el efecto del mensaje.
 11. Los recursos temporales se eliminan al completar o abortar una ejecución.
 12. Un `SIGTERM` no fabrica mensajes de finalización para trabajo incompleto.
+13. Gateway queda fuera del modelo de fallos, actúa solo como adaptador y relay, y
+    no incorpora estado de negocio ni mecanismos propios de recuperación.
 
 ## Orden de implementación
 
@@ -1317,7 +1356,8 @@ El orden vigente es el del [plan de implementación de tolerancia a fallos](#pla
 5. Hacer durable y reconectable el transporte.
 6. Recuperar el pipeline por etapas.
 7. Implementar supervisión, consenso y reinicio.
-8. Reanudar Cliente-Gateway y garantizar exactly-once observable.
+8. Garantizar exactly-once observable en ResultSink y Client sin cargar estado de
+   negocio en Gateway.
 9. Completar cleanup, Chaos Monkey, benchmark, informe y demo.
 
 ## Próximos pasos
@@ -1389,12 +1429,13 @@ capacidades correspondientes:
   ramas de queries durante una ejecución.
 - Relacionar los cambios de carga con el tamaño de las colas para detectar el
   componente que actúa como cuello de botella.
-- Mostrar los PING/PONG de salud sin consultar Docker, una elección de líder y el
+- Mostrar los PING/PONG de salud sin consultar Docker, una elección Bully de
+  coordinador y el
   acuerdo mayoritario de una propuesta de reinicio.
 - Ejecutar Chaos Monkey con una seed conocida y mostrar la caída abrupta, el
   reinicio y la recuperación de progreso.
-- Cortar el Gateway o perder un ACK de resultado y comprobar que el cliente retoma
-  sin duplicar líneas.
+- Perder un ACK de resultado y comprobar que la reentrega no duplica líneas. No se
+  inyectan caídas del Gateway porque está excluido del modelo de fallos acordado.
 - Finalizar comparando Q1-Q5 y verificando que no queden journals, buffers, colas
   temporales ni estado activo de la ejecución.
 
