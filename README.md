@@ -59,8 +59,8 @@ El sistema debe resolver las siguientes consultas:
 ## Hito 3: tolerancia a fallos
 
 Esta sección es el tablero interno para el último hito. Distingue requisitos de
-la consigna, riesgos comprobados en el código actual, decisiones todavía abiertas
-y tareas verificables. Los checks deben marcarse únicamente cuando exista código,
+la consigna, riesgos comprobados en el código actual, decisiones confirmadas con
+el corrector y tareas verificables. Los checks deben marcarse únicamente cuando exista código,
 prueba automatizada y evidencia reproducible.
 
 ### Alcance obligatorio y evidencia esperada
@@ -70,25 +70,37 @@ prueba automatizada y evidencia reproducible.
 | Tolerar fallas abruptas dentro de un proceso y caídas repentinas de otros nodos | Una ejecución iniciada antes de la caída termina con los cinco resultados correctos después de reiniciar el proceso afectado |
 | Reiniciar procesos caídos | Los supervisores reponen automáticamente el proceso sin intervención manual |
 | Verificar disponibilidad comunicándose con el nodo | La detección utiliza un protocolo de salud propio; no consulta estado, eventos ni metadatos de Docker |
-| Implementar un algoritmo de consenso | Tres supervisores implementan elección de líder y acuerdo por mayoría sin bibliotecas externas |
+| Implementar un algoritmo de consenso | Los FailureManagers implementan Bully para consensuar quién es el coordinador, sin bibliotecas externas |
 | Chaos Monkey propio | Una herramienta del repositorio introduce fallas periódicas y configurables durante una ejecución |
 | Automatizar los escenarios de fallos | Un comando levanta el entorno, ejecuta cliente y fallas, espera la recuperación, compara resultados y verifica limpieza |
 | No usar bibliotecas externas de consenso, tolerancia o recuperación | El protocolo, la persistencia y la recuperación se implementan en el proyecto; cualquier dependencia nueva se consulta antes con la cátedra |
-| Limitar Docker-in-Docker o el socket de Docker al reinicio | Docker se usa únicamente para matar procesos en Chaos Monkey y para ejecutar un reinicio ya decidido por consenso |
+| Limitar Docker-in-Docker o el socket de Docker al reinicio | Docker se usa únicamente para matar procesos en Chaos Monkey y para ejecutar el reinicio ordenado por el coordinador elegido mediante Bully |
 | Eliminar archivos y liberar recursos | Cada ejecución exitosa o fallida elimina colas temporales, journals, snapshots, outboxes y buffers propios cuando ya no son necesarios |
 | Entrega exactly-once al cliente | Una reentrega o reconexión nunca agrega dos veces el mismo resultado lógico al archivo del cliente |
 | Documento 4+1 o C4 actualizado | `INFORME.md` y los diagramas reflejan detección, consenso, reinicio, recuperación, limpieza y escenarios de fallos |
 | Comparar performance con escalabilidad | Benchmark automatizado con el mismo dataset y topología, varias corridas y métricas comparables con y sin tolerancia habilitada |
-| Demo con muestra significativa y fallas periódicas | Guion ensayado que muestra fallas, elección/acuerdo, reinicio, recuperación, resultados correctos y recursos finales limpios |
+| Demo con muestra significativa y fallas periódicas | Guion ensayado que muestra fallas, elección Bully, reinicio, recuperación, resultados correctos y recursos finales limpios |
 
 Los requisitos del hito de escalabilidad siguen vigentes: no se puede degradar el
 streaming, la coordinación de barreras, el uso del middleware, la capacidad de
 escalar ni la comparación contra la referencia serial.
 
-### Modelo de fallos acordado: Gateway estable y mínimo
+### Modelo de fallos confirmado con el corrector
 
-La cátedra indicó que para el desarrollo, las pruebas y la demo se puede asumir
-que el Gateway no se cae. Por lo tanto:
+Para el desarrollo, las pruebas y la demo se acuerdan los siguientes supuestos:
+
+- Gateway y RabbitMQ no se caen y quedan fuera de Chaos Monkey.
+- Puede haber una o varias caídas simultáneas de procesos del pipeline; la lógica
+  de detección y reinicio no debe depender de que las caídas sean secuenciales.
+- No se contemplan particiones de red. Todos los nodos pueden comunicarse con los
+  FailureManagers.
+- Los FailureManagers sí pueden caer, pero el inyector de fallas debe garantizar
+  que al menos uno permanezca vivo para reiniciar a los demás.
+- El cliente no caerá durante la demo completa del dataset. Debe existir un
+  escenario separado que interrumpa un cliente y demuestre la liberación de todos
+  los recursos de su ejecución.
+
+Gateway se mantiene estable y mínimo. Por lo tanto:
 
 - Gateway queda fuera del conjunto de procesos supervisados y fuera de los targets
   de Chaos Monkey.
@@ -105,16 +117,17 @@ que el Gateway no se cae. Por lo tanto:
   para adaptar ambos protocolos. La estabilidad asumida no debe convertirlo en un
   coordinador central ni en un punto donde se acumule lógica del sistema.
 
-Este supuesto elimina del alcance la recuperación ante caída del proceso Gateway,
-pero no elimina la necesidad de manejar errores de conexión con RabbitMQ ni de
-garantizar exactly-once hacia un cliente conectado.
+Este supuesto elimina del alcance la recuperación ante caída del proceso Gateway.
+RabbitMQ también queda fuera del modelo de caídas, pero se mantiene el manejo
+ordenado de errores de publicación y consumo. La entrega exactly-once hacia un
+cliente conectado sigue siendo obligatoria.
 
 ### Diagnóstico del sistema actual
 
 | Área | Estado actual | Riesgo frente a una caída |
 |---|---|---|
-| RabbitMQ | Colas y exchanges no durables; mensajes no persistentes; sin volumen de datos | Reiniciar el broker pierde colas, mensajes y trabajo en curso |
-| Middleware | Las conexiones se crean al arrancar y no se reconstruyen; heartbeat deshabilitado | La caída o partición del broker termina los workers o puede tardar en detectarse |
+| RabbitMQ | La cátedra permite asumir que no cae | No se requiere recuperar el broker ni persistir sus datos; sí conservar mensajes cuando cae un consumidor |
+| Middleware | Las conexiones se crean al arrancar y las colas DATA compartidas sobreviven a la caída de un consumidor | Un worker reiniciado debe volver a declarar su topología y continuar consumiendo el trabajo pendiente |
 | Exchanges de control | Cada réplica usa una cola exclusiva y temporal | Una réplica caída puede perder un final de barrera y bloquear la ejecución al volver |
 | InputBatcher | Confirma cada artículo después de guardarlo solamente en memoria | Una caída pierde artículos ya confirmados y el batch parcial |
 | Barreras replicadas | Los conjuntos de particiones terminadas viven en memoria | Un reinicio olvida finales ya observados o vuelve a emitir finales |
@@ -128,7 +141,7 @@ garantizar exactly-once hacia un cliente conectado.
 | Ciclo de vida | Hay limpiezas locales al finalizar correctamente, pero no existe un protocolo global de aborto/cleanup | Una ejecución fallida puede dejar estado, archivos o colas indefinidamente |
 | Control de fallos | No hay detectores, supervisores, consenso ni reinicio automático | Cualquier proceso caído queda fuera hasta una intervención manual |
 
-### Arquitectura propuesta para validar con la cátedra
+### Arquitectura confirmada como punto de partida
 
 La propuesta separa el **plano de datos** del **plano de control de fallos**. El
 primero conserva y recupera el trabajo; el segundo detecta caídas, acuerda una
@@ -148,14 +161,19 @@ acordado con la cátedra.
   críticos —por ejemplo consumo DATA y control— siguen activos. No alcanza con
   que el proceso o el socket de health permanezcan abiertos.
 - Los supervisores realizan pedidos activos `PING`/`PONG` con timeout. La falta de
-  respuesta genera una **sospecha**, no un reinicio inmediato.
-- Los tres supervisores también se controlan entre sí. Si el coordinador cae, los dos
-  restantes pueden elegir otro; una minoría aislada no puede ordenar reinicios.
+  respuesta permite al coordinador considerar caído al nodo y reiniciarlo; Docker
+  no participa de esa detección.
+- Los supervisores también se controlan entre sí. Si el coordinador cae, los
+  FailureManagers que sigan vivos ejecutan Bully para elegir otro. Incluso uno
+  solo puede asumir como coordinador y recuperar a los demás.
 - El listado de procesos, endpoint de salud e identificador estático necesario
   para reiniciarlo proviene de configuración. No se obtiene con `docker ps`,
   `inspect`, eventos ni healthchecks de Docker.
+- Al asumir, un nuevo coordinador verifica por comunicación todos los targets de
+  la configuración; así puede detectar varias caídas simultáneas sin depender del
+  estado en memoria del coordinador anterior.
 
-#### 2. Bully, consenso y decisión de reinicio
+#### 2. Bully y decisión de reinicio
 
 - Implementar el algoritmo **Bully**, visto en clase, para elegir un coordinador
   entre los tres FailureManagers. Cada supervisor posee un ID total y estable.
@@ -165,42 +183,41 @@ acordado con la cátedra.
 - El coordinador mantiene su autoridad mediante mensajes entre supervisores. Cada
   elección recibe un `coordinator_epoch` creciente para rechazar anuncios o
   decisiones de coordinadores anteriores.
-- Bully resuelve quién coordina, mientras que el acuerdo sobre el reinicio se
-  realiza mediante votación. Ante una sospecha, el coordinador propone
-  `RESTART(target_id, incarnation_id, coordinator_epoch, proposal_id)`.
-- Cada FailureManager vuelve a comunicarse directamente con el target y vota
-  `HEALTHY` o `FAILED`. Con tres supervisores, el reinicio se acepta únicamente
-  con al menos dos votos `FAILED` para la misma propuesta.
-- La decisión incluye el supervisor que debe ejecutarla. Si ese coordinador cae,
-  Bully elige otro y se retoma o repite la propuesta sin depender de Docker para
-  conocer el estado del target.
-- Las elecciones y decisiones aceptadas se persisten antes de actuar.
-  `proposal_id`, `coordinator_epoch` e `incarnation_id` vuelven idempotente la
-  orden y evitan reiniciar una instancia nueva por una sospecha vieja.
-- Recién después del acuerdo, el coordinador invoca una operación estática de
+- La elección de coordinador mediante Bully es el algoritmo de consenso exigido:
+  los FailureManagers acuerdan quién es el líder. El corrector indicó que no hace
+  falta una votación adicional para decidir si un nodo funciona.
+- El coordinador detecta la caída comunicándose directamente con el target. Si no
+  obtiene una respuesta válida dentro de la política de timeout y reintentos,
+  invoca una operación estática de
   reinicio mediante Docker Engine o Docker-in-Docker. Esa integración no consulta
   Docker para decidir disponibilidad ni para descubrir targets.
+- La orden se identifica con `target_id`, `incarnation_id` y
+  `coordinator_epoch` para ignorar acciones viejas y no reiniciar una instancia
+  nueva por una detección anterior.
+- Si el coordinador cae antes o después de ejecutar la acción, Bully elige otro;
+  el nuevo coordinador vuelve a verificar el target por red antes de decidir si
+  todavía necesita reiniciarlo.
 - Los timeouts usan relojes y eventos; no se utilizan sleeps para sincronizar la
-  elección ni la votación.
-- El alcance inicial propuesto tolera una caída a la vez y una mayoría disponible
-  de supervisores. La cantidad de fallas simultáneas y el tratamiento de
-  particiones de red deben confirmarse con el corrector.
+  elección ni la detección.
+- No se contemplan particiones de red. El algoritmo debe tolerar caídas simultáneas
+  mientras al menos un FailureManager permanezca vivo.
 
-#### 3. Transporte durable y reconexión
+#### 3. Colas que sobreviven al reinicio de consumidores
 
-- Declarar durables las colas y exchanges funcionales, publicar mensajes
-  persistentes y montar un volumen persistente para RabbitMQ.
-- Reemplazar las colas exclusivas de control por colas durables con nombre estable
-  por grupo y partición. Una réplica reiniciada debe recibir los controles que no
-  alcanzó a procesar.
-- Extender el middleware común para reconstruir conexión, canal, declaraciones y
-  consumidor después de una desconexión, con backoff acotado y detención
-  interrumpible.
-- Rehabilitar detección de conexión caída sin reproducir el problema de publishers
-  inactivos: la conexión debe atender eventos/heartbeats o recrearse de forma
-  segura desde su thread propietario.
-- Persistir los datos de RabbitMQ. Un reinicio del broker debe conservar las colas
-  y permitir que los procesos se reconecten sin intervención manual.
+- RabbitMQ no se cae en el modelo acordado, por lo que no se requiere volumen del
+  broker, recuperación de sus datos ni mensajes persistentes para sobrevivir a un
+  reinicio del broker.
+- Las colas DATA compartidas o particionadas deben permanecer declaradas cuando
+  desaparece un consumidor. Los mensajes sin ACK se reencolan y quedan disponibles
+  para la instancia reiniciada.
+- Reemplazar las colas exclusivas y autoeliminables de control por colas con nombre
+  estable por grupo y partición. Una réplica reiniciada debe recibir los controles
+  que llegaron mientras estaba caída.
+- Al arrancar después de una caída, cada proceso vuelve a declarar su topología,
+  abre conexiones nuevas y continúa consumiendo. Los reintentos de conexión de
+  startup deben ser acotados, configurables e interrumpibles durante el shutdown.
+- No se agregan mecanismos para detectar o recuperar una caída de RabbitMQ porque
+  está explícitamente fuera del alcance.
 
 #### 4. Identidad, idempotencia y recuperación local
 
@@ -210,18 +227,18 @@ acordado con la cátedra.
 - Derivar los IDs de salida de la entrada y de la operación lógica, no de UUIDs
   generados al reintentar. La misma entrada redeliverada debe producir los mismos
   IDs.
-- Implementar un `RecoveryStore` propio, sin biblioteca de tolerancia a fallos,
-  con journal append-only, registros verificables, `fsync`, snapshots mediante
-  reemplazo atómico y recuperación que ignore únicamente una última escritura
-  incompleta.
+- Implementar persistencia propia a disco con la biblioteca estándar de Python;
+  no se propone una biblioteca externa. Utilizar archivos JSON/JSONL, `fsync` y
+  reemplazo atómico cuando corresponda.
 - Guardar por `execution_id` el estado necesario de batches, deduplicación,
   barreras, agregaciones, reducers, promedio y finalización.
 - Usar el patrón **inbox + estado + outbox**: registrar atómicamente que una entrada
   fue aplicada y qué salidas debe producir; publicar la outbox; recién entonces
   confirmar la entrada. Si hay una caída después de publicar, la salida puede
   repetirse físicamente, pero conserva su ID y el receptor la aplica una sola vez.
-- Compactar journals mediante snapshots para que la deduplicación no requiera
-  mantener indefinidamente todos los IDs en memoria.
+- Mantener checkpoints o message logs solamente donde el componente tenga estado
+  que deba reconstruirse. La primera solución debe priorizar archivos simples y
+  verificables antes que una infraestructura genérica innecesaria.
 - Montar almacenamiento persistente separado por componente y partición. No se
   comparte estado mutable entre dueños lógicos distintos.
 
@@ -274,11 +291,18 @@ La herramienta será propia y separada de los supervisores:
   seed para reproducir el escenario.
 - Inyecta caídas abruptas (`SIGKILL` o stop equivalente) sin ejecutar cleanup del
   proceso víctima.
-- Nunca mata Gateway. Tampoco mata cliente, infraestructura de prueba ni una
-  mayoría de supervisores salvo en escenarios específicos acordados.
-- Puede incluir workers stateless, procesos con barreras, stateful, ResultSink,
-  un FailureManager y RabbitMQ en escenarios separados si estos últimos forman
-  parte del alcance confirmado.
+- Nunca mata Gateway ni RabbitMQ. El cliente tampoco se mata durante la demo del
+  dataset completo; su desconexión se prueba en un escenario de cleanup separado.
+- Puede incluir workers stateless, procesos con barreras, stateful, ResultSink y
+  FailureManagers.
+- Antes de elegir un FailureManager verifica en su propio estado que, después de
+  la caída, quede al menos uno vivo. Esta condición es obligatoria: de lo contrario
+  no habría un proceso capaz de reiniciar a los demás.
+- Puede matar varios targets en el mismo ciclo para demostrar que las caídas
+  simultáneas no alteran el algoritmo.
+- El intervalo inicial recomendado por el corrector es de cinco segundos. Después
+  se reduce progresivamente para encontrar y documentar la frecuencia máxima que
+  el sistema tolera sin perder corrección.
 - Docker puede utilizarse aquí para **introducir** la falla; esta información no se
   comparte como detector de disponibilidad con los supervisores.
 
@@ -290,7 +314,8 @@ El escenario automatizado mínimo deberá:
 4. Iniciar Chaos Monkey con seed conocida y fallas periódicas.
 5. Esperar recuperación y finalización con timeout global.
 6. Comparar Q1-Q5 contra la referencia, incluyendo duplicados.
-7. Verificar que los procesos caídos fueron reiniciados por una decisión de mayoría.
+7. Verificar que Bully eligió un coordinador y que este detectó y reinició los
+   procesos caídos mediante comunicación.
 8. Verificar que no quedaron recursos de la ejecución.
 9. Guardar logs y resumen del escenario como evidencia.
 
@@ -300,13 +325,15 @@ Cada bloque se trabaja en una rama acordada y se integra después de revisar có
 tests y documentación. No se debe empezar el bloque siguiente si la propiedad del
 anterior todavía no puede demostrarse.
 
-#### Bloque 0 - Acordar el modelo de fallos y congelar la línea base
+#### Bloque 0 - Registrar decisiones y congelar la línea base
 
-- [ ] Confirmar con el corrector las decisiones abiertas listadas debajo.
+- [x] Confirmar con el corrector el modelo de fallos, Bully, uso de Docker,
+  exactly-once y responsabilidades del Gateway.
 - [ ] Etiquetar o registrar el commit exacto que representa el hito de escalabilidad.
 - [ ] Automatizar una corrida base sin fallas con 50.000 artículos.
 - [ ] Guardar tiempos, throughput, CPU, memoria, red y resultados de al menos tres corridas.
-- [ ] Definir qué procesos, cantidad de caídas y fallas simultáneas entran en la defensa.
+- [x] Definir targets: procesos del pipeline y FailureManagers; excluir Gateway,
+  RabbitMQ y cliente durante la demo completa.
 
 #### Bloque 1 - Contratos de identidad y pruebas de puntos de caída
 
@@ -315,20 +342,24 @@ anterior todavía no puede demostrarse.
 - [ ] Enumerar puntos de caída antes/después de persistir, publicar y confirmar.
 - [ ] Agregar tests que reproduzcan redelivery y duplicación sin cambiar todavía la lógica funcional.
 
-#### Bloque 2 - RecoveryStore, inbox y outbox
+#### Bloque 2 - Persistencia local, inbox y outbox
 
-- [ ] Implementar y probar journal, checksum/versionado, `fsync`, snapshot y recuperación de escritura truncada.
+- [ ] Definir archivos simples por componente, partición y `execution_id` usando
+  únicamente biblioteca estándar.
+- [ ] Implementar y probar escritura temporal, `fsync`, reemplazo atómico y
+  recuperación de una última escritura incompleta.
 - [ ] Implementar inbox deduplicada y outbox reintentable con IDs deterministas.
 - [ ] Probar caídas en cada transición y compactación sin pérdida ni doble aplicación.
 - [ ] Definir layout y volúmenes persistentes por componente/partición.
 
-#### Bloque 3 - RabbitMQ durable y middleware recuperable
+#### Bloque 3 - Colas de control recuperables
 
-- [ ] Hacer durables colas/exchanges funcionales y persistentes los mensajes.
-- [ ] Convertir el control a colas durables por réplica.
-- [ ] Agregar volumen del broker.
-- [ ] Implementar reconexión y redeclaración en el middleware común.
-- [ ] Probar reinicio de RabbitMQ y pérdida temporal de conexión durante DATA y control.
+- [ ] Mantener las colas DATA disponibles cuando cae su consumidor.
+- [ ] Convertir el control a colas nombradas por réplica, no exclusivas ni
+  autoeliminables.
+- [ ] Verificar que un proceso reiniciado redeclare la topología y consuma DATA y
+  controles pendientes.
+- [ ] No agregar volumen ni recuperación de RabbitMQ: el broker no cae en el modelo.
 
 #### Bloque 4 - Recuperar el pipeline por etapas
 
@@ -349,10 +380,12 @@ anterior todavía no puede demostrarse.
 - [ ] Implementar protocolo entre FailureManagers y transporte sin bibliotecas de consenso.
 - [ ] Implementar Bully con `ELECTION`, `OK`, `COORDINATOR`, prioridad estable,
   epoch y reemplazo del coordinador caído.
-- [ ] Implementar propuesta de reinicio y voto por mayoría después de verificar el target por red.
+- [ ] Implementar detección directa `PING`/`PONG` desde el coordinador y política
+  configurable de timeout/reintentos, sin votación.
 - [ ] Implementar ejecutor Docker limitado a reinicios estáticos e idempotentes.
-- [ ] Probar caída de un supervisor, coordinador, worker sano/reiniciado, sospecha
-  falsa y mensajes viejos de otra elección.
+- [ ] Probar caída de un supervisor, coordinador, varios workers simultáneos,
+  sospecha falsa y mensajes viejos de otra elección.
+- [ ] Probar que Chaos Monkey nunca deja cero FailureManagers vivos.
 
 #### Bloque 6 - Exactly-once en la frontera externa
 
@@ -370,10 +403,14 @@ anterior todavía no puede demostrarse.
 - [ ] Limpiar estado en memoria, archivos, volúmenes por ejecución y colas temporales.
 - [ ] Evitar recreación por mensajes tardíos mediante tombstones acotados.
 - [ ] Probar limpieza tanto de consultas resueltas como fallidas.
+- [ ] Interrumpir un cliente en un escenario separado y verificar que se liberen
+  todos sus recursos aunque no forme parte de la demo completa.
 
 #### Bloque 8 - Chaos Monkey, benchmark, informe y demo
 
 - [ ] Implementar Chaos Monkey reproducible y escenarios automatizados.
+- [ ] Comenzar con una falla cada cinco segundos y reducir el intervalo hasta
+  encontrar el límite reproducible del sistema.
 - [ ] Ejecutar matriz de caídas sobre componentes representativos y luego sobre todos los tipos.
 - [ ] Comparar automáticamente resultados y recursos al terminar cada escenario.
 - [ ] Repetir benchmark sin fallas con tolerancia habilitada y calcular overhead contra el bloque 0.
@@ -394,11 +431,12 @@ anterior todavía no puede demostrarse.
 | Caída de cada stateful de Q3/Q4/Q5 | El estado reconstruido produce la misma salida que la referencia |
 | Caída de ResultSink | No se pierde ni duplica un resultado lógico o `QUERY_END` |
 | ACK del cliente perdido | El resultado puede reenviarse, pero se escribe una sola vez |
-| Caída de RabbitMQ | Colas y mensajes sobreviven; los procesos se reconectan |
 | Caída del coordinador | Bully elige otro y las propuestas anteriores no se ejecutan dos veces |
-| Minoría de supervisores aislada | No puede ordenar reinicios |
+| Caída de uno o dos FailureManagers | Al menos uno permanece vivo, asume como coordinador y reinicia a los demás |
+| Caídas simultáneas de workers | El coordinador detecta y reinicia cada target sin bloquear las demás recuperaciones |
+| Desconexión de cliente | La ejecución libera colas, archivos y estado temporal aunque el cliente no complete |
 | Ejecución fallida | Cliente informado y recursos eliminados |
-| Chaos Monkey periódico | Cinco salidas iguales a referencia, sin duplicados ni recursos huérfanos |
+| Chaos Monkey cada cinco segundos | Cinco salidas iguales a referencia, sin duplicados ni recursos huérfanos |
 
 ### Comparación de performance
 
@@ -406,31 +444,34 @@ La comparación debe separar el overhead normal de la recuperación:
 
 - **Baseline:** commit final de escalabilidad, sin fallas.
 - **Tolerancia habilitada:** misma muestra, topología, host y configuración, sin fallas.
-- **Con fallas:** misma configuración, seed y calendario de Chaos Monkey documentados.
+- **Con fallas:** misma configuración, seed y calendario de Chaos Monkey
+  documentados; comenzar con intervalos de cinco segundos.
 - Ejecutar al menos tres corridas por caso y reportar mediana y dispersión, no una
   única medición.
 - Medir tiempo total, artículos por segundo, tiempo hasta primer resultado, CPU,
   memoria, red, bytes escritos en journals y tiempo de recuperación.
+- Reducir progresivamente el intervalo entre fallas y documentar el menor valor
+  que completa correctamente varias corridas. El objetivo es medir el límite, no
+  ocultar una ejecución fallida.
 - Verificar Q1-Q5 en todas las corridas; una ejecución rápida pero incorrecta no
   forma parte de la comparación.
 
-### Decisiones que deben confirmarse con el corrector
+### Decisiones confirmadas con el corrector
 
-1. Si la combinación de Bully para elegir coordinador y votación mayoritaria para
-   acordar cada reinicio satisface el algoritmo de consenso exigido.
-2. Si el modelo requerido es una caída a la vez o incluye varias caídas
-   simultáneas y particiones de red.
-3. Si RabbitMQ, cliente y los propios FailureManagers forman parte de los procesos
-   que deben caer durante la defensa. Gateway ya está excluido por indicación de
-   la cátedra.
-4. Si una implementación propia de journal/snapshot con biblioteca estándar es el
-   mecanismo esperado, y qué dependencias auxiliares —si alguna— se autorizan.
-5. Si se acepta montar el socket de Docker en los FailureManagers siempre que solo
-   ejecuten reinicios estáticos y jamás consulten disponibilidad o inventario.
-6. Si la garantía exigida hacia el cliente se interpreta como exactly-once del
-   efecto observable mediante IDs y deduplicación sobre transporte at-least-once.
-7. Qué muestra se considera significativa y cuántas fallas periódicas debe incluir
-   la demo.
+| Tema | Decisión |
+|---|---|
+| Consenso | Bully es suficiente: el valor consensuado es quién será el coordinador. No agregar votación para decidir si un nodo funciona |
+| Simultaneidad | Puede haber caídas simultáneas; el algoritmo no debe depender de que sean secuenciales |
+| Red | No contemplar particiones; asumir comunicación entre los nodos y los FailureManagers |
+| Gateway | No cae y debe mantenerse mínimo |
+| RabbitMQ | No cae y queda fuera de Chaos Monkey |
+| Cliente | No cae durante la demo completa; probar aparte que una desconexión libera recursos |
+| FailureManagers | Pueden caer, pero el inyector debe dejar siempre al menos uno vivo |
+| Persistencia | Escritura directa a disco es suficiente. No se propone una biblioteca externa; se usará la biblioteca estándar |
+| Docker | Puede ejecutar reinicios, pero nunca detectar disponibilidad ni tomar decisiones |
+| Exactly-once | IDs y deduplicación del efecto observable sobre transporte at-least-once son aceptables |
+| Gateway actual | Sus responsabilidades actuales son suficientemente mínimas |
+| Frecuencia de fallas | Comenzar con una cada cinco segundos y reducir el intervalo para medir el límite del sistema |
 
 ### Definition of Done del hito
 
@@ -438,7 +479,7 @@ El hito no está terminado hasta que, desde un checkout limpio, un comando
 documentado pueda levantar el sistema, ejecutar una muestra significativa con
 fallas periódicas, recuperar automáticamente los procesos, obtener los cinco
 archivos idénticos a la referencia sin duplicados, demostrar las decisiones de
-consenso, verificar la limpieza de todas las ejecuciones y generar la evidencia
+elección de coordinador, verificar la limpieza de todas las ejecuciones y generar la evidencia
 de performance. Además, `make check`, la suite unitaria, los escenarios de
 recuperación y el informe 4+1/C4 deben estar actualizados y pasar.
 
@@ -984,14 +1025,16 @@ durable = false
 
 y los mensajes no se publican como persistentes.
 
-Este es el punto de partida heredado del hito de escalabilidad y debe cambiar en
-el hito actual de tolerancia a fallos.
+RabbitMQ queda fuera del modelo de caídas confirmado con el corrector. Por eso no
+es necesario hacer durable el broker, publicar mensajes persistentes ni agregarle
+un volumen para este hito. La recuperación se concentra en las caídas de los
+consumidores y en el estado local de cada proceso.
 
-Para que los mensajes sobrevivan a un reinicio de RabbitMQ no alcanza con declarar la cola como durable. También se necesitan mensajes persistentes, almacenamiento persistente de RabbitMQ y una estrategia de recuperación e idempotencia.
-
-La estrategia concreta se encuentra en [Hito 3: tolerancia a fallos](#hito-3-tolerancia-a-fallos):
-colas y exchanges durables, mensajes persistentes, volumen del broker,
-reconexión, estado recuperable e idempotencia de extremo a extremo.
+Las colas DATA actuales no son exclusivas ni autoeliminables: permanecen en el
+broker estable cuando un consumidor cae y RabbitMQ reencola sus mensajes sin ACK.
+Las colas de control sí deben cambiar de exclusivas y temporales a colas nombradas
+por réplica, no autoeliminables, para conservar los controles mientras la réplica
+se reinicia.
 
 Las colas `results.<execution_id>` son deliberadamente temporales:
 
@@ -1349,11 +1392,11 @@ La implementación distribuida completa deberá respetar:
 Los dos primeros hitos ya completaron el pipeline funcional y su escalabilidad.
 El orden vigente es el del [plan de implementación de tolerancia a fallos](#plan-de-implementación):
 
-1. Confirmar modelo de fallos y propuesta de consenso con el corrector.
+1. Registrar el modelo de fallos y las decisiones ya confirmadas con el corrector.
 2. Congelar y medir la línea base de escalabilidad.
 3. Introducir identidad determinista y pruebas de puntos de caída.
-4. Construir RecoveryStore, inbox y outbox.
-5. Hacer durable y reconectable el transporte.
+4. Implementar persistencia local simple, inbox y outbox.
+5. Hacer que las colas de control sobrevivan al reinicio de sus consumidores.
 6. Recuperar el pipeline por etapas.
 7. Implementar supervisión, consenso y reinicio.
 8. Garantizar exactly-once observable en ResultSink y Client sin cargar estado de
@@ -1362,13 +1405,13 @@ El orden vigente es el del [plan de implementación de tolerancia a fallos](#pla
 
 ## Próximos pasos
 
-1. Llevar al corrector las decisiones abiertas de consenso, modelo de fallos,
-   exactly-once y uso limitado del socket de Docker.
-2. Acordar con el grupo la rama y responsables del Bloque 0, evitando cambios
+1. Acordar con el grupo la rama y responsables del Bloque 0, evitando cambios
    funcionales superpuestos.
-3. Registrar el commit base y automatizar tres mediciones de 50.000 artículos sin
+2. Registrar el commit base y automatizar tres mediciones de 50.000 artículos sin
    fallas antes de agregar persistencia.
-4. Diseñar los IDs y la matriz de puntos de caída del Bloque 1.
+3. Diseñar los IDs y la matriz de puntos de caída del Bloque 1.
+4. Responder al corrector que no se propone una biblioteca de persistencia: se
+   utilizarán archivos y la biblioteca estándar de Python.
 
 La topología base mantiene tres instancias en los grupos coordinados y tres
 particiones de InputBatcher. La comparación de performance del último hito debe
@@ -1430,8 +1473,7 @@ capacidades correspondientes:
 - Relacionar los cambios de carga con el tamaño de las colas para detectar el
   componente que actúa como cuello de botella.
 - Mostrar los PING/PONG de salud sin consultar Docker, una elección Bully de
-  coordinador y el
-  acuerdo mayoritario de una propuesta de reinicio.
+  coordinador y el reinicio decidido por ese coordinador.
 - Ejecutar Chaos Monkey con una seed conocida y mostrar la caída abrupta, el
   reinicio y la recuperación de progreso.
 - Perder un ACK de resultado y comprobar que la reentrega no duplica líneas. No se
@@ -1440,8 +1482,8 @@ capacidades correspondientes:
   temporales ni estado activo de la ejecución.
 
 La concurrencia de clientes y la desconexión durante el upload ya están
-implementadas. La reanudación de una misma ejecución y la recuperación ante
-caídas internas todavía están pendientes.
+implementadas. Debe automatizarse la verificación de cleanup del cliente
+desconectado y completar la recuperación ante caídas internas.
 
 cAdvisor accede al daemon de Docker mediante el socket
 `/var/run/docker.sock`, montado dentro del contenedor, y al runtime containerd
