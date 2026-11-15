@@ -329,11 +329,35 @@ anterior todavía no puede demostrarse.
 
 - [x] Confirmar con el corrector el modelo de fallos, Bully, uso de Docker,
   exactly-once y responsabilidades del Gateway.
-- [ ] Etiquetar o registrar el commit exacto que representa el hito de escalabilidad.
-- [ ] Automatizar una corrida base sin fallas con 50.000 artículos.
-- [ ] Guardar tiempos, throughput, CPU, memoria, red y resultados de al menos tres corridas.
+- [x] Registrar `4463695` como el commit exacto que representa el hito de escalabilidad.
+- [x] Automatizar la línea base y validarla con una corrida smoke de 50.000
+  artículos contra la referencia serial.
+- [x] Guardar tiempos, throughput, CPU, memoria, red y resultados de tres corridas
+  con `datasets/wikipedia_benchmark_12.parquet` (12 shards por idioma). Este
+  tamaño mantiene una carga representativa dentro del máximo práctico de 30 minutos;
+  los 90 shards por idioma demoraban varias horas por la consulta HTTP de Q2.
 - [x] Definir targets: procesos del pipeline y FailureManagers; excluir Gateway,
   RabbitMQ y cliente durante la demo completa.
+
+Evidencia de la línea base del 15 de noviembre de 2026:
+
+- commit funcional base: `44636953cf1f903e3fd63a60a5c7bdeab6428418`;
+- el runner registró `dirty: true` porque el propio tooling del benchmark y su
+  documentación todavía no estaban versionados; no había cambios funcionales del pipeline;
+- dataset: 612.475 artículos, SHA-256
+  `47a250453b588c2c39354f92657af3ec522f09a61e17561c37c58c7aaee0ac70`;
+- duraciones: 553,43 s, 549,45 s y 552,18 s; media 551,69 s
+  (9 min 11,69 s) y desvío estándar 2,03 s;
+- throughput medio: 1.110,19 artículos/s;
+- CPU agregada media por corrida: 141,33%, 147,94% y 155,65%; picos
+  agregados entre 389,57% y 404,71%;
+- memoria agregada pico: entre 2,42 GiB y 2,46 GiB;
+- I/O final agregado de las interfaces de contenedores: aproximadamente 25,79 GB
+  recibidos y 23,44 GB transmitidos por corrida, incluyendo tráfico interno;
+- Q1-Q5 produjeron fingerprints idénticos en las tres corridas, con 24.764,
+  637, 137.673, 20 y 235.306 registros respectivamente;
+- artefactos locales: `benchmarks/results/20261115-202022-44636953cf1f/`
+  (ignorados por Git por su tamaño).
 
 #### Bloque 1 - Contratos de identidad y pruebas de puntos de caída
 
@@ -1405,13 +1429,10 @@ El orden vigente es el del [plan de implementación de tolerancia a fallos](#pla
 
 ## Próximos pasos
 
-1. Acordar con el grupo la rama y responsables del Bloque 0, evitando cambios
-   funcionales superpuestos.
-2. Registrar el commit base y automatizar tres mediciones de 50.000 artículos sin
-   fallas antes de agregar persistencia.
-3. Diseñar los IDs y la matriz de puntos de caída del Bloque 1.
-4. Responder al corrector que no se propone una biblioteca de persistencia: se
-   utilizarán archivos y la biblioteca estándar de Python.
+1. Revisar y versionar el tooling y la evidencia resumida del Bloque 0.
+2. Diseñar `message_id`, `causation_id`, secuencias y `result_id` del Bloque 1.
+3. Enumerar los puntos de caída antes y después de persistir, publicar y confirmar.
+4. Agregar pruebas de redelivery y duplicación antes de modificar la lógica funcional.
 
 La topología base mantiene tres instancias en los grupos coordinados y tres
 particiones de InputBatcher. La comparación de performance del último hito debe

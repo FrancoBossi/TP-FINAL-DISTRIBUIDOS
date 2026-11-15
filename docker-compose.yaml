@@ -956,7 +956,7 @@ services:
       OUTPUT_DIR: /output
     volumes:
       - ./datasets:/datasets:ro
-      - ./output/distributed:/output
+      - ${DISTRIBUTED_OUTPUT_DIR:-./output/distributed}:/output
 
   cadvisor:
     profiles: ["monitoring"]
