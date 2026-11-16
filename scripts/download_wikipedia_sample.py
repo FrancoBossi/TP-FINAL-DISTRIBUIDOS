@@ -99,8 +99,8 @@ def main():
         "counts": counts,
         "columns": COLUMNS,
         "sources": {
-            language: [str(path) for path in paths]
-            for language, paths in sources.items()
+            language: [str(path) for path in files]
+            for language, files in sources.items()
         },
         "sampling": "all rows from the first selected shards of each language",
     }
