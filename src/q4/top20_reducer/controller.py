@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 
+from common.message_identity import build_result_message_ids
 from common.message_protocol.message import (
     Message,
     Q4PartialTopBatchMessage,
@@ -62,15 +63,36 @@ class Q4Top20ReducerController:
                 key=lambda item: (-item[1], item[0]),
             )[:TOP]
             for word, count in top:
+                result_id, message_id = build_result_message_ids(
+                    execution_id=message.execution_id,
+                    query_id=4,
+                    result_kind="result",
+                    identity={"word": word},
+                    producer_id="q4_top20_reducer",
+                )
                 self._messaging.publish(
                     ResultMessage(
                         query_id=4,
                         record={"word": word, "count": count},
                         execution_id=message.execution_id,
+                        message_id=message_id,
+                        result_id=result_id,
                     )
                 )
+            result_id, message_id = build_result_message_ids(
+                execution_id=message.execution_id,
+                query_id=4,
+                result_kind="end",
+                identity={"end": True},
+                producer_id="q4_top20_reducer",
+            )
             self._messaging.publish(
-                QueryEndMessage(query_id=4, execution_id=message.execution_id)
+                QueryEndMessage(
+                    query_id=4,
+                    execution_id=message.execution_id,
+                    message_id=message_id,
+                    result_id=result_id,
+                )
             )
             self._executions.pop(message.execution_id, None)
             return

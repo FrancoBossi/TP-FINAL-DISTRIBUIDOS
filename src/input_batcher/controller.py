@@ -1,3 +1,4 @@
+from common.message_identity import build_message_id
 from common.message_protocol.message import (
     Message,
     RoutedArticleMessage,
@@ -55,6 +56,12 @@ class InputBatcherController:
                 RoutedInputEndMessage(
                     execution_id=batch.execution_id,
                     reply_queue=batch.reply_queue,
+                    message_id=build_message_id(
+                        execution_id=batch.execution_id,
+                        producer_id="input_batcher",
+                        operation="shutdown_flush",
+                        identity={},
+                    ),
                 )
             )
 

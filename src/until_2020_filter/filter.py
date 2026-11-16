@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from common.message_identity import derive_message_id
 from common.message_protocol.message import (
     Q1CandidateBatchMessage,
     Q1Q2ArticleBatchMessage,
@@ -42,11 +43,23 @@ def filter_batch(
         articles=q1_articles,
         execution_id=message.execution_id,
         reply_queue=message.reply_queue,
+        message_id=derive_message_id(
+            execution_id=message.execution_id,
+            input_message_id=message.message_id,
+            producer_id="until_2020_filter",
+            operation="q1_candidate_batch",
+        ),
     )
     q2_batch = Q2CandidateBatchMessage(
         articles=q2_articles,
         execution_id=message.execution_id,
         reply_queue=message.reply_queue,
+        message_id=derive_message_id(
+            execution_id=message.execution_id,
+            input_message_id=message.message_id,
+            producer_id="until_2020_filter",
+            operation="q2_candidate_batch",
+        ),
     )
 
     return (

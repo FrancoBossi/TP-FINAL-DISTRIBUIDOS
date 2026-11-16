@@ -111,6 +111,7 @@ class TestMessage(unittest.TestCase):
                 payload_field: [],
                 "execution_id": "execution-123",
                 "reply_queue": "results.execution-123",
+                "message_id": "m1:test",
             }
             for missing in (payload_field, "execution_id", "reply_queue"):
                 with self.subTest(kind=kind, missing=missing):
@@ -142,6 +143,7 @@ class TestMessage(unittest.TestCase):
                 article=article,
                 execution_id=execution_id,
                 reply_queue=f"results.{execution_id}",
+                message_id="m1:article",
             ),
             ArticleBatchMessage(
                 articles=[
@@ -150,6 +152,7 @@ class TestMessage(unittest.TestCase):
                 ],
                 execution_id=execution_id,
                 reply_queue=f"results.{execution_id}",
+                message_id="m1:batch",
             ),
             NormalizedArticleBatchMessage(
                 articles=[normalized_article],
@@ -160,6 +163,7 @@ class TestMessage(unittest.TestCase):
             RoutedInputEndMessage(
                 execution_id=execution_id,
                 reply_queue=f"results.{execution_id}",
+                message_id="m1:input-end",
             ),
             PartitionEndMessage(
                 stage="preprocessor",
@@ -333,6 +337,32 @@ class TestMessage(unittest.TestCase):
             {
                 "type": "INPUT_END",
                 "execution_id": "execution-123",
+            },
+            {
+                "type": "ARTICLE",
+                "article": {},
+                "execution_id": "execution-123",
+                "reply_queue": "results.execution-123",
+            },
+            {
+                "type": "INPUT_END",
+                "execution_id": "execution-123",
+                "reply_queue": "results.execution-123",
+            },
+            {
+                "type": "NORMALIZED_ARTICLE_BATCH",
+                "articles": [],
+                "execution_id": "execution-123",
+                "reply_queue": "results.execution-123",
+                "message_id": "",
+            },
+            {
+                "type": "RESULT",
+                "query_id": 1,
+                "record": {"url": "https://example.com"},
+                "execution_id": "execution-123",
+                "message_id": "m1:result",
+                "result_id": "",
             },
         ):
             with self.subTest(fields=fields), self.assertRaises(ValueError):

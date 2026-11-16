@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Mapping
 
+from common.message_identity import build_result_message_ids
 from common.message_protocol.external import QUERY_IDS, validate_result
 from common.message_protocol.message import (
     Message,
@@ -83,10 +84,19 @@ class ResultSinkController:
         if len(ended_partitions) != expected_count:
             return
 
+        result_id, message_id = build_result_message_ids(
+            execution_id=message.execution_id,
+            query_id=message.query_id,
+            result_kind="end",
+            identity={"end": True},
+            producer_id="result_sink",
+        )
         self._messaging.publish(
             QueryEndMessage(
                 query_id=message.query_id,
                 execution_id=message.execution_id,
+                message_id=message_id,
+                result_id=result_id,
             )
         )
         self._ended_partitions.pop(key)

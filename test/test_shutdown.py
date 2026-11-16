@@ -40,6 +40,7 @@ class TestShutdown(unittest.TestCase):
                         article={"name": execution},
                         execution_id=execution,
                         reply_queue=f"results.{execution}",
+                        message_id=f"m1:{execution}",
                     ),
                     Mock(),
                     Mock(),

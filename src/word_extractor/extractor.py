@@ -1,3 +1,4 @@
+from common.message_identity import derive_message_id
 from common.message_protocol.message import (
     TextArticleBatchMessage,
     TokenizedArticleBatchMessage,
@@ -20,4 +21,10 @@ def tokenize_batch(message: TextArticleBatchMessage) -> TokenizedArticleBatchMes
         ],
         execution_id=message.execution_id,
         reply_queue=message.reply_queue,
+        message_id=derive_message_id(
+            execution_id=message.execution_id,
+            input_message_id=message.message_id,
+            producer_id="word_extractor",
+            operation="tokenized_article_batch",
+        ),
     )

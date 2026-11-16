@@ -3,6 +3,7 @@ import logging
 from collections.abc import Callable
 from typing import Optional
 
+from common.message_identity import build_result_message_ids
 from common.message_protocol.message import (
     ImageCandidateBatchMessage,
     ResultMessage,
@@ -42,6 +43,13 @@ def build_query2_results(
             continue
 
         encoded_image = base64.b64encode(image_bytes).decode("ascii")
+        result_id, message_id = build_result_message_ids(
+            execution_id=message.execution_id,
+            query_id=2,
+            result_kind="result",
+            identity={"url": article["url"]},
+            producer_id="q2_image_fetcher",
+        )
 
         results.append(
             ResultMessage(
@@ -52,6 +60,8 @@ def build_query2_results(
                     "image": encoded_image,
                 },
                 execution_id=message.execution_id,
+                message_id=message_id,
+                result_id=result_id,
             )
         )
 

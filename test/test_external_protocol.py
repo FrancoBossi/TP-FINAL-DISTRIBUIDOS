@@ -132,6 +132,7 @@ class TestExternalProtocol(unittest.TestCase):
             article={"name": "École"},
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id="m1:article",
         )
 
         with self.assertRaises(TypeError):

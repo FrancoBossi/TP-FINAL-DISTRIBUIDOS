@@ -25,15 +25,18 @@ class TestInputBatcherController(unittest.TestCase):
             article={"name": "Example article"},
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id="m1:article",
         )
         self.batch = ArticleBatchMessage(
             articles=[{"name": "Example article"}],
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id="m1:batch",
         )
         self.input_end = RoutedInputEndMessage(
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id="m1:input-end",
         )
 
     def test_accumulates_article_without_publishing_incomplete_batch(self):

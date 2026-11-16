@@ -1,4 +1,5 @@
 from common.coordinated_consumer import Ack, Nack
+from common.message_identity import build_control_message_id
 from common.message_protocol.message import (
     Message,
     NormalizedArticleBatchMessage,
@@ -87,6 +88,11 @@ class QueryRouterController:
                     partition_id=self._partition_id,
                     execution_id=message.execution_id,
                     reply_queue=message.reply_queue,
+                    message_id=build_control_message_id(
+                        execution_id=message.execution_id,
+                        stage="query_router",
+                        partition_id=self._partition_id,
+                    ),
                 )
                 self._messaging.publish_q1_q2(partition_end)
                 self._messaging.publish_text(partition_end)
