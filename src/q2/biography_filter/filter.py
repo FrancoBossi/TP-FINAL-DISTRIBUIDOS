@@ -1,3 +1,4 @@
+from common.message_identity import derive_message_id
 from common.message_protocol.message import (
     ImageCandidateBatchMessage,
     Q2CandidateBatchMessage,
@@ -28,4 +29,10 @@ def filter_biography_batch(
         articles=image_candidates,
         execution_id=message.execution_id,
         reply_queue=message.reply_queue,
+        message_id=derive_message_id(
+            execution_id=message.execution_id,
+            input_message_id=message.message_id,
+            producer_id="q2_biography_filter",
+            operation="image_candidate_batch",
+        ),
     )

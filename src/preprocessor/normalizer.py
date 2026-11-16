@@ -2,6 +2,7 @@ from common.article import (
     article_from_raw_record,
     article_to_normalized_record,
 )
+from common.message_identity import derive_message_id
 from common.message_protocol.message import (
     ArticleBatchMessage,
     NormalizedArticleBatchMessage,
@@ -20,4 +21,10 @@ def normalize_batch(
         articles=normalized_articles,
         execution_id=message.execution_id,
         reply_queue=message.reply_queue,
+        message_id=derive_message_id(
+            execution_id=message.execution_id,
+            input_message_id=message.message_id,
+            producer_id="preprocessor",
+            operation="normalized_article_batch",
+        ),
     )

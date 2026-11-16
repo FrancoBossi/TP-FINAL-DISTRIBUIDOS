@@ -2,6 +2,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from common.message_identity import (
+    build_control_message_id,
+    build_result_message_ids,
+)
 from common.message_protocol.message import (
     Message,
     PartitionEndMessage,
@@ -121,6 +125,13 @@ class Q5ComparatorController:
             if article["word_count"] <= average_word_count:
                 continue
 
+            result_id, message_id = build_result_message_ids(
+                execution_id=execution_id,
+                query_id=5,
+                result_kind="result",
+                identity={"url": article["url"]},
+                producer_id="q5_comparator",
+            )
             self._messaging.publish(
                 ResultMessage(
                     query_id=5,
@@ -129,6 +140,8 @@ class Q5ComparatorController:
                         "word_count": article["word_count"],
                     },
                     execution_id=execution_id,
+                    message_id=message_id,
+                    result_id=result_id,
                 )
             )
 
@@ -143,6 +156,12 @@ class Q5ComparatorController:
                 query_id=5,
                 partition_id=self._partition_id,
                 execution_id=execution_id,
+                message_id=build_control_message_id(
+                    execution_id=execution_id,
+                    stage="q5_comparator",
+                    partition_id=self._partition_id,
+                    operation="query_partition_end",
+                ),
             )
         )
         self._candidate_buffer.clear(execution_id)

@@ -1,4 +1,5 @@
 from common.coordinated_consumer import Ack, Nack
+from common.message_identity import build_control_message_id
 from common.message_protocol.message import (
     Message,
     PartitionEndMessage,
@@ -89,6 +90,11 @@ class WordExtractorController:
                     partition_id=self._partition_id,
                     execution_id=message.execution_id,
                     reply_queue=message.reply_queue,
+                    message_id=build_control_message_id(
+                        execution_id=message.execution_id,
+                        stage="word_extractor",
+                        partition_id=self._partition_id,
+                    ),
                 )
                 self._messaging.publish_q3(partition_end)
                 self._messaging.publish_q4_q5(partition_end)

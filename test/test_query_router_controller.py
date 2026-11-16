@@ -187,6 +187,7 @@ class TestQueryRouterController(unittest.TestCase):
             articles=[],
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id="m1:batch",
         )
 
         with self.assertRaisesRegex(

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from common.message_identity import build_control_message_id, build_message_id
 from common.message_protocol.message import (
     Message,
     PartitionEndMessage,
@@ -82,6 +83,12 @@ class Q5StatsWorkerController:
                     abstract_count=stats.abstract_count,
                     execution_id=message.execution_id,
                     reply_queue=message.reply_queue,
+                    message_id=build_message_id(
+                        execution_id=message.execution_id,
+                        producer_id="q5_stats_worker",
+                        operation="partial_stats",
+                        identity={"partition_id": self._partition_id},
+                    ),
                 )
             )
             self._messaging.publish(
@@ -89,6 +96,12 @@ class Q5StatsWorkerController:
                     partition_id=self._partition_id,
                     execution_id=message.execution_id,
                     reply_queue=message.reply_queue,
+                    message_id=build_control_message_id(
+                        execution_id=message.execution_id,
+                        stage="q5_stats_worker",
+                        partition_id=self._partition_id,
+                        operation="stats_partition_end",
+                    ),
                 )
             )
 

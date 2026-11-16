@@ -17,6 +17,7 @@ class TestCoordinatedConsumer(unittest.TestCase):
         self.message = RoutedInputEndMessage(
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id="m1:input-end",
         )
 
     def test_deserializes_data_message_and_preserves_acknowledgements(self):

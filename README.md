@@ -134,7 +134,7 @@ cliente conectado sigue siendo obligatoria.
 | Agregadores y reducers | Conteos, palabras, parciales y promedios viven en memoria | Q3, Q4 y Q5 pierden progreso y pueden producir resultados incompletos o duplicados |
 | Q5Comparator | Persiste candidatos en JSONL, pero promedio, finales y deduplicación viven en memoria | El archivo sobrevive, pero no alcanza para reconstruir el estado completo |
 | Publicación y ACK | Se publica la salida y luego se confirma la entrada, sin transacción entre ambos pasos | Una caída entre ambas operaciones puede duplicar la salida al redeliverarse la entrada |
-| Mensajes | No existe `message_id`, `result_id`, secuencia de entrada ni encadenamiento determinista | No se puede reconocer de forma general una reentrega |
+| Mensajes | DATA, CONTROL, resultados y finales ya poseen IDs deterministas; todavía no existen inbox/outbox | Una reentrega puede reconocerse por ID, pero aún vuelve a aplicar sus efectos |
 | ResultSink | Barreras en memoria y una única instancia | Su caída pierde coordinación; una reentrega puede volver a enviar resultados o finales |
 | Gateway | Instancia única, deliberadamente mínima; la cátedra permite asumir que no cae | No se diseña recuperación de su proceso; debe evitarse trasladar estado de negocio o coordinación hacia él |
 | Cliente | Trunca los archivos al conectar y no guarda IDs confirmados | Una reconexión puede perder progreso o escribir duplicados |
@@ -222,8 +222,9 @@ acordado con la cátedra.
 #### 4. Identidad, idempotencia y recuperación local
 
 - Agregar identidad determinista al protocolo interno:
-  `message_id`, `causation_id`, `execution_id` y, cuando corresponda,
-  `article_id`, número de secuencia o partición productora.
+  `message_id`, `execution_id` y, cuando corresponda, `result_id` o `article_id`.
+  Las secuencias, particiones productoras y relaciones causales se mantienen como
+  material local para derivar IDs y auditar la ejecución, no como campos globales.
 - Derivar los IDs de salida de la entrada y de la operación lógica, no de UUIDs
   generados al reintentar. La misma entrada redeliverada debe producir los mismos
   IDs.
@@ -241,6 +242,106 @@ acordado con la cátedra.
   verificables antes que una infraestructura genérica innecesaria.
 - Montar almacenamiento persistente separado por componente y partición. No se
   comparte estado mutable entre dueños lógicos distintos.
+
+##### Contrato de identidad de mensajes
+
+La identidad lógica no es el `delivery_tag` de RabbitMQ ni un UUID creado al
+publicar. Esos valores cambian en una reentrega. El envelope de todos los mensajes
+internos de DATA y CONTROL se mantiene deliberadamente mínimo:
+
+| Campo | Contrato |
+|---|---|
+| `execution_id` | Ejecución a la que pertenece el mensaje; continúa siendo generado una sola vez por Gateway |
+| `message_id` | Identidad estable de la ocurrencia lógica; una reentrega física conserva exactamente el mismo valor |
+
+`producer_id`, las secuencias y el `message_id` de la entrada causal se utilizan
+localmente como material para calcular el ID, pero no viajan como campos de todos
+los mensajes. El consumidor downstream solo necesita `message_id` para deduplicar.
+Esta decisión evita acoplar el protocolo a información de tracing que no participa
+de la corrección. Cuando haga falta diagnóstico, la relación causal se registra en
+logs y journals del productor.
+
+Los IDs usarán una versión explícita y SHA-256 sobre JSON canónico UTF-8, con
+claves ordenadas y separadores fijos. El prefijo distingue el dominio (`m1` para
+mensajes y `r1` para resultados). No se hashea
+el mensaje serializado completo porque agregar metadatos o cambiar el orden de
+campos no debe modificar su identidad.
+
+El helper común para generar y derivar `m1` y `r1` está implementado en
+`src/common/message_identity.py`. Gateway identifica el ingreso, InputBatcher deriva
+la identidad de cada batch y el resto del DAG propaga IDs deterministas por
+transformaciones, fan-outs, splits, agregaciones y barreras. `ResultMessage` y
+`QueryEndMessage` llevan además `result_id`, que ya cruza el protocolo binario hasta
+el cliente. Todavía no existen inbox/outbox ni deduplicación durable.
+
+Reglas de derivación:
+
+1. Gateway, que está excluido de caídas, numera los artículos de cada conexión
+   desde cero. Un `RoutedArticleMessage` se identifica con
+   `(execution_id, "gateway", "article", input_sequence)` y el final con
+   `(execution_id, "gateway", "input_end", total_articles)`. Esto distingue dos
+   ocurrencias aunque tengan el mismo payload y no agrega estado durable al Gateway.
+2. InputBatcher deriva cada `ArticleBatchMessage` de la partición que lo produce y
+   de la lista ordenada de `message_id` de los artículos que contiene. La lista es
+   estado local: solo el hash resultante viaja en el DTO. Cuando se implemente la
+   recuperación, el batch parcial deberá persistir sus artículos y esa lista para
+   reconstruir exactamente el mismo ID después de reiniciar.
+3. Una transformación uno-a-uno deriva la salida de
+   `(input_message_id, producer_id, output_kind, destination, output_index)`. Para un
+   fan-out o split, destinos e índices se asignan de manera determinista; una
+   reejecución genera los mismos IDs aunque publique nuevamente.
+4. Los controles de fin se identifican por su significado, por ejemplo
+   `(execution_id, stage, partition_id, "end")`; no dependen del último mensaje
+   que casualmente completó la barrera.
+5. Parciales, promedios y resultados de reducers usan su clave lógica estable:
+   ejecución, etapa, partición y tipo de agregado. No dependen del orden de
+   recepción ni del número de intento.
+6. `ResultMessage` agrega `result_id`: Q1, Q2 y Q5 usan la URL del artículo; Q3 y
+   Q4 usan la palabra; `QueryEndMessage` usa `(execution_id, query_id, "end")`.
+   El registro completo no forma parte de la identidad, pero una deduplicación
+   que encuentre el mismo ID con otro contenido debe fallar visiblemente.
+
+Aplicación por familia actual:
+
+| Familia | Tipos actuales | Fuente de identidad |
+|---|---|---|
+| Ingreso | `RoutedArticleMessage`, `RoutedInputEndMessage` | `input_sequence` asignada por Gateway |
+| Batching | `ArticleBatchMessage` | partición de InputBatcher + lista ordenada de IDs de entrada |
+| Transformación pura | `NormalizedArticleBatchMessage`, `Q1Q2ArticleBatchMessage`, `Q1CandidateBatchMessage`, `Q2CandidateBatchMessage`, `ImageCandidateBatchMessage`, `TextArticleBatchMessage`, `TokenizedArticleBatchMessage` | ID de entrada + tipo de salida + destino + índice |
+| Split particionado | `Q3WordPresenceBatchMessage`, `Q4WordBatchMessage`, `Q5ArticleWordCountBatchMessage`, `Q5HistoricalWordCountBatchMessage`, `Q5CandidateBatchMessage` | ID de entrada + partición destino + índice del sub-batch |
+| Agregación | `Q4PartialTopBatchMessage`, `Q5PartialStatsMessage`, `Q5AverageMessage` | ejecución + productor/partición + operación lógica |
+| Barreras | `PartitionEndMessage`, `Q4PartitionEndMessage`, `Q5StatsPartitionEndMessage`, `QueryPartitionEndMessage` | ejecución + etapa/query + partición + `end` |
+| Frontera de salida | `ResultMessage`, `QueryEndMessage` | `result_id` lógico estable y `message_id` derivado de este |
+
+`ArticleMessage`, `InputEndMessage`, `AckMessage` y `ErrorMessage` pertenecen al
+protocolo externo. Los ACK de resultados deberán indicar el `result_id` confirmado;
+los ACK de carga pueden continuar siendo posicionales porque el intercambio con
+Gateway es estrictamente secuencial y Gateway no cae en el modelo acordado.
+
+##### Cuándo se aplica y cuándo se confirma una entrada
+
+Un consumidor considera aplicada una entrada únicamente cuando un registro
+durable y sincronizado a disco contiene, como una sola transición recuperable:
+
+- el `message_id` en la inbox;
+- la mutación de estado producida por esa entrada;
+- todas las salidas lógicas pendientes en la outbox con sus IDs definitivos.
+
+El ACK de RabbitMQ se envía solamente después de publicar toda la outbox
+correspondiente y recibir confirmación del broker. Si la inbox ya contiene el ID,
+el consumidor no vuelve a mutar estado: completa publicaciones pendientes y luego
+confirma la reentrega. Que una publicación confirmada se repita físicamente es
+válido; el receptor la descarta por `message_id`.
+
+| Punto de caída | Estado recuperado | Conducta requerida |
+|---|---|---|
+| Antes del `fsync` de inbox/estado/outbox | La entrada no está aplicada | RabbitMQ la reentrega y se procesa normalmente |
+| Después del `fsync` y antes de publicar | Entrada aplicada y outbox pendiente | Reinicio publica la outbox sin reaplicar el estado |
+| En medio de un fan-out | Algunas salidas pudieron publicarse | Reinicio publica todas con los mismos IDs; downstream deduplica |
+| Después de confirmar publicaciones y antes del ACK de entrada | Estado y salidas están completos | La entrada se reentrega, inbox evita reaplicarla y se vuelve a confirmar |
+| Después del ACK y antes de compactar | El journal aún contiene información redundante | Recuperación conserva el resultado; compactar nunca cambia semántica |
+| Al aplicar una salida duplicada | Inbox ya contiene su `message_id` | No modifica estado ni vuelve a producir efectos lógicos |
+| Después de escribir un resultado y antes del ACK del cliente | `result_id` está durable en Client | El reenvío no agrega otra línea y el cliente repite el ACK |
 
 Los componentes que hoy parecen stateless también poseen estado de coordinación
 cuando participan de una barrera. Por eso Preprocessor, QueryRouter,
@@ -361,10 +462,19 @@ Evidencia de la línea base del 15 de noviembre de 2026:
 
 #### Bloque 1 - Contratos de identidad y pruebas de puntos de caída
 
-- [ ] Diseñar `message_id`, `causation_id`, secuencias y `result_id` para cada tipo de mensaje.
-- [ ] Documentar cuándo una entrada se considera aplicada y cuándo puede recibir ACK.
-- [ ] Enumerar puntos de caída antes/después de persistir, publicar y confirmar.
-- [ ] Agregar tests que reproduzcan redelivery y duplicación sin cambiar todavía la lógica funcional.
+- [x] Diseñar `message_id`, las reglas locales de secuencia/derivación y
+  `result_id` para cada tipo de mensaje.
+- [x] Propagar `message_id` por todo el DAG e incorporar `result_id` en resultados,
+  finales y protocolo externo.
+- [x] Documentar cuándo una entrada se considera aplicada y cuándo puede recibir ACK.
+- [x] Enumerar puntos de caída antes/después de persistir, publicar y confirmar.
+- [x] Agregar tests que reproduzcan redelivery y duplicación sin cambiar todavía la lógica funcional.
+
+Las pruebas de caracterización cubren tres ventanas representativas antes de
+introducir inbox/outbox: un fan-out cuya segunda publicación falla, una entrada
+reentregada a un contador con estado y un resultado reentregado a ResultSink. En
+los tres casos la identidad lógica se conserva; también queda demostrado que hoy
+la publicación o el efecto todavía pueden repetirse.
 
 #### Bloque 2 - Persistencia local, inbox y outbox
 
@@ -387,7 +497,7 @@ Evidencia de la línea base del 15 de noviembre de 2026:
 
 #### Bloque 4 - Recuperar el pipeline por etapas
 
-- [ ] InputBatcher: batch parcial, secuencias, inbox y outbox.
+- [ ] InputBatcher: batch parcial, IDs ordenados de origen, inbox y outbox.
 - [ ] Grupos coordinados: finales observados y finales ya emitidos.
 - [ ] Q3WordAggregator: palabras, idiomas, resultados emitidos y barrera.
 - [ ] Q4WordCounter y Q4Top20Reducer: conteos, parciales, top y finales.
@@ -413,7 +523,7 @@ Evidencia de la línea base del 15 de noviembre de 2026:
 
 #### Bloque 6 - Exactly-once en la frontera externa
 
-- [ ] Incorporar `result_id` determinista a resultados y finales.
+- [x] Incorporar `result_id` determinista a resultados y finales.
 - [ ] Recuperar y deduplicar en ResultSink los IDs ya emitidos.
 - [ ] Persistir en el cliente los `result_id` aplicados y escribir cada resultado
   de forma recuperable antes de enviar ACK.
@@ -1429,10 +1539,12 @@ El orden vigente es el del [plan de implementación de tolerancia a fallos](#pla
 
 ## Próximos pasos
 
-1. Revisar y versionar el tooling y la evidencia resumida del Bloque 0.
-2. Diseñar `message_id`, `causation_id`, secuencias y `result_id` del Bloque 1.
-3. Enumerar los puntos de caída antes y después de persistir, publicar y confirmar.
-4. Agregar pruebas de redelivery y duplicación antes de modificar la lógica funcional.
+1. Implementar el sustrato común de persistencia local con escritura atómica y
+   recuperación.
+2. Persistir el batch parcial junto con sus IDs ordenados para conservar su identidad
+   durante un reinicio e incorporar allí la primera inbox/outbox.
+3. Extender inbox/outbox progresivamente al resto de los componentes según sus
+   estados y ventanas de publicación.
 
 La topología base mantiene tres instancias en los grupos coordinados y tres
 particiones de InputBatcher. La comparación de performance del último hito debe

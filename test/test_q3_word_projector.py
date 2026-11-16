@@ -57,6 +57,13 @@ class TestQ3WordProjector(unittest.TestCase):
         for batch in batches.values():
             self.assertEqual("run", batch.execution_id)
             self.assertEqual("results.run", batch.reply_queue)
+            self.assertTrue(batch.message_id.startswith("m1:"))
+            self.assertNotEqual("m1:fixture", batch.message_id)
+        repeated = project_batch(self.batch, self.router)
+        self.assertEqual(
+            {queue: batch.message_id for queue, batch in batches.items()},
+            {queue: batch.message_id for queue, batch in repeated.items()},
+        )
 
     def test_no_candidates_produce_no_batches(self):
         for articles in (

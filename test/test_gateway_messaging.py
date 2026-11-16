@@ -22,6 +22,7 @@ class TestGatewayMessaging(unittest.TestCase):
         message = RoutedInputEndMessage(
             execution_id=self.execution_id,
             reply_queue=self.result_queue_name,
+            message_id="m1:input-end",
         )
 
         self.messaging.publish(message)

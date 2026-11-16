@@ -50,7 +50,7 @@ def main() -> int:
         input_queue_name=input_queue_name,
         output_queue_name=config.output_queue,
     )
-    batcher = BatchAccumulator(config.max_batch_bytes)
+    batcher = BatchAccumulator(config.max_batch_bytes, config.partition_id)
     controller = InputBatcherController(
         batcher=batcher,
         messaging=messaging,

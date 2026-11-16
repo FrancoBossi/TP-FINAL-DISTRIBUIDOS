@@ -1,5 +1,6 @@
 import unittest
 
+from common.message_identity import derive_message_id
 from common.message_protocol.message import (
     NormalizedArticleBatchMessage,
     Q1Q2ArticleBatchMessage,
@@ -83,6 +84,25 @@ class TestQueryRouter(unittest.TestCase):
 
         self.assertEqual(q1_q2_batch, expected_q1_q2)
         self.assertEqual(text_batch, expected_text)
+        self.assertEqual(
+            q1_q2_batch.message_id,
+            derive_message_id(
+                execution_id=message.execution_id,
+                input_message_id=message.message_id,
+                producer_id="query_router",
+                operation="q1_q2_article_batch",
+            ),
+        )
+        self.assertEqual(
+            text_batch.message_id,
+            derive_message_id(
+                execution_id=message.execution_id,
+                input_message_id=message.message_id,
+                producer_id="query_router",
+                operation="text_article_batch",
+            ),
+        )
+        self.assertNotEqual(q1_q2_batch.message_id, text_batch.message_id)
 
 
 if __name__ == "__main__":

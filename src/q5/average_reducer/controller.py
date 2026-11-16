@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 
+from common.message_identity import build_message_id
 from common.message_protocol.message import (
     Message,
     Q5AverageMessage,
@@ -79,6 +80,12 @@ class Q5AverageReducerController:
                     average_word_count=average_word_count,
                     execution_id=message.execution_id,
                     reply_queue=message.reply_queue,
+                    message_id=build_message_id(
+                        execution_id=message.execution_id,
+                        producer_id="q5_average_reducer",
+                        operation="average",
+                        identity={"aggregate": "historical_word_count"},
+                    ),
                 )
             )
             self._executions.pop(message.execution_id, None)
