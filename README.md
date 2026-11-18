@@ -45,7 +45,7 @@ El sistema debe resolver las siguientes consultas:
 | ResultSink | Implementado como instancia única con barreras para Q1, Q2, Q3 y Q5; Q4 converge en un reducer lógico |
 | Atención concurrente de varios clientes | Implementada con una sesión por thread |
 | Graceful shutdown por SIGTERM/SIGINT | Implementado |
-| Estrategia de tolerancia a fallos y persistencia | Planificada; implementación pendiente |
+| Estrategia de tolerancia a fallos y persistencia | En curso: sustrato durable e InputBatcher implementados |
 | Detección de procesos caídos mediante comunicación | Pendiente |
 | Consenso implementado por el grupo | Pendiente |
 | Reinicio automático de procesos caídos | Pendiente |
@@ -128,13 +128,13 @@ cliente conectado sigue siendo obligatoria.
 |---|---|---|
 | RabbitMQ | La cátedra permite asumir que no cae | No se requiere recuperar el broker ni persistir sus datos; sí conservar mensajes cuando cae un consumidor |
 | Middleware | Las conexiones se crean al arrancar y las colas DATA compartidas sobreviven a la caída de un consumidor | Un worker reiniciado debe volver a declarar su topología y continuar consumiendo el trabajo pendiente |
-| Exchanges de control | Cada réplica usa una cola exclusiva y temporal | Una réplica caída puede perder un final de barrera y bloquear la ejecución al volver |
-| InputBatcher | Confirma cada artículo después de guardarlo solamente en memoria | Una caída pierde artículos ya confirmados y el batch parcial |
+| Exchanges de control | Cada réplica usa una cola estable, no exclusiva ni autoeliminable | El control queda en RabbitMQ mientras la réplica se reinicia; todavía falta recuperar durablemente la barrera interna |
+| InputBatcher | Confirma conjuntamente inbox, batch parcial y outbox en disco | Recupera entradas aplicadas y salidas pendientes sin perder el batch parcial |
 | Barreras replicadas | Los conjuntos de particiones terminadas viven en memoria | Un reinicio olvida finales ya observados o vuelve a emitir finales |
 | Agregadores y reducers | Conteos, palabras, parciales y promedios viven en memoria | Q3, Q4 y Q5 pierden progreso y pueden producir resultados incompletos o duplicados |
 | Q5Comparator | Persiste candidatos en JSONL, pero promedio, finales y deduplicación viven en memoria | El archivo sobrevive, pero no alcanza para reconstruir el estado completo |
 | Publicación y ACK | Se publica la salida y luego se confirma la entrada, sin transacción entre ambos pasos | Una caída entre ambas operaciones puede duplicar la salida al redeliverarse la entrada |
-| Mensajes | DATA, CONTROL, resultados y finales ya poseen IDs deterministas; todavía no existen inbox/outbox | Una reentrega puede reconocerse por ID, pero aún vuelve a aplicar sus efectos |
+| Mensajes | DATA, CONTROL, resultados y finales poseen IDs deterministas; InputBatcher ya usa inbox/outbox | Las etapas restantes aún deben incorporar deduplicación y transición durable |
 | ResultSink | Barreras en memoria y una única instancia | Su caída pierde coordinación; una reentrega puede volver a enviar resultados o finales |
 | Gateway | Instancia única, deliberadamente mínima; la cátedra permite asumir que no cae | No se diseña recuperación de su proceso; debe evitarse trasladar estado de negocio o coordinación hacia él |
 | Cliente | Trunca los archivos al conectar y no guarda IDs confirmados | Una reconexión puede perder progreso o escribir duplicados |
@@ -210,9 +210,9 @@ acordado con la cátedra.
 - Las colas DATA compartidas o particionadas deben permanecer declaradas cuando
   desaparece un consumidor. Los mensajes sin ACK se reencolan y quedan disponibles
   para la instancia reiniciada.
-- Reemplazar las colas exclusivas y autoeliminables de control por colas con nombre
-  estable por grupo y partición. Una réplica reiniciada debe recibir los controles
-  que llegaron mientras estaba caída.
+- Se reemplazaron las colas exclusivas y autoeliminables de control por colas con
+  nombre estable por grupo y partición. Una réplica reiniciada puede recibir los
+  controles que llegaron mientras estaba caída.
 - Al arrancar después de una caída, cada proceso vuelve a declarar su topología,
   abre conexiones nuevas y continúa consumiendo. Los reintentos de conexión de
   startup deben ser acotados, configurables e interrumpibles durante el shutdown.
@@ -478,26 +478,73 @@ la publicación o el efecto todavía pueden repetirse.
 
 #### Bloque 2 - Persistencia local, inbox y outbox
 
-- [ ] Definir archivos simples por componente, partición y `execution_id` usando
+- [x] Definir archivos simples por componente, partición y `execution_id` usando
   únicamente biblioteca estándar.
-- [ ] Implementar y probar escritura temporal, `fsync`, reemplazo atómico y
+- [x] Implementar y probar escritura temporal, `fsync`, reemplazo atómico y
   recuperación de una última escritura incompleta.
-- [ ] Implementar inbox deduplicada y outbox reintentable con IDs deterministas.
-- [ ] Probar caídas en cada transición y compactación sin pérdida ni doble aplicación.
+- [x] Implementar inbox deduplicada y outbox reintentable con IDs deterministas.
+- [x] Probar caídas en cada transición y compactación sin pérdida ni doble aplicación.
 - [ ] Definir layout y volúmenes persistentes por componente/partición.
+
+El sustrato común está implementado en `src/common/persistence.py`. El layout es:
+
+```text
+<state_root>/<component>/partition-<partition_id>/executions/<execution_id>/state.json
+```
+
+El `state.json` contendrá conjuntamente inbox, estado propio y outbox para que una
+transición no quede repartida entre archivos con commits independientes. La
+escritura usa `.state.json.tmp` en el mismo directorio, `flush`, `fsync` del archivo,
+`os.replace` y `fsync` del directorio. Al recuperar, un temporal huérfano se
+descarta como transición no confirmada y se conserva el último `state.json`; un
+archivo confirmado corrupto produce un error visible.
+
+Sobre ese archivo ya existe un modelo común de transición durable. Para una entrada
+nueva, `DurableExecutionStore` incorpora su `message_id` a la inbox, reemplaza el
+estado del componente y agrega las salidas a la outbox en un único commit. Una
+reentrega presente en inbox no vuelve a modificar nada. Las salidas se identifican
+por `(destination, message_id)`, permanecen pendientes después de reiniciar y se
+eliminan individualmente solo después del publisher confirm. El mismo mensaje puede
+estar pendiente para varios destinos, como ocurre al propagar un control a todas
+las particiones.
+
+InputBatcher es la primera integración. Cada artículo confirma conjuntamente su
+inbox y el snapshot del batch parcial; cuando una transición completa un batch o
+recibe `INPUT_END`, las salidas quedan en outbox antes de publicarse. Al reiniciar,
+la partición reconstruye el batch y publica lo pendiente sin reaplicar la entrada.
+Después del ACK se compacta la inbox conservando los IDs del batch parcial y el
+último ID confirmado, necesario ante la posible pérdida física de ese ACK. Compose
+monta un volumen independiente en `/state` para cada una de las tres particiones.
+
+Las pruebas de fallos de esta primera integración cubren cinco ventanas concretas:
+antes del commit durable se revierte el estado en memoria y la reentrega lo aplica
+una vez; después del commit y antes de publicar, el reinicio drena la outbox; si la
+caída ocurre a mitad del fan-out entre el batch y `INPUT_END`, solo se recupera la
+salida que no recibió confirmación; si las salidas fueron confirmadas pero se pierde
+el ACK de consumo, la reentrega no vuelve a publicarlas; y un fallo al compactar
+después del ACK conserva información redundante, pero no pierde ni reaplica estado.
 
 #### Bloque 3 - Colas de control recuperables
 
-- [ ] Mantener las colas DATA disponibles cuando cae su consumidor.
-- [ ] Convertir el control a colas nombradas por réplica, no exclusivas ni
+- [x] Mantener las colas DATA disponibles cuando cae su consumidor.
+- [x] Convertir el control a colas nombradas por réplica, no exclusivas ni
   autoeliminables.
 - [ ] Verificar que un proceso reiniciado redeclare la topología y consuma DATA y
   controles pendientes.
-- [ ] No agregar volumen ni recuperación de RabbitMQ: el broker no cae en el modelo.
+- [x] No agregar volumen ni recuperación de RabbitMQ: el broker no cae en el modelo.
+
+Cada consumidor coordinado declara `<control_exchange>.partition-<partition_id>`.
+La identidad proviene del `PARTITION_ID` ya estable de Compose, por lo que un
+reinicio vuelve a enlazar la misma cola al exchange `direct`. Las colas continúan
+con `durable=false`: sobreviven a la caída del consumidor, no a la del broker,
+que está excluida del modelo. Una prueba con RabbitMQ real cerró el primer
+consumidor, publicó un control sin consumidores activos y comprobó que una nueva
+conexión recuperó el mensaje al redeclarar el mismo nombre. Aún queda probar el
+reinicio de un componente completo junto con sus mensajes DATA y su estado local.
 
 #### Bloque 4 - Recuperar el pipeline por etapas
 
-- [ ] InputBatcher: batch parcial, IDs ordenados de origen, inbox y outbox.
+- [x] InputBatcher: batch parcial, IDs ordenados de origen, inbox y outbox.
 - [ ] Grupos coordinados: finales observados y finales ya emitidos.
 - [ ] Q3WordAggregator: palabras, idiomas, resultados emitidos y barrera.
 - [ ] Q4WordCounter y Q4Top20Reducer: conteos, parciales, top y finales.
@@ -1051,7 +1098,7 @@ Antes de habilitar consumidores competidores en una etapa se implementará el si
 
 El `prefetch_count=1` limita a uno los mensajes en vuelo por réplica cuando se recibe el control. En Preprocessor, el hilo de control coloca el final en una cola local segura y pausa el consumidor; el hilo principal publica luego `PARTITION_END` por la misma conexión que los datos y reanuda el consumo. Esto conserva el orden por réplica y permite procesar varias ejecuciones.
 
-No se debe asumir orden entre una cola de datos y una cola o exchange de control diferentes. Por eso el primer mensaje de fin atraviesa la misma cola que los datos antes de ser difundido. `MessageMiddlewareExchangeRabbitMQ` implementa el exchange `direct`, las colas exclusivas por consumidor y el modo publicador sin cola. El patrón está integrado en los grupos de tres Preprocessors, QueryRouters, Until2020Filters, Q1EnglishFilters, Q2BiographyFilters, ImageFetchers, WordExtractors, Q3WordProjectors, Q4Q5WordProjectors y Q5DateRouters. Las etapas stateful posteriores completan barreras sobre los finales de esas réplicas.
+No se debe asumir orden entre una cola de datos y una cola o exchange de control diferentes. Por eso el primer mensaje de fin atraviesa la misma cola que los datos antes de ser difundido. `MessageMiddlewareExchangeRabbitMQ` implementa el exchange `direct`, una cola estable por consumidor y el modo publicador sin cola. El patrón está integrado en los grupos de tres Preprocessors, QueryRouters, Until2020Filters, Q1EnglishFilters, Q2BiographyFilters, ImageFetchers, WordExtractors, Q3WordProjectors, Q4Q5WordProjectors y Q5DateRouters. Las etapas stateful posteriores completan barreras sobre los finales de esas réplicas.
 
 ## Comunicación
 
@@ -1127,7 +1174,7 @@ publicar al finalizar. Por eso la configuración actual utiliza `heartbeat=0`.
 La detección rápida de conexiones zombis, la reconexión y la idempotencia ante
 una publicación ambigua forman parte del hito actual de tolerancia a fallos.
 
-`MessageMiddlewareExchangeRabbitMQ` adapta la implementación del TP de Coordinación. Utiliza un exchange `direct`: cada réplica consumidora declara una cola exclusiva y la vincula con las routing keys del grupo, mientras una instancia publicadora puede omitir la creación de cola. Varias colas vinculadas con la misma clave reciben una copia de cada control. Las conexiones de publicación y consumo permanecen separadas porque `BlockingConnection.start_consuming()` bloquea su thread.
+`MessageMiddlewareExchangeRabbitMQ` adapta la implementación del TP de Coordinación. Utiliza un exchange `direct`: cada réplica consumidora declara una cola nombrada `<exchange>.partition-<id>`, no exclusiva ni autoeliminable, y la vincula con las routing keys del grupo; una instancia publicadora puede omitir la creación de cola. Varias colas vinculadas con la misma clave reciben una copia de cada control. Las conexiones de publicación y consumo permanecen separadas porque `BlockingConnection.start_consuming()` bloquea su thread.
 
 ### ACK de resultados
 
@@ -1166,9 +1213,8 @@ consumidores y en el estado local de cada proceso.
 
 Las colas DATA actuales no son exclusivas ni autoeliminables: permanecen en el
 broker estable cuando un consumidor cae y RabbitMQ reencola sus mensajes sin ACK.
-Las colas de control sí deben cambiar de exclusivas y temporales a colas nombradas
-por réplica, no autoeliminables, para conservar los controles mientras la réplica
-se reinicia.
+Las colas de control también son ahora nombradas por réplica, no exclusivas ni
+autoeliminables, para conservar los controles mientras la réplica se reinicia.
 
 Las colas `results.<execution_id>` son deliberadamente temporales:
 
@@ -1539,12 +1585,11 @@ El orden vigente es el del [plan de implementación de tolerancia a fallos](#pla
 
 ## Próximos pasos
 
-1. Implementar el sustrato común de persistencia local con escritura atómica y
-   recuperación.
-2. Persistir el batch parcial junto con sus IDs ordenados para conservar su identidad
-   durante un reinicio e incorporar allí la primera inbox/outbox.
-3. Extender inbox/outbox progresivamente al resto de los componentes según sus
-   estados y ventanas de publicación.
+1. Completar pruebas de las ventanas de caída y de la compactación durable.
+2. Medir el costo de reescribir el snapshot parcial por artículo y cambiar a un
+   journal incremental si el I/O domina la ejecución.
+3. Hacer recuperables las colas de control antes de extender inbox/outbox a los
+   grupos coordinados.
 
 La topología base mantiene tres instancias en los grupos coordinados y tres
 particiones de InputBatcher. La comparación de performance del último hito debe

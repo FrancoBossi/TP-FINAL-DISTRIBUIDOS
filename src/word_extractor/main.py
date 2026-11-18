@@ -22,6 +22,7 @@ def create_messaging(
     q3_output_queue_name: str,
     q4_q5_output_queue_name: str,
     control_exchange_name: str,
+    partition_id: int,
 ) -> WordExtractorMessaging:
     input_queue = MessageMiddlewareQueueRabbitMQ(
         host=mom_host,
@@ -39,6 +40,7 @@ def create_messaging(
         host=mom_host,
         exchange_name=control_exchange_name,
         routing_keys=[control_exchange_name],
+        queue_name=f"{control_exchange_name}.partition-{partition_id}",
     )
     control_exchange_output = MessageMiddlewareExchangeRabbitMQ(
         host=mom_host,
@@ -74,6 +76,7 @@ def main() -> int:
         q3_output_queue_name=config.q3_output_queue,
         q4_q5_output_queue_name=config.q4_q5_output_queue,
         control_exchange_name=config.control_exchange,
+        partition_id=config.partition_id,
     )
     controller = WordExtractorController(
         messaging=messaging,

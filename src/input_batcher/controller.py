@@ -1,11 +1,22 @@
-from common.message_identity import build_message_id
+import logging
+
 from common.message_protocol.message import (
+    ArticleBatchMessage,
     Message,
     RoutedArticleMessage,
     RoutedInputEndMessage,
 )
+from common.persistence import (
+    AtomicJsonStore,
+    DurableExecutionStore,
+    PendingOutput,
+    PersistenceCorruptionError,
+    PersistenceLayout,
+)
 from input_batcher.batcher import BatchAccumulator
 from input_batcher.messaging import Ack, InputBatcherMessaging, Nack
+
+logger = logging.getLogger(__name__)
 
 
 class InputBatcherController:
@@ -13,9 +24,16 @@ class InputBatcherController:
         self,
         batcher: BatchAccumulator,
         messaging: InputBatcherMessaging,
+        persistence_layout: PersistenceLayout,
+        output_destination: str,
     ) -> None:
+        if not output_destination:
+            raise ValueError("output_destination must be nonempty")
         self._batcher = batcher
         self._messaging = messaging
+        self._persistence_layout = persistence_layout
+        self._output_destination = output_destination
+        self._stores: dict[str, DurableExecutionStore] = {}
 
     def process_message(
         self,
@@ -23,53 +41,120 @@ class InputBatcherController:
         ack: Ack,
         nack: Nack,
     ) -> None:
+        if not isinstance(message, (RoutedArticleMessage, RoutedInputEndMessage)):
+            nack()
+            raise ValueError("InputBatcher expected ROUTED_ARTICLE or ROUTED_INPUT_END")
+
+        try:
+            store = self._store_for(message.execution_id)
+        except Exception:
+            nack()
+            raise
+        if store.has_applied(message.message_id):
+            try:
+                self._batcher.restore_state(message.execution_id, store.state)
+                self._publish_pending(store)
+            except Exception:
+                nack()
+                raise
+            ack()
+            self._compact_after_ack(
+                store,
+                message.execution_id,
+                message.message_id,
+            )
+            return
+
+        previous_state = self._batcher.export_state(message.execution_id)
         try:
             match message:
                 case RoutedArticleMessage():
                     batch = self._batcher.add_article(message)
-
-                    if batch is not None:
-                        self._messaging.publish(batch)
+                    outputs: list[Message] = [] if batch is None else [batch]
 
                 case RoutedInputEndMessage():
                     batch = self._batcher.flush(message)
+                    outputs = ([batch] if batch is not None else []) + [message]
 
-                    if batch is not None:
-                        self._messaging.publish(batch)
+            pending = [
+                PendingOutput.from_message(self._output_destination, output)
+                for output in outputs
+            ]
+            applied = store.apply(
+                message.message_id,
+                self._batcher.export_state(message.execution_id),
+                pending,
+            )
+            if not applied:
+                self._batcher.restore_state(message.execution_id, store.state)
+        except Exception:
+            self._batcher.restore_state(message.execution_id, previous_state)
+            nack()
+            raise
 
-                    self._messaging.publish(message)
-
-                case _:
-                    raise ValueError(
-                        "InputBatcher expected ROUTED_ARTICLE or ROUTED_INPUT_END"
-                    )
+        try:
+            self._publish_pending(store)
         except Exception:
             nack()
             raise
 
         ack()
+        self._compact_after_ack(
+            store,
+            message.execution_id,
+            message.message_id,
+        )
 
-    def _publish_remaining_batches(self) -> None:
-        for batch in list(self._batcher.current_batch.values()):
-            self._messaging.publish(batch)
-            self._batcher.flush(
-                RoutedInputEndMessage(
-                    execution_id=batch.execution_id,
-                    reply_queue=batch.reply_queue,
-                    message_id=build_message_id(
-                        execution_id=batch.execution_id,
-                        producer_id="input_batcher",
-                        operation="shutdown_flush",
-                        identity={},
-                    ),
+    def _store_for(self, execution_id: str) -> DurableExecutionStore:
+        store = self._stores.get(execution_id)
+        if store is None:
+            store = DurableExecutionStore(
+                AtomicJsonStore(self._persistence_layout.state_path(execution_id))
+            )
+            self._stores[execution_id] = store
+        return store
+
+    def _publish_pending(self, store: DurableExecutionStore) -> None:
+        for output in store.pending_outputs:
+            if output.destination != self._output_destination:
+                raise PersistenceCorruptionError(
+                    "InputBatcher outbox contains an unexpected destination"
                 )
+            message = output.deserialize_message()
+            if not isinstance(message, (ArticleBatchMessage, RoutedInputEndMessage)):
+                raise PersistenceCorruptionError(
+                    "InputBatcher outbox contains an invalid message"
+                )
+            self._messaging.publish(message)
+            store.confirm(output)
+
+    def _recover(self) -> None:
+        for execution_id in self._persistence_layout.execution_ids():
+            store = self._store_for(execution_id)
+            self._batcher.restore_state(execution_id, store.state)
+            self._publish_pending(store)
+
+    def _compact_after_ack(
+        self,
+        store: DurableExecutionStore,
+        execution_id: str,
+        last_message_id: str,
+    ) -> None:
+        state = self._batcher.export_state(execution_id)
+        retained = list(state.get("source_message_ids", []))
+        if last_message_id not in retained:
+            retained.append(last_message_id)
+        try:
+            store.compact_inbox(retained)
+        except Exception:
+            logger.exception(
+                "Could not compact durable inbox for execution %s",
+                execution_id,
             )
 
     def start(self) -> None:
+        self._recover()
         self._messaging.start_consuming(self.process_message)
-        # These articles were already acknowledged. Publish their partial
-        # batches without manufacturing an end-of-input for the execution.
-        self._publish_remaining_batches()
 
     def stop(self) -> None:
         self._messaging.stop_consuming()

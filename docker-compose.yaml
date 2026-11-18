@@ -43,6 +43,9 @@ services:
       INPUT_BATCHER_PARTITION_ID: "0"
       OUTPUT_QUEUE: preprocessor.input
       MAX_BATCH_BYTES: "${MAX_BATCH_BYTES:-10485760}"
+      STATE_ROOT: /state
+    volumes:
+      - input_batcher_0_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -59,6 +62,9 @@ services:
       INPUT_BATCHER_PARTITION_ID: "1"
       OUTPUT_QUEUE: preprocessor.input
       MAX_BATCH_BYTES: "${MAX_BATCH_BYTES:-10485760}"
+      STATE_ROOT: /state
+    volumes:
+      - input_batcher_1_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -75,6 +81,9 @@ services:
       INPUT_BATCHER_PARTITION_ID: "2"
       OUTPUT_QUEUE: preprocessor.input
       MAX_BATCH_BYTES: "${MAX_BATCH_BYTES:-10485760}"
+      STATE_ROOT: /state
+    volumes:
+      - input_batcher_2_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -1014,5 +1023,8 @@ services:
       - prometheus
 
 volumes:
+  input_batcher_0_state:
+  input_batcher_1_state:
+  input_batcher_2_state:
   prometheus_data:
   grafana_data:

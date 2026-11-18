@@ -171,7 +171,11 @@ class MessageMiddlewareExchangeRabbitMQ(
         exchange_name: str,
         routing_keys: list[str],
         create_queue: bool = True,
+        queue_name: str | None = None,
     ) -> None:
+        if create_queue and not queue_name:
+            raise ValueError("A stable queue_name is required for an exchange consumer")
+
         self._exchange_name = exchange_name
         self._routing_keys = routing_keys
 
@@ -188,11 +192,13 @@ class MessageMiddlewareExchangeRabbitMQ(
             )
 
             if create_queue:
-                queue = self._channel.queue_declare(
-                    queue="",
-                    exclusive=True,
+                self._channel.queue_declare(
+                    queue=queue_name,
+                    durable=False,
+                    exclusive=False,
+                    auto_delete=False,
                 )
-                self._queue_name = queue.method.queue
+                self._queue_name = queue_name
 
                 for routing_key in routing_keys:
                     self._channel.queue_bind(

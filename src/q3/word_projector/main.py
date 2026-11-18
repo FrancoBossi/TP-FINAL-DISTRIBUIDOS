@@ -18,6 +18,7 @@ def create_messaging(
     mom_host: str,
     input_queue_name: str,
     output_queue_prefix: str,
+    partition_id: int,
     partition_count: int = 1,
     control_exchange_name: str = "q3_word_projector.control",
 ) -> Q3WordProjectorMessaging:
@@ -35,6 +36,7 @@ def create_messaging(
         host=mom_host,
         exchange_name=control_exchange_name,
         routing_keys=[control_exchange_name],
+        queue_name=f"{control_exchange_name}.partition-{partition_id}",
     )
     control_exchange_output = MessageMiddlewareExchangeRabbitMQ(
         host=mom_host,
@@ -67,6 +69,7 @@ def main() -> int:
         mom_host=config.mom_host,
         input_queue_name=config.input_queue,
         output_queue_prefix=config.output_queue_prefix,
+        partition_id=config.partition_id,
         partition_count=config.partition_count,
         control_exchange_name=config.control_exchange,
     )

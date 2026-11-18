@@ -22,6 +22,7 @@ def create_messaging(
     input_queue_name: str,
     historical_output_queue_name: str,
     candidate_output_queue_name: str,
+    partition_id: int,
     historical_partition_count: int = 1,
     control_exchange_name: str = "q5_date_router.control",
     candidate_output_queue_prefix: str = "q5_comparator.input",
@@ -49,6 +50,7 @@ def create_messaging(
         host=mom_host,
         exchange_name=control_exchange_name,
         routing_keys=[control_exchange_name],
+        queue_name=f"{control_exchange_name}.partition-{partition_id}",
     )
     control_exchange_output = MessageMiddlewareExchangeRabbitMQ(
         host=mom_host,
@@ -85,6 +87,7 @@ def main() -> int:
         input_queue_name=config.input_queue,
         historical_output_queue_name=config.historical_output_queue,
         candidate_output_queue_name=config.candidate_output_queue,
+        partition_id=config.partition_id,
         historical_partition_count=config.historical_partition_count,
         control_exchange_name=config.control_exchange,
         candidate_output_queue_prefix=config.candidate_output_queue_prefix,
