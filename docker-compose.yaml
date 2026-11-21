@@ -150,6 +150,9 @@ services:
       CONTROL_EXCHANGE: query_router.control
       PARTITION_ID: "0"
       PREPROCESSOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - query_router_0_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -168,6 +171,9 @@ services:
       CONTROL_EXCHANGE: query_router.control
       PARTITION_ID: "1"
       PREPROCESSOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - query_router_1_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -186,6 +192,9 @@ services:
       CONTROL_EXCHANGE: query_router.control
       PARTITION_ID: "2"
       PREPROCESSOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - query_router_2_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -255,6 +264,9 @@ services:
       CONTROL_EXCHANGE: q3_word_projector.control
       PARTITION_ID: "0"
       WORD_EXTRACTOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q3_word_projector_0_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -273,6 +285,9 @@ services:
       CONTROL_EXCHANGE: q3_word_projector.control
       PARTITION_ID: "1"
       WORD_EXTRACTOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q3_word_projector_1_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -291,6 +306,9 @@ services:
       CONTROL_EXCHANGE: q3_word_projector.control
       PARTITION_ID: "2"
       WORD_EXTRACTOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q3_word_projector_2_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -309,6 +327,9 @@ services:
       CONTROL_EXCHANGE: word_extractor.control
       PARTITION_ID: "0"
       QUERY_ROUTER_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - word_extractor_0_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -327,6 +348,9 @@ services:
       CONTROL_EXCHANGE: word_extractor.control
       PARTITION_ID: "1"
       QUERY_ROUTER_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - word_extractor_1_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -345,6 +369,9 @@ services:
       CONTROL_EXCHANGE: word_extractor.control
       PARTITION_ID: "2"
       QUERY_ROUTER_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - word_extractor_2_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -750,6 +777,9 @@ services:
       CONTROL_EXCHANGE: until_2020.control
       PARTITION_ID: "0"
       QUERY_ROUTER_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - until_2020_filter_0_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -768,6 +798,9 @@ services:
       CONTROL_EXCHANGE: until_2020.control
       PARTITION_ID: "1"
       QUERY_ROUTER_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - until_2020_filter_1_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -786,6 +819,9 @@ services:
       CONTROL_EXCHANGE: until_2020.control
       PARTITION_ID: "2"
       QUERY_ROUTER_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - until_2020_filter_2_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -803,6 +839,9 @@ services:
       CONTROL_EXCHANGE: q1.control
       PARTITION_ID: "0"
       UNTIL_2020_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q1_0_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -820,6 +859,9 @@ services:
       CONTROL_EXCHANGE: q1.control
       PARTITION_ID: "1"
       UNTIL_2020_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q1_1_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -837,6 +879,9 @@ services:
       CONTROL_EXCHANGE: q1.control
       PARTITION_ID: "2"
       UNTIL_2020_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q1_2_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -854,6 +899,9 @@ services:
       CONTROL_EXCHANGE: q2_biography_filter.control
       PARTITION_ID: "0"
       UNTIL_2020_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q2_biography_filter_0_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -871,6 +919,9 @@ services:
       CONTROL_EXCHANGE: q2_biography_filter.control
       PARTITION_ID: "1"
       UNTIL_2020_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q2_biography_filter_1_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -888,6 +939,9 @@ services:
       CONTROL_EXCHANGE: q2_biography_filter.control
       PARTITION_ID: "2"
       UNTIL_2020_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q2_biography_filter_2_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -909,6 +963,9 @@ services:
       IMAGE_FETCH_REQUEST_DELAY: "${IMAGE_FETCH_REQUEST_DELAY:-1}"
       PARTITION_ID: "0"
       BIOGRAPHY_FILTER_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q2_image_fetcher_0_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -930,6 +987,9 @@ services:
       IMAGE_FETCH_REQUEST_DELAY: "${IMAGE_FETCH_REQUEST_DELAY:-1}"
       PARTITION_ID: "1"
       BIOGRAPHY_FILTER_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q2_image_fetcher_1_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -1026,5 +1086,25 @@ volumes:
   input_batcher_0_state:
   input_batcher_1_state:
   input_batcher_2_state:
+  query_router_0_state:
+  query_router_1_state:
+  query_router_2_state:
+  until_2020_filter_0_state:
+  until_2020_filter_1_state:
+  until_2020_filter_2_state:
+  word_extractor_0_state:
+  word_extractor_1_state:
+  word_extractor_2_state:
+  q1_0_state:
+  q1_1_state:
+  q1_2_state:
+  q2_biography_filter_0_state:
+  q2_biography_filter_1_state:
+  q2_biography_filter_2_state:
+  q2_image_fetcher_0_state:
+  q2_image_fetcher_1_state:
+  q3_word_projector_0_state:
+  q3_word_projector_1_state:
+  q3_word_projector_2_state:
   prometheus_data:
   grafana_data:

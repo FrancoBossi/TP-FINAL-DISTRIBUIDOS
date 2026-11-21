@@ -6,6 +6,7 @@ from common.middleware import (
     MessageMiddlewareQueueRabbitMQ,
 )
 from common.partition_router import PartitionRouter
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from q3.word_projector.config import Q3WordProjectorConfig, configure_logging
 from q3.word_projector.controller import Q3WordProjectorController
@@ -78,6 +79,9 @@ def main() -> int:
         router=PartitionRouter(config.output_queue_prefix, config.partition_count),
         partition_id=config.partition_id,
         word_extractor_partition_count=config.word_extractor_partition_count,
+        persistence_layout=PersistenceLayout(
+            config.state_root, "q3_word_projector", config.partition_id
+        ),
     )
 
     logger.info(

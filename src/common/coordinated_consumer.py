@@ -1,6 +1,7 @@
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from queue import Empty, Queue
-from threading import Thread
+from threading import Event, Thread
 
 from common.message_protocol.message import Message
 from common.middleware.middleware import (
@@ -17,6 +18,13 @@ MessageCallback = Callable[
 ControlMessageCallback = Callable[[Message], None]
 
 
+@dataclass
+class _PendingControl:
+    message: Message
+    completed: Event = field(default_factory=Event)
+    error: Exception | None = None
+
+
 class CoordinatedConsumer:
     def __init__(
         self,
@@ -25,8 +33,9 @@ class CoordinatedConsumer:
     ) -> None:
         self._input_queue = input_queue
         self._control_exchange_input = control_exchange_input
-        self._pending_control_messages: Queue[Message] = Queue()
+        self._pending_control_messages: Queue[_PendingControl] = Queue()
         self._stopped = False
+        self._control_shutdown = Event()
         self._control_error: Exception | None = None
 
     def _consume_control_messages(self) -> None:
@@ -37,11 +46,20 @@ class CoordinatedConsumer:
         ) -> None:
             try:
                 message = Message.deserialize(body)
-                self._pending_control_messages.put(message)
+                pending = _PendingControl(message)
+                self._pending_control_messages.put(pending)
             except Exception:
                 nack()
                 raise
 
+            while not pending.completed.wait(timeout=0.1):
+                if self._control_shutdown.is_set():
+                    nack(requeue=True)
+                    return
+
+            if pending.error is not None:
+                nack(requeue=True)
+                return
             ack()
 
         try:
@@ -64,6 +82,7 @@ class CoordinatedConsumer:
 
         if self._stopped:
             return
+        self._control_shutdown.clear()
         self._control_error = None
 
         control_thread = Thread(
@@ -86,21 +105,29 @@ class CoordinatedConsumer:
             # Snapshot controls BEFORE the broker fence: controls arriving during
             # the fence belong to the next pass and may precede newer deliveries.
             self._input_queue.drain_pending()
-            for message in pending:
+            for pending_control in pending:
                 if self._stopped:
                     break
-                on_control_message(message)
+                try:
+                    on_control_message(pending_control.message)
+                except Exception as error:
+                    pending_control.error = error
+                    pending_control.completed.set()
+                    raise
+                pending_control.completed.set()
 
         try:
             self._input_queue.start_consuming(
                 deserialize_message, on_idle=process_pending_control
             )
         finally:
+            self._control_shutdown.set()
             self._control_exchange_input.stop_consuming()
             control_thread.join()
 
     def stop_consuming(self) -> None:
         self._stopped = True
+        self._control_shutdown.set()
 
         try:
             self._input_queue.stop_consuming()

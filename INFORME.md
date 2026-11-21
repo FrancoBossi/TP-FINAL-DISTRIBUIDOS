@@ -632,6 +632,14 @@ control publicado sin consumidor queda pendiente y una conexión nueva lo recupe
 al redeclarar el mismo nombre. La prueba integral de reinicio de cada proceso se
 realizará junto con la recuperación de su barrera local.
 
+La confirmación del control también respeta el límite de aplicación. El thread que
+consume el exchange conserva la entrega sin ACK mientras el thread principal
+realiza el fence de DATA y ejecuta el callback del controller. Solo después de que
+ese callback termina se envía el ACK desde el thread dueño de la conexión Pika. Si
+el callback falla o comienza el shutdown antes de aplicarlo, se envía NACK con
+reencolado. La posible pérdida del ACK posterior al efecto se tolerará mediante la
+inbox y la outbox durable de cada etapa.
+
 ### 12.4 Publisher confirms, ACK, NACK y prefetch
 
 RabbitMQ interviene en dos momentos diferentes. Un **publisher confirm** informa
@@ -972,6 +980,22 @@ Esta primera implementación reescribe el snapshot parcial por artículo; se med
 su costo y se migrará a un journal incremental si el volumen de escritura resulta
 dominante.
 
+Preprocessor permanece deliberadamente stateless. La normalización de un batch es
+determinista y puede repetirse ante una redelivery; escribir un snapshot por batch
+agregaría un `fsync` sin evitar que una entrega reasignada a otra réplica produzca
+la misma salida física. Esa salida conserva su identidad lógica y la etapa siguiente
+la deduplica. Los controles, en cambio, permanecen sin ACK hasta que termina su
+callback, por lo que una caída anterior provoca su reencolado.
+
+QueryRouter es la primera barrera coordinada durable. Cada una de sus tres
+particiones persiste en su propio volumen el conjunto ordenado de particiones de
+Preprocessor observadas, la `reply_queue` y si la barrera ya se completó. Al recibir
+el último final, el mismo commit agrega a la outbox el `PARTITION_END` destinado a
+`until_2020.input` y a `word_extractor.input`. La clave `(destination, message_id)`
+permite confirmar ambas copias por separado. Las pruebas reconstruyen una barrera
+incompleta, recuperan únicamente la segunda rama después de una caída a mitad del
+fan-out y descartan una redelivery posterior a la confirmación de ambas salidas.
+
 ### 18.3 Exactly-once observable
 
 El sistema no intenta convertir RabbitMQ en un transporte exactly-once. Mantiene
@@ -1103,7 +1127,7 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 
 ### 22.2 Evidencia disponible al corte
 
-- La suite local completa pasa con 290 tests.
+- La suite local completa pasa con 295 tests.
 - Se conectaron doce clientes mínimos al Gateway con los InputBatcher detenidos. Sus 24 mensajes —un artículo y un final por ejecución— quedaron distribuidos entre `input_batcher.input.0`, `.1` y `.2` sin dividir una ejecución. Al iniciar las tres particiones, cada cola tuvo un único consumidor, las tres quedaron vacías y `preprocessor.input` recibió los 24 mensajes esperados.
 - Se validaron con RabbitMQ real tres réplicas de Preprocessor y tres de QueryRouter, con tres bindings exclusivos en cada exchange de control. Nueve batches produjeron nueve mensajes y un único final en cada una de las cuatro salidas posteriores a Until2020Filter y WordExtractor. Una segunda ejecución confirmó que ambos grupos reanudan el consumo después de sus barreras.
 - Se validaron tres réplicas de Until2020Filter con tres bindings exclusivos. Seis batches y tres finales de QueryRouter produjeron tres resultados Q1, ningún resultado Q2 y un único `QUERY_END` por consulta. Una segunda ejecución vacía sin reiniciar containers confirmó la reanudación y limpieza de las barreras.

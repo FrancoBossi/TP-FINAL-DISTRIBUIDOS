@@ -5,6 +5,7 @@ from common.middleware import (
     MessageMiddlewareExchangeRabbitMQ,
     MessageMiddlewareQueueRabbitMQ,
 )
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from word_extractor.config import (
     WordExtractorConfig,
@@ -82,6 +83,11 @@ def main() -> int:
         messaging=messaging,
         partition_id=config.partition_id,
         query_router_partition_count=config.query_router_partition_count,
+        persistence_layout=PersistenceLayout(
+            config.state_root, "word_extractor", config.partition_id
+        ),
+        q3_destination=config.q3_output_queue,
+        q4_q5_destination=config.q4_q5_output_queue,
     )
 
     logger.info(

@@ -5,6 +5,7 @@ from common.middleware import (
     MessageMiddlewareExchangeRabbitMQ,
     MessageMiddlewareQueueRabbitMQ,
 )
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from query_router.config import QueryRouterConfig, configure_logging
 from query_router.controller import QueryRouterController
@@ -79,6 +80,13 @@ def main() -> int:
         messaging=messaging,
         partition_id=config.partition_id,
         preprocessor_partition_count=config.preprocessor_partition_count,
+        persistence_layout=PersistenceLayout(
+            config.state_root,
+            "query_router",
+            config.partition_id,
+        ),
+        q1_q2_destination=config.q1_q2_output_queue,
+        text_destination=config.text_output_queue,
     )
 
     logger.info(

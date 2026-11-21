@@ -5,6 +5,7 @@ from common.middleware import (
     MessageMiddlewareExchangeRabbitMQ,
     MessageMiddlewareQueueRabbitMQ,
 )
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from q2.image_fetcher.config import (
     ImageFetcherConfig,
@@ -75,6 +76,10 @@ def main() -> int:
         messaging=messaging,
         partition_id=config.partition_id,
         biography_filter_partition_count=(config.biography_filter_partition_count),
+        persistence_layout=PersistenceLayout(
+            config.state_root, "q2_image_fetcher", config.partition_id
+        ),
+        output_destination=config.output_queue,
     )
 
     logger.info(

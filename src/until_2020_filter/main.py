@@ -5,6 +5,7 @@ from common.middleware import (
     MessageMiddlewareExchangeRabbitMQ,
     MessageMiddlewareQueueRabbitMQ,
 )
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from until_2020_filter.config import (
     Until2020FilterConfig,
@@ -82,6 +83,11 @@ def main() -> int:
         messaging=messaging,
         partition_id=config.partition_id,
         query_router_partition_count=config.query_router_partition_count,
+        persistence_layout=PersistenceLayout(
+            config.state_root, "until_2020_filter", config.partition_id
+        ),
+        q1_destination=config.q1_output_queue,
+        q2_destination=config.q2_output_queue,
     )
 
     logger.info(

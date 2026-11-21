@@ -45,7 +45,7 @@ El sistema debe resolver las siguientes consultas:
 | ResultSink | Implementado como instancia única con barreras para Q1, Q2, Q3 y Q5; Q4 converge en un reducer lógico |
 | Atención concurrente de varios clientes | Implementada con una sesión por thread |
 | Graceful shutdown por SIGTERM/SIGINT | Implementado |
-| Estrategia de tolerancia a fallos y persistencia | En curso: sustrato durable e InputBatcher implementados |
+| Estrategia de tolerancia a fallos y persistencia | En curso: sustrato durable, InputBatcher y barrera de QueryRouter implementados |
 | Detección de procesos caídos mediante comunicación | Pendiente |
 | Consenso implementado por el grupo | Pendiente |
 | Reinicio automático de procesos caídos | Pendiente |
@@ -542,16 +542,39 @@ consumidor, publicó un control sin consumidores activos y comprobó que una nue
 conexión recuperó el mensaje al redeclarar el mismo nombre. Aún queda probar el
 reinicio de un componente completo junto con sus mensajes DATA y su estado local.
 
+`CoordinatedConsumer` tampoco confirma un control al copiarlo a su cola local. El
+thread de RabbitMQ espera a que el thread principal termine
+`process_control_message` y recién entonces envía el ACK desde la conexión que le
+pertenece. Una excepción o un shutdown anterior a la aplicación produce NACK con
+reencolado. Todavía puede existir una reentrega si el efecto termina pero el ACK se
+pierde; la inbox/outbox de cada controller hará idempotente esa ventana.
+
 #### Bloque 4 - Recuperar el pipeline por etapas
 
 - [x] InputBatcher: batch parcial, IDs ordenados de origen, inbox y outbox.
 - [ ] Grupos coordinados: finales observados y finales ya emitidos.
+  - [x] QueryRouter: barrera de Preprocessor y fan-out final durable.
+  - [ ] Until2020Filter, WordExtractor, Q1, Q2 y proyectores restantes.
 - [ ] Q3WordAggregator: palabras, idiomas, resultados emitidos y barrera.
 - [ ] Q4WordCounter y Q4Top20Reducer: conteos, parciales, top y finales.
 - [ ] Q5StatsWorker y Q5AverageReducer: suma, cantidad, promedio, parciales y finales.
 - [ ] Q5Comparator: candidatos, promedio, finales, resultados emitidos y buffer completo.
 - [ ] ResultSink: deduplicación, barreras, resultados/finales y salida durable.
 - [ ] Para cada etapa: matar antes y después de persistir/publicar/ACK, reiniciar y comparar salida.
+
+Preprocessor no incorpora un journal por batch: su normalización es stateless y
+determinista, por lo que una entrega reintentada puede reprocesarse. Persistir cada
+batch agregaría un `fsync` sin impedir que RabbitMQ entregue el reintento a otra
+réplica. La identidad estable de la salida permite que la siguiente etapa la
+deduplique. Sí se conserva el control sin ACK hasta que el callback termina.
+
+QueryRouter es el primer grupo coordinado integrado con persistencia. Cada partición
+guarda los IDs de Preprocessor ya observados, `reply_queue`, el estado de finalización
+y las dos salidas de cierre en una transición atómica. Sus tres réplicas montan
+volúmenes separados. Al recuperar una barrera incompleta continúa desde los finales
+confirmados; si cayó a mitad del fan-out, publica solamente el destino todavía
+pendiente. Una reentrega posterior a ambos publisher confirms no vuelve a emitir el
+final.
 
 #### Bloque 5 - Supervisión, consenso y reinicio
 
