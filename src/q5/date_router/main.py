@@ -6,6 +6,7 @@ from common.middleware import (
     MessageMiddlewareQueueRabbitMQ,
 )
 from common.partition_router import PartitionRouter
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from q5.date_router.config import (
     Q5DateRouterConfig,
@@ -104,6 +105,9 @@ def main() -> int:
         candidate_router=PartitionRouter(
             config.candidate_output_queue_prefix,
             config.candidate_partition_count,
+        ),
+        persistence_layout=PersistenceLayout(
+            config.state_root, "q5_date_router", config.partition_id
         ),
     )
 

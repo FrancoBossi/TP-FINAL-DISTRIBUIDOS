@@ -212,6 +212,9 @@ services:
       PARTITION_ID: "0"
       PARTITION_COUNT: "3"
       PROJECTOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q3_word_aggregator_0_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -229,6 +232,9 @@ services:
       PARTITION_ID: "1"
       PARTITION_COUNT: "3"
       PROJECTOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q3_word_aggregator_1_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -246,6 +252,9 @@ services:
       PARTITION_ID: "2"
       PARTITION_COUNT: "3"
       PROJECTOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q3_word_aggregator_2_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -392,6 +401,9 @@ services:
       CONTROL_EXCHANGE: q4_q5_word_projector.control
       PARTITION_ID: "0"
       WORD_EXTRACTOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q4_q5_word_projector_0_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -412,6 +424,9 @@ services:
       CONTROL_EXCHANGE: q4_q5_word_projector.control
       PARTITION_ID: "1"
       WORD_EXTRACTOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q4_q5_word_projector_1_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -432,6 +447,9 @@ services:
       CONTROL_EXCHANGE: q4_q5_word_projector.control
       PARTITION_ID: "2"
       WORD_EXTRACTOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q4_q5_word_projector_2_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -450,6 +468,9 @@ services:
       REDUCER_PARTITION_COUNT: "3"
       PARTITION_ID: "0"
       PROJECTOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q4_word_counter_0_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -468,6 +489,9 @@ services:
       REDUCER_PARTITION_COUNT: "3"
       PARTITION_ID: "1"
       PROJECTOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q4_word_counter_1_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -486,6 +510,9 @@ services:
       REDUCER_PARTITION_COUNT: "3"
       PARTITION_ID: "2"
       PROJECTOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q4_word_counter_2_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -501,6 +528,10 @@ services:
       INPUT_QUEUE: q4_top20_reducer.input.0
       OUTPUT_QUEUE: result_sink.input
       PARTITION_COUNT: "3"
+      PARTITION_ID: "0"
+      STATE_ROOT: /state
+    volumes:
+      - q4_top20_reducer_0_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -516,6 +547,10 @@ services:
       INPUT_QUEUE: q4_top20_reducer.input.1
       OUTPUT_QUEUE: result_sink.input
       PARTITION_COUNT: "3"
+      PARTITION_ID: "1"
+      STATE_ROOT: /state
+    volumes:
+      - q4_top20_reducer_1_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -531,6 +566,10 @@ services:
       INPUT_QUEUE: q4_top20_reducer.input.2
       OUTPUT_QUEUE: result_sink.input
       PARTITION_COUNT: "3"
+      PARTITION_ID: "2"
+      STATE_ROOT: /state
+    volumes:
+      - q4_top20_reducer_2_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -553,6 +592,9 @@ services:
       CONTROL_EXCHANGE: q5_date_router.control
       PARTITION_ID: "0"
       PROJECTOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q5_date_router_0_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -575,6 +617,9 @@ services:
       CONTROL_EXCHANGE: q5_date_router.control
       PARTITION_ID: "1"
       PROJECTOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q5_date_router_1_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -597,6 +642,9 @@ services:
       CONTROL_EXCHANGE: q5_date_router.control
       PARTITION_ID: "2"
       PROJECTOR_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q5_date_router_2_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -615,6 +663,9 @@ services:
       REDUCER_PARTITION_COUNT: "3"
       PARTITION_ID: "0"
       DATE_ROUTER_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q5_stats_worker_0_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -633,6 +684,9 @@ services:
       REDUCER_PARTITION_COUNT: "3"
       PARTITION_ID: "1"
       DATE_ROUTER_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q5_stats_worker_1_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -651,6 +705,9 @@ services:
       REDUCER_PARTITION_COUNT: "3"
       PARTITION_ID: "2"
       DATE_ROUTER_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
+    volumes:
+      - q5_stats_worker_2_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -668,6 +725,10 @@ services:
       OUTPUT_QUEUE_PREFIX: q5_comparator.input
       COMPARATOR_PARTITION_COUNT: "3"
       PARTITION_COUNT: "3"
+      PARTITION_ID: "0"
+      STATE_ROOT: /state
+    volumes:
+      - q5_average_reducer_0_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -685,6 +746,10 @@ services:
       OUTPUT_QUEUE_PREFIX: q5_comparator.input
       COMPARATOR_PARTITION_COUNT: "3"
       PARTITION_COUNT: "3"
+      PARTITION_ID: "1"
+      STATE_ROOT: /state
+    volumes:
+      - q5_average_reducer_1_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -702,6 +767,10 @@ services:
       OUTPUT_QUEUE_PREFIX: q5_comparator.input
       COMPARATOR_PARTITION_COUNT: "3"
       PARTITION_COUNT: "3"
+      PARTITION_ID: "2"
+      STATE_ROOT: /state
+    volumes:
+      - q5_average_reducer_2_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -719,8 +788,10 @@ services:
       Q5_BUFFER_DIRECTORY: /var/lib/q5-candidates/0
       PARTITION_ID: "0"
       DATE_ROUTER_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
     volumes:
       - ./q5_candidate_buffer:/var/lib/q5-candidates
+      - q5_comparator_0_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -738,8 +809,10 @@ services:
       Q5_BUFFER_DIRECTORY: /var/lib/q5-candidates/1
       PARTITION_ID: "1"
       DATE_ROUTER_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
     volumes:
       - ./q5_candidate_buffer:/var/lib/q5-candidates
+      - q5_comparator_1_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -757,8 +830,10 @@ services:
       Q5_BUFFER_DIRECTORY: /var/lib/q5-candidates/2
       PARTITION_ID: "2"
       DATE_ROUTER_PARTITION_COUNT: "3"
+      STATE_ROOT: /state
     volumes:
       - ./q5_candidate_buffer:/var/lib/q5-candidates
+      - q5_comparator_2_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -1008,6 +1083,9 @@ services:
       Q3_PARTITION_COUNT: "${Q3_PARTITION_COUNT:-3}"
       Q4_PARTITION_COUNT: "${Q4_PARTITION_COUNT:-1}"
       Q5_PARTITION_COUNT: "${Q5_PARTITION_COUNT:-3}"
+      STATE_ROOT: /state
+    volumes:
+      - result_sink_state:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -1106,5 +1184,30 @@ volumes:
   q3_word_projector_0_state:
   q3_word_projector_1_state:
   q3_word_projector_2_state:
+  q4_q5_word_projector_0_state:
+  q4_q5_word_projector_1_state:
+  q4_q5_word_projector_2_state:
+  q5_date_router_0_state:
+  q5_date_router_1_state:
+  q5_date_router_2_state:
+  q3_word_aggregator_0_state:
+  q3_word_aggregator_1_state:
+  q3_word_aggregator_2_state:
+  q4_word_counter_0_state:
+  q4_word_counter_1_state:
+  q4_word_counter_2_state:
+  q4_top20_reducer_0_state:
+  q4_top20_reducer_1_state:
+  q4_top20_reducer_2_state:
+  q5_stats_worker_0_state:
+  q5_stats_worker_1_state:
+  q5_stats_worker_2_state:
+  q5_average_reducer_0_state:
+  q5_average_reducer_1_state:
+  q5_average_reducer_2_state:
+  q5_comparator_0_state:
+  q5_comparator_1_state:
+  q5_comparator_2_state:
+  result_sink_state:
   prometheus_data:
   grafana_data:

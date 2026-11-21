@@ -124,11 +124,13 @@ class TestResults(unittest.TestCase):
                 QueryEndMessage(
                     query_id=1,
                     execution_id=execution_id,
+                    result_id="query-1-end",
                 ),
                 ResultMessage(
                     query_id=1,
                     record={},
                     execution_id=execution_id,
+                    result_id="query-1-late-result",
                 ),
             ],
         ):
@@ -136,6 +138,36 @@ class TestResults(unittest.TestCase):
                 with patch("client.client.recv_msg", side_effect=messages):
                     with self.assertRaises(ValueError):
                         Client("unused", 0).receive_results(Mock(), output_dir)
+
+    def test_client_acks_redelivery_without_writing_result_twice(self):
+        execution_id = "execution-123"
+        result = ResultMessage(
+            query_id=1,
+            record={"title": "A"},
+            execution_id=execution_id,
+            result_id="query-1-result-a",
+        )
+        messages = [result, result]
+        messages.extend(
+            QueryEndMessage(
+                query_id=query_id,
+                execution_id=execution_id,
+                result_id=f"query-{query_id}-end",
+            )
+            for query_id in range(1, 6)
+        )
+
+        with TemporaryDirectory() as output_dir:
+            sock = Mock()
+            with (
+                patch("client.client.recv_msg", side_effect=messages),
+                patch("client.client.send_msg") as send,
+            ):
+                Client("unused", 0).receive_results(sock, output_dir)
+
+            with open(f"{output_dir}/query1.jsonl", encoding="utf-8") as output:
+                self.assertEqual(output.readlines(), ['{"title": "A"}\n'])
+            self.assertEqual(send.call_count, 7)
 
 
 if __name__ == "__main__":

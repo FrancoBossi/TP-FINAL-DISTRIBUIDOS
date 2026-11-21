@@ -3,6 +3,7 @@ from types import FrameType
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
 from common.middleware.middleware_rabbitmq import MessagePublisherRabbitMQ
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from result_sink.config import ResultSinkConfig, configure_logging
 from result_sink.controller import ResultSinkController
@@ -50,6 +51,7 @@ def main() -> int:
     controller = ResultSinkController(
         messaging=messaging,
         partition_counts=config.partition_counts,
+        persistence_layout=PersistenceLayout(config.state_root, "result_sink", 0),
     )
 
     logger.info(

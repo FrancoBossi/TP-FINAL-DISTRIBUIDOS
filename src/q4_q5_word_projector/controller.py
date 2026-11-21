@@ -1,6 +1,7 @@
 import json
 
 from common.coordinated_consumer import Ack, Nack
+from common.durable_barrier import DurableBarrier
 from common.message_identity import build_control_message_id, derive_message_id
 from common.message_protocol.message import (
     Message,
@@ -9,6 +10,7 @@ from common.message_protocol.message import (
     TokenizedArticleBatchMessage,
 )
 from common.partition_router import PartitionRouter
+from common.persistence import PersistenceLayout
 from q4_q5_word_projector.messaging import Q4Q5WordProjectorMessaging
 from q4_q5_word_projector.projector import project_batch
 
@@ -20,6 +22,8 @@ class Q4Q5WordProjectorController:
         router: PartitionRouter,
         partition_id: int,
         word_extractor_partition_count: int,
+        persistence_layout: PersistenceLayout | None = None,
+        q5_destination: str = "q5_date_router.input",
     ) -> None:
         if word_extractor_partition_count <= 0:
             raise ValueError("WordExtractor partition count must be positive")
@@ -28,6 +32,45 @@ class Q4Q5WordProjectorController:
         self._partition_id = partition_id
         self._word_extractor_partition_count = word_extractor_partition_count
         self._finished_word_extractor_partitions: dict[str, set[int]] = {}
+        q4_destinations = [
+            f"{router.queue_prefix}.{partition}"
+            for partition in range(router.partition_count)
+        ]
+        publishers = {
+            queue: (
+                lambda message, queue=queue: self._messaging.publish_q4_to(
+                    queue, message
+                )
+            )
+            for queue in q4_destinations
+        }
+        publishers[q5_destination] = self._messaging.publish_q5
+        self._durable_barrier = (
+            DurableBarrier(
+                persistence_layout,
+                word_extractor_partition_count,
+                publishers,
+                lambda message: {
+                    destination: self._partition_end(message)
+                    for destination in publishers
+                },
+            )
+            if persistence_layout is not None
+            else None
+        )
+
+    def _partition_end(self, message: PartitionEndMessage) -> PartitionEndMessage:
+        return PartitionEndMessage(
+            stage="q4_q5_word_projector",
+            partition_id=self._partition_id,
+            execution_id=message.execution_id,
+            reply_queue=message.reply_queue,
+            message_id=build_control_message_id(
+                execution_id=message.execution_id,
+                stage="q4_q5_word_projector",
+                partition_id=self._partition_id,
+            ),
+        )
 
     def _validate_word_extractor_end(self, message: PartitionEndMessage) -> None:
         if message.stage != "word_extractor":
@@ -87,6 +130,9 @@ class Q4Q5WordProjectorController:
         match message:
             case PartitionEndMessage():
                 self._validate_word_extractor_end(message)
+                if self._durable_barrier is not None:
+                    self._durable_barrier.apply(message)
+                    return
                 finished = self._finished_word_extractor_partitions.setdefault(
                     message.execution_id, set()
                 )
@@ -94,17 +140,7 @@ class Q4Q5WordProjectorController:
                 if len(finished) < self._word_extractor_partition_count:
                     return
 
-                partition_end = PartitionEndMessage(
-                    stage="q4_q5_word_projector",
-                    partition_id=self._partition_id,
-                    execution_id=message.execution_id,
-                    reply_queue=message.reply_queue,
-                    message_id=build_control_message_id(
-                        execution_id=message.execution_id,
-                        stage="q4_q5_word_projector",
-                        partition_id=self._partition_id,
-                    ),
-                )
+                partition_end = self._partition_end(message)
                 for partition in range(self._router.partition_count):
                     self._messaging.publish_q4_to(
                         f"{self._router.queue_prefix}.{partition}", partition_end
@@ -117,6 +153,8 @@ class Q4Q5WordProjectorController:
                 )
 
     def start(self) -> None:
+        if self._durable_barrier is not None:
+            self._durable_barrier.recover()
         self._messaging.start_consuming(
             self.process_message, self.process_control_message
         )

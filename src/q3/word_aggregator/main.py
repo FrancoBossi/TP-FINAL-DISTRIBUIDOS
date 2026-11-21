@@ -2,6 +2,7 @@ import logging
 from types import FrameType
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from q3.word_aggregator.config import Q3WordAggregatorConfig, configure_logging
 from q3.word_aggregator.controller import Q3WordAggregatorController
@@ -52,6 +53,10 @@ def main() -> int:
         partition_id=config.partition_id,
         partition_count=config.partition_count,
         projector_partition_count=config.projector_partition_count,
+        persistence_layout=PersistenceLayout(
+            config.state_root, "q3_word_aggregator", config.partition_id
+        ),
+        output_destination=config.output_queue,
     )
 
     logger.info(

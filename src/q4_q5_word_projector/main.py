@@ -6,6 +6,7 @@ from common.middleware import (
     MessageMiddlewareQueueRabbitMQ,
 )
 from common.partition_router import PartitionRouter
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from q4_q5_word_projector.config import (
     Q4Q5WordProjectorConfig,
@@ -90,6 +91,10 @@ def main() -> int:
         ),
         partition_id=config.partition_id,
         word_extractor_partition_count=config.word_extractor_partition_count,
+        persistence_layout=PersistenceLayout(
+            config.state_root, "q4_q5_word_projector", config.partition_id
+        ),
+        q5_destination=config.q5_output_queue,
     )
 
     logger.info(
