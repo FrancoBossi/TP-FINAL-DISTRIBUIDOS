@@ -1056,12 +1056,14 @@ uno de sus destinos. En todos los casos el reinicio drena la outbox sin volver a
 aplicar la entrada. El cliente prueba también la deduplicación por `result_id`.
 
 La suite completa pasa con 305 tests, y la configuración de Compose, lint, formato
-y `git diff --check` son válidos. Esto cierra la propagación de persistencia en el
-código, pero no todavía el hito completo: resta ejecutar el pipeline real mientras
-se matan y reinician containers, comparar Q1-Q5 contra la referencia y verificar
-que no queden estados ni colas huérfanas. También restan el plano de control de
-fallos —salud, FailureManagers, Bully y reinicio automático—, Chaos Monkey, cleanup
-distribuido y la medición de overhead.
+y `git diff --check` son válidos. La recuperación también se validó punta a punta:
+durante una ejecución de 300 artículos se enviaron `SIGKILL` simultáneos a todas las
+réplicas del pipeline y a ResultSink, dejando Gateway y RabbitMQ activos. Después
+del reinicio manual, los cinco archivos coincidieron con la referencia y no quedaron
+mensajes ready ni unacked. Esto cierra la propagación y recuperación de datos, pero
+no el hito completo. Restan el plano de control de fallos —salud, FailureManagers,
+Bully y reinicio automático—, Chaos Monkey, cleanup distribuido y la medición de
+overhead.
 
 ---
 
@@ -1154,6 +1156,19 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 - Las pruebas de tolerancia reconstruyen estado durable de InputBatcher, QueryRouter,
   Q3WordAggregator, Q5AverageReducer y ResultSink; incluyen caída antes de publicar,
   barrera incompleta, fan-out parcialmente confirmado y redelivery al cliente.
+- Se ejecutó una prueba punta a punta de recuperación con 300 artículos equilibrados
+  entre ambos idiomas. La entrada se acumuló con InputBatcher detenido; al comenzar
+  el procesamiento se mataron simultáneamente todas las réplicas funcionales y
+  ResultSink, sin interrumpir Gateway ni RabbitMQ. Tras iniciarlas nuevamente, el
+  cliente recibió los cinco `QUERY_END` y 175 resultados: 7 de Q1, 0 de Q2, 86 de
+  Q3, 20 de Q4 y 62 de Q5. Los cinco archivos dieron `Match` contra la referencia,
+  todas las colas terminaron con cero mensajes ready/unacked y todos los containers
+  quedaron activos. El reinicio fue manual para validar exclusivamente este bloque;
+  su automatización corresponde a FailureManager.
+- Un primer intento con los 50.000 artículos evidenció que el snapshot con `fsync`
+  por cada entrada de InputBatcher tiene un costo demasiado alto para el smoke de
+  fallos. La corrección se conserva, pero el journal o batching de commits deberá
+  evaluarse en el benchmark de tolerancia antes de la entrega.
 - Se conectaron doce clientes mínimos al Gateway con los InputBatcher detenidos. Sus 24 mensajes —un artículo y un final por ejecución— quedaron distribuidos entre `input_batcher.input.0`, `.1` y `.2` sin dividir una ejecución. Al iniciar las tres particiones, cada cola tuvo un único consumidor, las tres quedaron vacías y `preprocessor.input` recibió los 24 mensajes esperados.
 - Se validaron con RabbitMQ real tres réplicas de Preprocessor y tres de QueryRouter, con tres bindings exclusivos en cada exchange de control. Nueve batches produjeron nueve mensajes y un único final en cada una de las cuatro salidas posteriores a Until2020Filter y WordExtractor. Una segunda ejecución confirmó que ambos grupos reanudan el consumo después de sus barreras.
 - Se validaron tres réplicas de Until2020Filter con tres bindings exclusivos. Seis batches y tres finales de QueryRouter produjeron tres resultados Q1, ningún resultado Q2 y un único `QUERY_END` por consulta. Una segunda ejecución vacía sin reiniciar containers confirmó la reanudación y limpieza de las barreras.

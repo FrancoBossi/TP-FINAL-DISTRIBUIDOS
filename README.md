@@ -45,11 +45,11 @@ El sistema debe resolver las siguientes consultas:
 | ResultSink | Implementado como instancia única con barreras para Q1, Q2, Q3 y Q5; Q4 converge en un reducer lógico |
 | Atención concurrente de varios clientes | Implementada con una sesión por thread |
 | Graceful shutdown por SIGTERM/SIGINT | Implementado |
-| Estrategia de tolerancia a fallos y persistencia | En curso: persistencia, inbox/outbox y recuperación propagadas por todo el DAG; falta validación integral con procesos reales caídos |
+| Estrategia de tolerancia a fallos y persistencia | Persistencia, inbox/outbox y recuperación propagadas y validadas con una caída simultánea real de todo el pipeline |
 | Detección de procesos caídos mediante comunicación | Pendiente |
 | Consenso implementado por el grupo | Pendiente |
 | Reinicio automático de procesos caídos | Pendiente |
-| Recuperación e idempotencia después de reinicios | Implementada por componente; pendiente prueba punta a punta bajo reinicios reales |
+| Recuperación e idempotencia después de reinicios | Implementada y validada punta a punta con reinicios reales; falta automatizar detección y reinicio |
 | Entrega exactly-once hacia el cliente | Implementada para redelivery durante la sesión; pendiente validación integral con ACK perdido |
 | Chaos Monkey y escenarios de fallos automatizados | Pendiente |
 | Comparación de performance contra el hito de escalabilidad | Pendiente |
@@ -562,7 +562,9 @@ pierde; la inbox/outbox de cada controller hace idempotente esa ventana.
 - [x] Q5StatsWorker y Q5AverageReducer: suma, cantidad, promedio, parciales y finales.
 - [x] Q5Comparator: candidatos, promedio, finales, resultados emitidos y buffer completo.
 - [x] ResultSink: deduplicación, barreras, resultados/finales y salida durable.
-- [ ] Para cada etapa: matar antes y después de persistir/publicar/ACK, reiniciar y comparar salida.
+- [x] Cubrir las ventanas antes/después de persistir, publicar y confirmar mediante
+  inyección unitaria; reiniciar todos los tipos de etapa durante una ejecución real
+  y comparar Q1-Q5.
 
 Preprocessor no incorpora un journal por batch: su normalización es stateless y
 determinista, por lo que una entrega reintentada puede reprocesarse. Persistir cada
@@ -596,10 +598,24 @@ ACK. Dentro de la sesión, una redelivery con el mismo ID se confirma sin volver
 escribir. No se promete reanudar un cliente caído: ese caso está fuera del modelo
 de recuperación y se valida por liberación de recursos.
 
-Las pruebas unitarias de recuperación ya cubren una barrera incompleta, caída antes
-de publicar, fan-out parcialmente confirmado y redelivery al cliente. El pendiente
-de este bloque es ejecutar esas ventanas matando procesos reales durante el pipeline
-completo y comparar Q1-Q5 contra la referencia.
+Las pruebas unitarias de recuperación cubren una barrera incompleta, caída antes de
+publicar, fan-out parcialmente confirmado y redelivery al cliente. La validación
+integral utilizó una muestra equilibrada de 300 artículos —150 de cada extremo del
+dataset de 50.000— y detuvo inicialmente InputBatcher para acumular toda la entrada.
+Después de iniciar el procesamiento se enviaron `SIGKILL` simultáneos a todas las
+réplicas del pipeline y a ResultSink, manteniendo Gateway y RabbitMQ activos. Los
+containers se iniciaron manualmente para aislar la recuperación de datos del futuro
+supervisor. El cliente recibió los cinco cierres y 175 resultados: 7 de Q1, 0 de
+Q2, 86 de Q3, 20 de Q4 y 62 de Q5. Los cinco archivos coincidieron con la referencia,
+RabbitMQ quedó sin mensajes ready/unacked y todos los procesos volvieron a estar
+activos. Con esta evidencia queda cerrado el bloque 4; la detección y el reinicio
+automáticos pertenecen al bloque 5.
+
+Un intento previo con los 50.000 artículos mostró que el snapshot y `fsync` por
+entrada de InputBatcher drena demasiado lentamente para un smoke de fallos. No es
+un problema de corrección, pero sí un riesgo de performance que debe medirse y
+optimizarse antes del benchmark final, probablemente mediante journal incremental
+o commits agrupados sin debilitar el ACK durable.
 
 #### Bloque 5 - Supervisión, consenso y reinicio
 
