@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.run_benchmark import QUERY_FILES, summarize_runs
+from scripts.run_benchmark import QUERY_FILES, summarize_runs, summarize_stack_metrics
 
 
 def output_identity(run: dict[str, Any]) -> tuple[tuple[Any, ...], ...]:
@@ -110,6 +110,15 @@ def compare_benchmarks(
     }
 
 
+def load_summary(path: Path) -> dict[str, Any]:
+    summary = json.loads(path.read_text(encoding="utf-8"))
+    for run in summary["runs"]:
+        if "stack_metrics" not in run:
+            raw_metrics = path.parent / f"run-{run['run']:02d}" / "metrics.jsonl"
+            run["stack_metrics"] = summarize_stack_metrics(raw_metrics)
+    return summary
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("baseline", type=Path)
@@ -117,11 +126,9 @@ def main() -> int:
     parser.add_argument("--faults", type=Path)
     args = parser.parse_args()
     try:
-        baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
-        steady = json.loads(args.steady.read_text(encoding="utf-8"))
-        faults = (
-            json.loads(args.faults.read_text(encoding="utf-8")) if args.faults else None
-        )
+        baseline = load_summary(args.baseline)
+        steady = load_summary(args.steady)
+        faults = load_summary(args.faults) if args.faults else None
         comparison = compare_benchmarks(baseline, steady, faults)
     except (OSError, KeyError, TypeError, ValueError) as error:
         parser.exit(1, f"Benchmark comparison: {error}\n")

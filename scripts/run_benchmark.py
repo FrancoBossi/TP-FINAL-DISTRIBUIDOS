@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 from collections import defaultdict
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -128,24 +129,26 @@ def sampled_counter_total(samples: list[int]) -> int:
     return total
 
 
+def metric_samples(path: Path) -> Iterator[dict[str, Any]]:
+    if path.is_file():
+        with path.open(encoding="utf-8") as file:
+            for line in file:
+                sample = json.loads(line)
+                if "error" not in sample:
+                    yield sample
+
+
 def summarize_metrics(path: Path) -> dict[str, dict[str, float | int]]:
     by_container: dict[str, list[tuple[float, int, int, int]]] = defaultdict(list)
-    if not path.exists():
-        return {}
-
-    with path.open("r", encoding="utf-8") as file:
-        for line in file:
-            sample = json.loads(line)
-            if "error" in sample:
-                continue
-            name = sample.get("Name") or sample.get("Container") or "unknown"
-            try:
-                cpu = float(sample["CPUPerc"].rstrip("%"))
-                memory = parse_memory_bytes(sample["MemUsage"])
-                received, transmitted = parse_io_bytes(sample["NetIO"])
-            except (KeyError, ValueError):
-                continue
-            by_container[name].append((cpu, memory, received, transmitted))
+    for sample in metric_samples(path):
+        name = sample.get("Name") or sample.get("Container") or "unknown"
+        try:
+            cpu = float(sample["CPUPerc"].rstrip("%"))
+            memory = parse_memory_bytes(sample["MemUsage"])
+            received, transmitted = parse_io_bytes(sample["NetIO"])
+        except (KeyError, ValueError):
+            continue
+        by_container[name].append((cpu, memory, received, transmitted))
 
     summary = {}
     for name, samples in sorted(by_container.items()):
@@ -161,6 +164,35 @@ def summarize_metrics(path: Path) -> dict[str, dict[str, float | int]]:
             "network_transmit_bytes_sampled": sampled_counter_total(transmitted),
         }
     return summary
+
+
+def summarize_stack_metrics(path: Path) -> dict[str, float | int]:
+    by_timestamp: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for sample in metric_samples(path):
+        if "captured_at" in sample:
+            by_timestamp[sample["captured_at"]].append(sample)
+
+    cpu_totals = []
+    memory_totals = []
+    for samples in by_timestamp.values():
+        if len(samples) != samples[0].get("expected_containers", len(samples)):
+            continue
+        try:
+            cpu = sum(float(sample["CPUPerc"].rstrip("%")) for sample in samples)
+            memory = sum(parse_memory_bytes(sample["MemUsage"]) for sample in samples)
+        except (KeyError, ValueError):
+            continue
+        cpu_totals.append(cpu)
+        memory_totals.append(memory)
+
+    if not cpu_totals:
+        return {}
+    return {
+        "samples": len(cpu_totals),
+        "cpu_percent_mean": statistics.mean(cpu_totals),
+        "cpu_percent_peak": max(cpu_totals),
+        "memory_bytes_peak": max(memory_totals),
+    }
 
 
 def run_command(
@@ -237,6 +269,7 @@ class MetricsSampler:
             for line in result.stdout.splitlines():
                 sample = json.loads(line)
                 sample["captured_at"] = captured_at
+                sample["expected_containers"] = len(containers)
                 output.write(json.dumps(sample, sort_keys=True) + "\n")
         except Exception as error:  # Metrics must not terminate the benchmark.
             output.write(
@@ -525,6 +558,11 @@ def summarize_runs(
     for direction in ("receive", "transmit"):
         observations[f"network_{direction}_bytes"] = [
             run_network_bytes(run, direction) for run in successful
+        ]
+
+    for metric in ("cpu_percent_mean", "cpu_percent_peak", "memory_bytes_peak"):
+        observations[metric] = [
+            run.get("stack_metrics", {}).get(metric) for run in successful
         ]
 
     summary = {}
@@ -834,6 +872,7 @@ def main() -> int:
                 "articles_per_second": metadata["dataset"]["rows"] / duration,
                 "status": "failed",
                 "metrics": summarize_metrics(metrics_path),
+                "stack_metrics": summarize_stack_metrics(metrics_path),
             }
             chaos_ok = True
             if args.chaos_target:

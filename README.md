@@ -817,6 +817,12 @@ La comparación debe separar el overhead normal de la recuperación:
   contador caído, el runner acumula el tramo nuevo. Un reinicio entre muestras
   puede subestimar el total. Para ejecuciones sin fallas, los resúmenes anteriores
   aportan sus contadores finales.
+- El runner suma CPU y memoria de los contenedores en cada muestra completa
+  de Docker. `stack_metrics` guarda CPU media y máxima, memoria máxima y el
+  número de muestras usadas. El comparador contrasta las medianas de estas
+  métricas entre ejecuciones. CPU puede superar el 100 % al usar más de un
+  núcleo. Para resúmenes anteriores, el comparador calcula estas métricas si
+  los archivos originales `run-*/metrics.jsonl` siguen disponibles.
 - `input_batcher_journal_bytes` suma el tamaño observado de cada journal
   incremental de InputBatcher al retirarlo durante un checkpoint, recuperación
   o cleanup. Usa el mayor tamaño por ejecución, partición y generación para

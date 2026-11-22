@@ -15,6 +15,7 @@ from scripts.run_benchmark import (
     resolve_dataset,
     summarize_metrics,
     summarize_runs,
+    summarize_stack_metrics,
     verify_cleanup,
 )
 
@@ -53,6 +54,41 @@ class MultisetFingerprintTest(unittest.TestCase):
 
 
 class BenchmarkHelpersTest(unittest.TestCase):
+    def test_stack_peaks_use_simultaneous_samples(self):
+        samples = [
+            ("t1", "a", "110%", "30MiB"),
+            ("t1", "b", "10%", "10MiB"),
+            ("t2", "a", "0%", "10MiB"),
+            ("t2", "b", "70%", "50MiB"),
+            ("incomplete", "a", "300%", "500MiB"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "metrics.jsonl"
+            path.write_text(
+                "".join(
+                    json.dumps(
+                        {
+                            "captured_at": timestamp,
+                            "expected_containers": 2,
+                            "Name": name,
+                            "CPUPerc": cpu,
+                            "MemUsage": f"{memory} / 1GiB",
+                        }
+                    )
+                    + "\n"
+                    for timestamp, name, cpu, memory in samples
+                ),
+                encoding="utf-8",
+            )
+            stack = summarize_stack_metrics(path)
+
+        self.assertEqual(stack["samples"], 2)
+        self.assertEqual(stack["cpu_percent_mean"], 95)
+        self.assertEqual(stack["cpu_percent_peak"], 120)
+        self.assertEqual(stack["memory_bytes_peak"], 60 * 1024**2)
+        aggregate = summarize_runs([{"status": "success", "stack_metrics": stack}])
+        self.assertEqual(aggregate["memory_bytes_peak"]["median"], 60 * 1024**2)
+
     def test_network_summary_accumulates_observed_counter_resets(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "metrics.jsonl"
