@@ -2,6 +2,7 @@ import io
 import json
 import subprocess
 import unittest
+from threading import Event
 from unittest.mock import patch
 
 from scripts.chaos_monkey import eligible_targets, failure_batches, run_chaos
@@ -64,6 +65,25 @@ class ChaosMonkeyTest(unittest.TestCase):
         )
         self.assertEqual(events[-1]["event"], "injection_finished")
         self.assertEqual(events[-1]["returncode"], 0)
+
+    @patch("scripts.chaos_monkey.subprocess.run")
+    def test_cancelled_run_does_not_inject_future_failures(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, "worker\n", "")
+        stop = Event()
+        stop.set()
+
+        run_chaos(
+            ["docker", "compose"],
+            ["worker"],
+            seed=7,
+            interval=5,
+            max_failures=1,
+            batch_size=1,
+            log=io.StringIO(),
+            stop=stop,
+        )
+
+        run.assert_called_once()
 
     @patch("scripts.chaos_monkey.subprocess.run")
     def test_rejects_protected_service_before_trying_to_kill(self, run):

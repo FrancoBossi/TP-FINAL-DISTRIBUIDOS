@@ -9,11 +9,13 @@ import argparse
 import json
 import math
 import random
+import signal
 import subprocess
 import time
 from collections.abc import Iterable, Iterator, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event
 from typing import TextIO
 
 EXCLUDED_SERVICES = {
@@ -69,6 +71,7 @@ def run_chaos(
     max_failures: int,
     batch_size: int,
     log: TextIO,
+    stop: Event | None = None,
 ) -> None:
     def record(event: str, **details: object) -> None:
         entry = {
@@ -105,13 +108,18 @@ def run_chaos(
     started = time.monotonic()
     for cycle, planned in enumerate(batches, 1):
         delay = started + cycle * interval - time.monotonic()
-        if delay > 0:
-            time.sleep(delay)
+        if stop is None:
+            if delay > 0:
+                time.sleep(delay)
+        elif stop.wait(max(0, delay)):
+            break
 
         running = run_compose("ps", "--status", "running", "--services")
         if running.returncode:
             record("discovery_failed", cycle=cycle, stderr=running.stderr)
             running.check_returncode()
+        if stop is not None and stop.is_set():
+            break
         targets, skipped = eligible_targets(planned, running.stdout.split())
         record("selection", cycle=cycle, targets=targets, skipped=skipped)
         if not targets:
@@ -158,6 +166,8 @@ def main() -> int:
     compose = ["docker", "compose", "--file", str(args.compose_file)]
     if args.project_name is not None:
         compose.extend(["--project-name", args.project_name])
+    stop = Event()
+    signal.signal(signal.SIGTERM, lambda signum, frame: stop.set())
     try:
         with args.log.open("x", encoding="utf-8") as log:
             run_chaos(
@@ -168,6 +178,7 @@ def main() -> int:
                 max_failures=args.max_failures,
                 batch_size=args.batch_size,
                 log=log,
+                stop=stop,
             )
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, f"Chaos Monkey: {error}\n")

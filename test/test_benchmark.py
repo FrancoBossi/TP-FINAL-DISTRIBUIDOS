@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from scripts.run_benchmark import (
+    count_injections,
     multiset_fingerprint,
     parse_io_bytes,
     parse_memory_bytes,
@@ -45,6 +46,26 @@ class MultisetFingerprintTest(unittest.TestCase):
 
 
 class BenchmarkHelpersTest(unittest.TestCase):
+    def test_only_confirmed_injections_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "chaos.jsonl"
+            self.assertEqual(count_injections(log), 0)
+            events = [
+                {"event": "injection_started", "targets": ["worker"]},
+                {"event": "injection_finished", "returncode": 1, "targets": ["worker"]},
+                {
+                    "event": "injection_finished",
+                    "returncode": 0,
+                    "targets": ["worker", "sink"],
+                },
+            ]
+            log.write_text(
+                "".join(json.dumps(event) + "\n" for event in events),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(count_injections(log), 2)
+
     def test_parse_binary_and_decimal_memory_units(self):
         self.assertEqual(parse_memory_bytes("1.5MiB / 2GiB"), 1_572_864)
         self.assertEqual(parse_memory_bytes("2.5MB / 1GB"), 2_500_000)

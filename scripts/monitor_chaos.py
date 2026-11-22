@@ -23,12 +23,7 @@ SKIP_REASONS = {
 }
 
 
-def read_lines(path: Path, follow: bool) -> Iterator[str]:
-    if not follow:
-        with path.open(encoding="utf-8") as log:
-            yield from log
-        return
-
+def follow_log(path: Path) -> Iterator[str]:
     command = [
         "tail",
         "-n",
@@ -47,6 +42,14 @@ def read_lines(path: Path, follow: bool) -> Iterator[str]:
         finally:
             if tail.poll() is None:
                 tail.terminate()
+
+
+def read_lines(path: Path, follow: bool) -> Iterator[str]:
+    if follow:
+        yield from follow_log(path)
+    else:
+        with path.open(encoding="utf-8") as log:
+            yield from log
 
 
 def format_event(event: dict[str, Any]) -> Iterator[str]:

@@ -7,8 +7,10 @@ import argparse
 import csv
 import hashlib
 import json
+import math
 import os
 import subprocess
+import sys
 import threading
 import time
 from collections import defaultdict
@@ -280,8 +282,32 @@ def dataset_metadata(dataset_path: Path, calculate_hash: bool) -> dict[str, Any]
     return metadata
 
 
+def stop_process(process: subprocess.Popen[bytes]) -> int:
+    if process.poll() is None:
+        process.terminate()
+        try:
+            return process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            process.kill()
+    return process.wait()
+
+
+def count_injections(path: Path) -> int:
+    if not path.is_file():
+        return 0
+    with path.open(encoding="utf-8") as log:
+        events = (json.loads(line) for line in log if line.endswith("\n"))
+        return sum(
+            len(event["targets"])
+            for event in events
+            if event["event"] == "injection_finished" and event["returncode"] == 0
+        )
+
+
 def wait_for_process(
-    process: subprocess.Popen[bytes], timeout_seconds: float | None
+    process: subprocess.Popen[bytes],
+    timeout_seconds: float | None,
+    injector: subprocess.Popen[bytes] | None = None,
 ) -> tuple[int, bool]:
     started_at = time.monotonic()
     last_progress = started_at
@@ -290,17 +316,14 @@ def wait_for_process(
         now = time.monotonic()
         if timeout_seconds is not None and now - started_at >= timeout_seconds:
             timed_out = True
-            process.terminate()
-            try:
-                process.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                process.kill()
+            break
+        if injector is not None and injector.poll() not in (None, 0):
             break
         if now - last_progress >= 60:
             print(f"Benchmark client running for {(now - started_at) / 60:.1f} min")
             last_progress = now
         time.sleep(1)
-    return process.wait(), timed_out
+    return stop_process(process), timed_out
 
 
 def capture_compose_logs(
@@ -356,7 +379,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout-seconds", type=float)
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--skip-dataset-hash", action="store_true")
+    parser.add_argument("--chaos-target", action="append", default=[])
+    parser.add_argument("--chaos-seed", type=int, default=42)
+    parser.add_argument("--chaos-interval", type=float, default=5.0)
+    parser.add_argument("--chaos-max-failures", type=int, default=8)
+    parser.add_argument("--chaos-batch-size", type=int, default=1)
     args = parser.parse_args()
+    if args.chaos_target:
+        if args.expected_output is None or args.timeout_seconds is None:
+            parser.error("chaos runs require --expected-output and --timeout-seconds")
+        if not math.isfinite(args.timeout_seconds):
+            parser.error("--timeout-seconds must be finite for chaos runs")
+        if not math.isfinite(args.chaos_interval) or args.chaos_interval <= 0:
+            parser.error("--chaos-interval must be finite and positive")
+        if min(args.chaos_max_failures, args.chaos_batch_size) < 1:
+            parser.error("chaos failure and batch limits must be positive")
     if args.runs <= 0:
         parser.error("--runs must be positive")
     if args.sample_seconds <= 0:
@@ -402,6 +439,13 @@ def main() -> int:
     ]
     base_env = os.environ.copy()
     base_env["COMPOSE_HTTP_TIMEOUT"] = "300"
+    # All benchmark traffic uses the Compose network. Let Docker allocate host ports.
+    for port in (
+        "GATEWAY_HOST_PORT",
+        "RABBITMQ_AMQP_HOST_PORT",
+        "RABBITMQ_MANAGEMENT_HOST_PORT",
+    ):
+        base_env.setdefault(port, "0")
 
     metadata = {
         "created_at": utc_now(),
@@ -420,6 +464,14 @@ def main() -> int:
             capture_output=True,
         ).stdout.strip(),
     }
+    if args.chaos_target:
+        metadata["chaos"] = {
+            "targets": args.chaos_target,
+            "seed": args.chaos_seed,
+            "interval_seconds": args.chaos_interval,
+            "max_failures": args.chaos_max_failures,
+            "batch_size": args.chaos_batch_size,
+        }
     (benchmark_dir / "benchmark.json").write_text(
         json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -459,7 +511,7 @@ def main() -> int:
                 env=run_env,
                 check=False,
             )
-            run_command(
+            startup = run_command(
                 [
                     *compose_command,
                     "up",
@@ -471,7 +523,22 @@ def main() -> int:
                 ],
                 cwd=repo_root,
                 env=run_env,
+                check=False,
+                capture_output=True,
             )
+            startup_log = run_dir / "startup.log"
+            startup_log.write_text(startup.stdout + startup.stderr, encoding="utf-8")
+            if startup.returncode:
+                capture_compose_logs(
+                    compose_command, repo_root, run_env, run_dir / "compose.log"
+                )
+                print(
+                    f"Compose startup failed (exit {startup.returncode}). "
+                    f"See {startup_log} and {run_dir / 'compose.log'}.",
+                    file=sys.stderr,
+                )
+                print(startup.stderr.rstrip(), file=sys.stderr)
+                return 1
 
             metrics_path = run_dir / "metrics.jsonl"
             sampler = MetricsSampler(
@@ -497,19 +564,56 @@ def main() -> int:
             print(f"Starting benchmark run {run_number}/{args.runs}")
             started_at = utc_now()
             monotonic_start = time.monotonic()
+            chaos_events = run_dir / "chaos.jsonl"
+            injector_status = None
             with (run_dir / "client.log").open("wb") as client_log:
                 sampler.start()
-                process = subprocess.Popen(
-                    client_command,
-                    cwd=repo_root,
-                    env=run_env,
-                    stdout=client_log,
-                    stderr=subprocess.STDOUT,
-                )
                 try:
-                    exit_code, timed_out = wait_for_process(
-                        process, args.timeout_seconds
+                    process = subprocess.Popen(
+                        client_command,
+                        cwd=repo_root,
+                        env=run_env,
+                        stdout=client_log,
+                        stderr=subprocess.STDOUT,
                     )
+                    injector = None
+                    try:
+                        if args.chaos_target:
+                            injector_command = [
+                                sys.executable,
+                                str(repo_root / "scripts" / "chaos_monkey.py"),
+                                "--compose-file",
+                                str(compose_file),
+                                "--project-name",
+                                args.project_name,
+                                "--seed",
+                                str(args.chaos_seed),
+                                "--interval",
+                                str(args.chaos_interval),
+                                "--max-failures",
+                                str(args.chaos_max_failures),
+                                "--batch-size",
+                                str(args.chaos_batch_size),
+                                "--log",
+                                str(chaos_events),
+                            ]
+                            for target in args.chaos_target:
+                                injector_command.extend(["--target", target])
+                            with (run_dir / "chaos.log").open("wb") as chaos_log:
+                                injector = subprocess.Popen(
+                                    injector_command,
+                                    cwd=repo_root,
+                                    env=run_env,
+                                    stdout=chaos_log,
+                                    stderr=subprocess.STDOUT,
+                                )
+                        exit_code, timed_out = wait_for_process(
+                            process, args.timeout_seconds, injector
+                        )
+                    finally:
+                        if injector is not None:
+                            injector_status = stop_process(injector)
+                        stop_process(process)
                 finally:
                     sampler.stop()
             duration = time.monotonic() - monotonic_start
@@ -528,20 +632,33 @@ def main() -> int:
                 "status": "failed",
                 "metrics": summarize_metrics(metrics_path),
             }
+            chaos_ok = True
+            if args.chaos_target:
+                injected = count_injections(chaos_events)
+                run_result["chaos"] = {
+                    "exit_code": injector_status,
+                    "confirmed_injections": injected,
+                }
+                chaos_ok = injected > 0 and injector_status == 0
             try:
                 fingerprints = fingerprint_output(output_dir)
                 run_result["fingerprints"] = fingerprints
-                if exit_code == 0:
+                if expected_fingerprints is not None:
+                    run_result["matches_expected"] = (
+                        fingerprints == expected_fingerprints
+                    )
+                if (
+                    exit_code == 0
+                    and not timed_out
+                    and chaos_ok
+                    and run_result.get("matches_expected", True)
+                ):
                     run_result["status"] = "success"
                     if first_successful_fingerprints is None:
                         first_successful_fingerprints = fingerprints
                     run_result["matches_first_success"] = (
                         fingerprints == first_successful_fingerprints
                     )
-                    if expected_fingerprints is not None:
-                        run_result["matches_expected"] = (
-                            fingerprints == expected_fingerprints
-                        )
             except (OSError, ValueError) as error:
                 run_result["output_error"] = str(error)
 
