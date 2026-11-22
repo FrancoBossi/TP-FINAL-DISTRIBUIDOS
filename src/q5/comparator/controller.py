@@ -386,7 +386,10 @@ class Q5ComparatorController:
     def start(self) -> None:
         if self._persistence_layout is not None:
             self._recover()
-        self._messaging.start_consuming(self.process_message)
+        self._messaging.start_consuming(
+            self.process_message,
+            **({"on_idle": self._cleanup.sweep} if self._cleanup is not None else {}),
+        )
 
     def stop(self) -> None:
         self._messaging.stop_consuming()

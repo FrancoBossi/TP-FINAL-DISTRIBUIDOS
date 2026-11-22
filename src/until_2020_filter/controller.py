@@ -152,6 +152,11 @@ class Until2020FilterController:
         self._messaging.start_consuming(
             self.process_message,
             self.process_control_message,
+            **(
+                {"on_idle": self._durable_barrier.sweep}
+                if self._durable_barrier is not None
+                else {}
+            ),
         )
 
     def stop(self) -> None:

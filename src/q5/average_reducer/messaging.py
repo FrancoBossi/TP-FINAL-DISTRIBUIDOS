@@ -39,7 +39,9 @@ class Q5AverageReducerMessaging:
     def publish_to(self, destination: str, message: Message) -> None:
         self._output_queues_by_destination[destination].send(message.serialize())
 
-    def start_consuming(self, on_message: MessageCallback) -> None:
+    def start_consuming(
+        self, on_message: MessageCallback, on_idle: Callable[[], None] | None = None
+    ) -> None:
         def deserialize_message(
             body: bytes,
             ack: Ack,
@@ -48,7 +50,9 @@ class Q5AverageReducerMessaging:
             message = Message.deserialize(body)
             on_message(message, ack, nack)
 
-        self._input_queue.start_consuming(deserialize_message)
+        self._input_queue.start_consuming(
+            deserialize_message, **({"on_idle": on_idle} if on_idle is not None else {})
+        )
 
     def stop_consuming(self) -> None:
         self._input_queue.stop_consuming()

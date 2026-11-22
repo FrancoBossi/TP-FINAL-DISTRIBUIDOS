@@ -239,6 +239,7 @@ class QueryRouterController:
         self._messaging.start_consuming(
             self.process_message,
             self.process_control_message,
+            **({"on_idle": self._cleanup.sweep} if self._cleanup is not None else {}),
         )
 
     def stop(self) -> None:

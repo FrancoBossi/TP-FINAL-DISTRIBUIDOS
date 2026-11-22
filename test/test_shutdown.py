@@ -48,7 +48,7 @@ class TestShutdown(unittest.TestCase):
             "preprocessor.input",
         )
 
-        def consume(callback):
+        def consume(callback, on_idle=None):
             for execution in ("a", "b"):
                 callback(
                     RoutedArticleMessage(

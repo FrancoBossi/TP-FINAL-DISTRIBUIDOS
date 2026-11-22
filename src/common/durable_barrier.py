@@ -35,6 +35,9 @@ class DurableBarrier:
         self._cleanup = ExecutionCleanup(layout, retention_seconds=3600)
         self._stores: dict[str, DurableExecutionStore] = {}
 
+    def sweep(self) -> None:
+        self._cleanup.sweep()
+
     def is_closed(self, message: Message) -> bool:
         execution_id = getattr(message, "execution_id", None)
         return execution_id is not None and self._cleanup.is_closed(execution_id)
