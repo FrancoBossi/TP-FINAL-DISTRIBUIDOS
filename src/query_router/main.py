@@ -5,6 +5,7 @@ from common.middleware import (
     MessageMiddlewareExchangeRabbitMQ,
     MessageMiddlewareQueueRabbitMQ,
 )
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from query_router.config import QueryRouterConfig, configure_logging
 from query_router.controller import QueryRouterController
@@ -19,6 +20,7 @@ def create_messaging(
     q1_q2_output_queue_name: str,
     text_output_queue_name: str,
     control_exchange_name: str,
+    partition_id: int,
 ) -> QueryRouterMessaging:
     input_queue = MessageMiddlewareQueueRabbitMQ(
         host=mom_host,
@@ -36,6 +38,7 @@ def create_messaging(
         host=mom_host,
         exchange_name=control_exchange_name,
         routing_keys=[control_exchange_name],
+        queue_name=f"{control_exchange_name}.partition-{partition_id}",
     )
     control_exchange_output = MessageMiddlewareExchangeRabbitMQ(
         host=mom_host,
@@ -71,11 +74,19 @@ def main() -> int:
         q1_q2_output_queue_name=config.q1_q2_output_queue,
         text_output_queue_name=config.text_output_queue,
         control_exchange_name=config.control_exchange,
+        partition_id=config.partition_id,
     )
     controller = QueryRouterController(
         messaging=messaging,
         partition_id=config.partition_id,
         preprocessor_partition_count=config.preprocessor_partition_count,
+        persistence_layout=PersistenceLayout(
+            config.state_root,
+            "query_router",
+            config.partition_id,
+        ),
+        q1_q2_destination=config.q1_q2_output_queue,
+        text_destination=config.text_output_queue,
     )
 
     logger.info(

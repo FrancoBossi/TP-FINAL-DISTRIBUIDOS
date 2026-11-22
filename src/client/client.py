@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import socket
 import time
 from collections.abc import Iterable
@@ -113,6 +114,8 @@ class Client:
     ) -> int:
         line = json.dumps(message.record, ensure_ascii=False, allow_nan=False)
         output_file.write(line + "\n")
+        output_file.flush()
+        os.fsync(output_file.fileno())
         count += 1
         if count % LOG_BATCH_SIZE == 0:
             logger.info("Query %d: %d results written", message.query_id, count)
@@ -122,6 +125,7 @@ class Client:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         completed: set[int] = set()
+        seen_result_ids: set[str] = set()
         counts = {query_id: 0 for query_id in QUERY_IDS}
         logger.info("Waiting for all five queries; output: %s", output_dir)
         with ExitStack() as stack:
@@ -131,8 +135,15 @@ class Client:
                 )
                 for query_id in sorted(QUERY_IDS)
             }
+            result_id_ledger = stack.enter_context(
+                (output_dir / ".result_ids.jsonl").open("w", encoding="utf-8")
+            )
             while completed != QUERY_IDS:
                 message = self._receive(sock)
+                if isinstance(message, (ResultMessage, QueryEndMessage)):
+                    if message.result_id in seen_result_ids:
+                        send_msg(sock, AckMessage())
+                        continue
                 query_id = validate_result(message, completed)
                 match message:
                     case ResultMessage():
@@ -141,6 +152,7 @@ class Client:
                         )
                     case QueryEndMessage():
                         files[query_id].flush()
+                        os.fsync(files[query_id].fileno())
                         completed.add(query_id)
                         logger.info(
                             "Query %d complete: %d results (%d/5 queries)",
@@ -148,6 +160,10 @@ class Client:
                             counts[query_id],
                             len(completed),
                         )
+                seen_result_ids.add(message.result_id)
+                result_id_ledger.write(message.result_id + "\n")
+                result_id_ledger.flush()
+                os.fsync(result_id_ledger.fileno())
                 send_msg(sock, AckMessage())
         logger.info(
             "All queries complete: %d results written to %s",

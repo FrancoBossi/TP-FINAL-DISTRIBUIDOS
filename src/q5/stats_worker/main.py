@@ -2,6 +2,7 @@ import logging
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
 from common.partition_router import PartitionRouter
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from q5.stats_worker.config import Q5StatsWorkerConfig, configure_logging
 from q5.stats_worker.controller import Q5StatsWorkerController
@@ -33,6 +34,10 @@ def main() -> int:
         messaging,
         config.partition_id,
         config.date_router_partition_count,
+        persistence_layout=PersistenceLayout(
+            config.state_root, "q5_stats_worker", config.partition_id
+        ),
+        output_destination=config.output_queue_prefix,
     )
 
     logger.info(

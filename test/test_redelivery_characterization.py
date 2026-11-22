@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock
 
 from common.message_identity import build_result_message_ids
@@ -9,6 +11,7 @@ from common.message_protocol.message import (
     Q4WordBatchMessage,
     ResultMessage,
 )
+from common.persistence import PersistenceLayout
 from q4.word_counter.controller import Q4WordCounterController
 from query_router.controller import QueryRouterController
 from result_sink.controller import ResultSinkController
@@ -18,11 +21,20 @@ class RedeliveryCharacterizationTest(unittest.TestCase):
     """Document the duplicate windows that inbox/outbox must close."""
 
     def test_partial_fanout_redelivery_republishes_same_logical_output(self):
+        temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary_directory.cleanup)
         messaging = Mock()
         controller = QueryRouterController(
             messaging=messaging,
             partition_id=0,
             preprocessor_partition_count=1,
+            persistence_layout=PersistenceLayout(
+                Path(temporary_directory.name),
+                "query_router",
+                0,
+            ),
+            q1_q2_destination="until_2020.input",
+            text_destination="word_extractor.input",
         )
         message = NormalizedArticleBatchMessage(
             articles=[

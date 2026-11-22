@@ -1,9 +1,12 @@
 import signal
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock
 
 from common.coordinated_consumer import CoordinatedConsumer
 from common.message_protocol.message import RoutedArticleMessage
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from input_batcher.batcher import BatchAccumulator
 from input_batcher.controller import InputBatcherController
@@ -28,10 +31,22 @@ class TestShutdown(unittest.TestCase):
         data.start_consuming.assert_not_called()
         control.start_consuming.assert_not_called()
 
-    def test_batcher_drains_all_partial_batches_without_end_messages(self):
+    def test_batcher_keeps_partial_batches_durable_during_shutdown(self):
+        temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary_directory.cleanup)
         batcher = BatchAccumulator(4096)
         messaging = Mock()
-        controller = InputBatcherController(batcher, messaging)
+        layout = PersistenceLayout(
+            Path(temporary_directory.name),
+            "input_batcher",
+            0,
+        )
+        controller = InputBatcherController(
+            batcher,
+            messaging,
+            layout,
+            "preprocessor.input",
+        )
 
         def consume(callback):
             for execution in ("a", "b"):
@@ -49,10 +64,20 @@ class TestShutdown(unittest.TestCase):
 
         messaging.start_consuming.side_effect = consume
         controller.start()
-        self.assertEqual(messaging.publish.call_count, 2)
-        self.assertEqual(batcher.current_batch, {})
-        for publication in messaging.publish.call_args_list:
-            self.assertEqual(len(publication.args[0].articles), 1)
+        messaging.publish.assert_not_called()
+        self.assertEqual({"a", "b"}, set(batcher.current_batch))
+
+        recovered_batcher = BatchAccumulator(4096)
+        recovered_messaging = Mock()
+        recovered = InputBatcherController(
+            recovered_batcher,
+            recovered_messaging,
+            layout,
+            "preprocessor.input",
+        )
+        recovered.start()
+        self.assertEqual({"a", "b"}, set(recovered_batcher.current_batch))
+        recovered_messaging.publish.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -40,11 +40,13 @@ class FakeMessaging:
                 query_id=3,
                 record={"word": "système"},
                 execution_id=execution_id,
+                result_id="query-3-result-0",
             ),
             *[
                 QueryEndMessage(
                     query_id=query_id,
                     execution_id=execution_id,
+                    result_id=f"query-{query_id}-end",
                 )
                 for query_id in (5, 1, 3, 2, 4)
             ],

@@ -146,8 +146,6 @@ class TestMessageMiddlewareExchangeRabbitMQ(unittest.TestCase):
 
         channel = connection.channel.return_value
         channel.is_closed = False
-        channel.queue_declare.return_value.method.queue = "generated-control-queue"
-
         with patch(
             "common.middleware.middleware_rabbitmq.pika.BlockingConnection",
             return_value=connection,
@@ -156,6 +154,7 @@ class TestMessageMiddlewareExchangeRabbitMQ(unittest.TestCase):
                 host="rabbitmq",
                 exchange_name="control",
                 routing_keys=["input_end", "query_failed"],
+                queue_name="control.partition-1",
             )
 
         channel.exchange_declare.assert_called_once_with(
@@ -164,20 +163,22 @@ class TestMessageMiddlewareExchangeRabbitMQ(unittest.TestCase):
             durable=False,
         )
         channel.queue_declare.assert_called_once_with(
-            queue="",
-            exclusive=True,
+            queue="control.partition-1",
+            durable=False,
+            exclusive=False,
+            auto_delete=False,
         )
         self.assertEqual(
             channel.queue_bind.call_args_list,
             [
                 call(
                     exchange="control",
-                    queue="generated-control-queue",
+                    queue="control.partition-1",
                     routing_key="input_end",
                 ),
                 call(
                     exchange="control",
-                    queue="generated-control-queue",
+                    queue="control.partition-1",
                     routing_key="query_failed",
                 ),
             ],
@@ -234,6 +235,17 @@ class TestMessageMiddlewareExchangeRabbitMQ(unittest.TestCase):
             routing_key="input_end",
             body=b"input finished",
         )
+
+    @patch("common.middleware.middleware_rabbitmq.pika.BlockingConnection")
+    def test_consumer_requires_stable_queue_name(self, connect):
+        with self.assertRaisesRegex(ValueError, "stable queue_name"):
+            MessageMiddlewareExchangeRabbitMQ(
+                host="rabbitmq",
+                exchange_name="control",
+                routing_keys=["input_end"],
+            )
+
+        connect.return_value.channel.return_value.queue_declare.assert_not_called()
 
 
 if __name__ == "__main__":

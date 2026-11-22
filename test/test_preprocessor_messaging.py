@@ -73,7 +73,7 @@ class TestPreprocessorMessaging(unittest.TestCase):
 
     def test_processes_control_message_from_main_thread(self):
         input_started = Event()
-        input_stopped = Event()
+        control_delivered = Event()
         control_ack = Mock()
         control_nack = Mock()
 
@@ -85,23 +85,19 @@ class TestPreprocessorMessaging(unittest.TestCase):
 
         def consume_input(_middleware_callback, on_idle):
             input_started.set()
-            self.assertTrue(input_stopped.wait(timeout=1))
+            self.assertTrue(control_delivered.wait(timeout=1))
             on_idle()
-
-        def stop_input():
-            input_stopped.set()
 
         def consume_control(middleware_callback):
             self.assertTrue(input_started.wait(timeout=1))
+            control_delivered.set()
             middleware_callback(
                 message.serialize(),
                 control_ack,
                 control_nack,
             )
-            input_stopped.set()
 
         self.input_queue.start_consuming.side_effect = consume_input
-        self.input_queue.stop_consuming.side_effect = stop_input
         self.control_exchange_input.start_consuming.side_effect = consume_control
 
         on_control_message = Mock(

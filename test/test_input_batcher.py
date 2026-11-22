@@ -180,6 +180,43 @@ class TestBatchAccumulator(unittest.TestCase):
         self.assertNotEqual(first_batch.message_id, second_batch.message_id)
         self.assertNotEqual(first_batch.message_id, partitioned_batch.message_id)
 
+    def test_restored_partial_batch_continues_with_same_identity_and_boundary(self):
+        first = self._article("A")
+        second = self._article("B")
+        uninterrupted = BatchAccumulator(4096, partition_id=2)
+        uninterrupted.add_article(first)
+
+        snapshot = uninterrupted.export_state(first.execution_id)
+        recovered = BatchAccumulator(4096, partition_id=2)
+        recovered.restore_state(first.execution_id, snapshot)
+
+        uninterrupted.add_article(second)
+        recovered.add_article(second)
+        expected = uninterrupted.flush(self._end(first.execution_id))
+        actual = recovered.flush(self._end(first.execution_id))
+
+        self.assertEqual(expected, actual)
+        self.assertEqual(expected.message_id, actual.message_id)
+        self.assertEqual({}, recovered.export_state(first.execution_id))
+
+    def test_restore_rejects_inconsistent_partial_batch(self):
+        article = self._article("A")
+        accumulator = BatchAccumulator(4096, partition_id=1)
+        accumulator.add_article(article)
+        snapshot = accumulator.export_state(article.execution_id)
+
+        invalid_states = (
+            {**snapshot, "batch_size": snapshot["batch_size"] + 1},
+            {**snapshot, "source_message_ids": ["m1:another-source"]},
+            {**snapshot, "unexpected": True},
+        )
+        for state in invalid_states:
+            with self.subTest(state=state), self.assertRaises(ValueError):
+                BatchAccumulator(4096, partition_id=1).restore_state(
+                    article.execution_id,
+                    state,
+                )
+
     def test_oversized_articles_are_isolated_without_losing_pending_articles(self):
         first = self._article("A")
         oversized = self._article("X" * 1024)

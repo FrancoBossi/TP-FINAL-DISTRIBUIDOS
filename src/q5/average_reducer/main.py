@@ -1,6 +1,7 @@
 import logging
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from q5.average_reducer.config import (
     Q5AverageReducerConfig,
@@ -16,24 +17,27 @@ def main() -> int:
     configure_logging()
     config = Q5AverageReducerConfig()
 
-    output_queues = [
-        MessageMiddlewareQueueRabbitMQ(
-            config.mom_host,
-            f"{config.output_queue_prefix}.{partition}",
+    output_queues = {
+        f"{config.output_queue_prefix}.{partition}": MessageMiddlewareQueueRabbitMQ(
+            config.mom_host, f"{config.output_queue_prefix}.{partition}"
         )
         for partition in range(config.comparator_partition_count)
-    ]
+    }
     messaging = Q5AverageReducerMessaging(
         MessageMiddlewareQueueRabbitMQ(
             config.mom_host,
             config.input_queue,
         ),
-        output_queues[0],
+        next(iter(output_queues.values())),
         output_queues,
     )
     controller = Q5AverageReducerController(
         messaging,
         config.partition_count,
+        persistence_layout=PersistenceLayout(
+            config.state_root, "q5_average_reducer", config.partition_id
+        ),
+        output_destinations=list(output_queues),
     )
 
     logger.info(

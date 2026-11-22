@@ -2,6 +2,7 @@ import logging
 from types import FrameType
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from input_batcher.batcher import BatchAccumulator
 from input_batcher.config import InputBatcherConfig, configure_logging
@@ -54,6 +55,12 @@ def main() -> int:
     controller = InputBatcherController(
         batcher=batcher,
         messaging=messaging,
+        persistence_layout=PersistenceLayout(
+            config.state_root,
+            "input_batcher",
+            config.partition_id,
+        ),
+        output_destination=config.output_queue,
     )
 
     logger.info(

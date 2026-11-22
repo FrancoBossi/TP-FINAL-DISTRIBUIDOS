@@ -1,6 +1,7 @@
 import logging
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from q5.comparator.buffer import CandidateBuffer
 from q5.comparator.config import Q5ComparatorConfig, configure_logging
@@ -30,6 +31,10 @@ def main() -> int:
         candidate_buffer,
         config.partition_id,
         config.date_router_partition_count,
+        persistence_layout=PersistenceLayout(
+            config.state_root, "q5_comparator", config.partition_id
+        ),
+        output_destination=config.output_queue,
     )
 
     logger.info(

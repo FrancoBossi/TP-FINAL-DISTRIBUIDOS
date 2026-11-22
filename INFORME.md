@@ -341,8 +341,18 @@ la partición de InputBatcher y de la lista ordenada de los `message_id` de sus
 artículos. Se eligió esta clave en lugar de un contador durable porque expresa el
 contenido lógico exacto del batch y no introduce otro estado secuencial. La lista
 se conserva localmente mientras se arma el batch y solo el hash resultante viaja
-por RabbitMQ. La futura persistencia del batch parcial deberá guardar también esos
-IDs para reproducir la misma identidad después de una caída.
+por RabbitMQ. La implementación durable guarda conjuntamente los artículos, esos
+IDs y los tamaños calculados, por lo que una partición reiniciada reconstruye el
+mismo batch y conserva exactamente su límite por bytes.
+
+Antes de confirmar una entrada, InputBatcher persiste en una transición su inbox,
+el batch parcial y toda salida pendiente. Los publisher confirms retiran las
+salidas de la outbox. Al iniciar, cada partición recupera sus ejecuciones y publica
+lo pendiente antes de volver a consumir. La inbox se compacta después del ACK,
+conservando los IDs del batch parcial y el último ID confirmado para cubrir una
+posible pérdida del ACK. Cada partición posee un volumen Docker separado montado
+en `/state`; un cierre ordenado ya no fuerza la publicación prematura de batches
+incompletos.
 
 ---
 
@@ -547,14 +557,14 @@ Antes del promedio persiste candidatos; después del promedio compara directamen
 
 ## 11. ResultSink y entrega al cliente
 
-La implementación actual de ResultSink consume `result_sink.input` y reenvía cada `ResultMessage` a `results.<execution_id>` sin acumular resultados. Para el cierre mantiene una barrera genérica por `(execution_id, query_id)`: cada `QueryPartitionEndMessage` agrega un `partition_id` a un conjunto y, al alcanzar la cantidad configurada para esa query, ResultSink publica exactamente un `QueryEndMessage`. Los duplicados recibidos antes de completar la barrera no incrementan el conjunto. Q1, Q2, Q3 y Q5 utilizan esta barrera con tres particiones. Q4 publica un `QueryEndMessage` directo porque todos los parciales de una ejecución convergen en un único reducer lógico. ResultSink publica mediante el exchange por defecto de RabbitMQ con enrutamiento obligatorio y publisher confirms; recién después de que el broker confirma esa publicación ejecuta el ACK de consumo del mensaje de entrada.
+La implementación actual de ResultSink consume `result_sink.input` y reenvía cada `ResultMessage` a `results.<execution_id>` sin acumular el contenido de los resultados. Para el cierre mantiene una barrera durable por `(execution_id, query_id)`: cada `QueryPartitionEndMessage` agrega un `partition_id` al snapshot de la ejecución y, al alcanzar la cantidad configurada para esa query, agrega exactamente un `QueryEndMessage` a la outbox. Los duplicados no vuelven a modificar la barrera. Q1, Q2, Q3 y Q5 utilizan esta barrera; Q4 publica un `QueryEndMessage` directo porque todos los parciales de una ejecución convergen en un único reducer lógico. Inbox, barreras y outbox se confirman en un reemplazo atómico antes de publicar. ResultSink utiliza enrutamiento obligatorio y publisher confirms; recién después de que el broker confirma la salida la retira de la outbox y ejecuta el ACK de la entrada.
 
 ResultSink no declara las colas de salida. Cada cola `results.<execution_id>` es exclusiva, temporal y pertenece a la conexión de Gateway que inició la ejecución. El publicador dinámico solamente la utiliza como destino. Si la cola no existe porque el cliente se desconectó, la publicación obligatoria produce un error de mensaje no enrutable: ResultSink registra el descarte y confirma la entrada. Los demás errores de publicación continúan produciendo NACK.
 
-La versión actual utiliza una sola instancia, por lo que toda la salida converge en el mismo estado de barrera. Al replicar ResultSink se lo particionará por `execution_id` para conservar esa propiedad. Sus responsabilidades son:
+La versión actual utiliza una sola instancia, por lo que toda la salida converge en el mismo estado durable de barrera. Al replicar ResultSink se lo particionará por `execution_id` para conservar esa propiedad. Sus responsabilidades son:
 
 - Reenviar cada resultado a `results.<execution_id>` sin esperar a que termine la query, ya implementado.
-- Mantener las barreras necesarias por consulta, ya implementado en la instancia única.
+- Mantener y recuperar las barreras necesarias por consulta, ya implementado en la instancia única.
 - Producir exactamente un `QUERY_END` por query, ya implementado para productores que adopten `QUERY_PARTITION_END`.
 - Limpiar el estado de barrera cuando finalicen las cinco consultas o falle la ejecución.
 
@@ -568,9 +578,9 @@ RabbitMQ entrega resultado
   -> Gateway ejecuta el ACK de consumo en RabbitMQ
 ```
 
-Esta secuencia evita confirmar un resultado antes de entregarlo al cliente. Sin embargo, todavía no garantiza una entrega **exactly-once**, es decir, que cada resultado lógico llegue al cliente una única vez incluso si ocurren reintentos o caídas.
+Esta secuencia evita confirmar un resultado antes de entregarlo al cliente. Para que una redelivery no duplique el efecto final, cada `RESULT` y `QUERY_END` lleva además un `result_id` determinista.
 
-Por ejemplo, el cliente podría escribir un resultado y responder ACK, pero Gateway podría caerse antes de confirmar ese mensaje en RabbitMQ. Al recuperarse, RabbitMQ podría entregarlo nuevamente y el cliente lo escribiría dos veces. Evitar esa duplicación requiere identificar persistentemente los resultados ya procesados y deduplicarlos. Esa garantía corresponde al hito posterior de tolerancia a fallos.
+El cliente escribe la línea, ejecuta `flush` y `fsync`, registra y sincroniza el `result_id`, y recién entonces responde ACK. Si ese ACK se pierde y RabbitMQ vuelve a entregar el mismo resultado durante la sesión, el cliente reconoce el ID, responde nuevamente y no agrega otra línea. La reanudación de un cliente caído está fuera del modelo acordado; ese escenario debe demostrar liberación de recursos, no continuación de la ejecución.
 
 ---
 
@@ -612,7 +622,23 @@ más en detectarse.
 
 ### 12.3 Comunicación por grupos
 
-`MessageMiddlewareExchangeRabbitMQ` toma como base la versión utilizada en el TP de Coordinación. Declara un exchange `direct`; cada instancia consumidora crea su propia cola exclusiva y la vincula con las routing keys configuradas. Una instancia usada solamente para publicar declara el exchange sin crear una cola innecesaria. Cuando varias réplicas vinculan sus colas con la misma clave, una publicación de control llega a todas ellas. El negocio no conoce bindings ni detalles de RabbitMQ. DATA continúa usando colas compartidas o particionadas y el control de finalización utiliza este broadcast al grupo. El patrón está integrado en Preprocessor, QueryRouter, Until2020Filter, Q1EnglishFilter, Q2BiographyFilter, ImageFetcher, WordExtractor, Q3WordProjector, Q4Q5WordProjector y Q5DateRouter.
+`MessageMiddlewareExchangeRabbitMQ` toma como base la versión utilizada en el TP de Coordinación. Declara un exchange `direct`; cada instancia consumidora crea su propia cola estable `<exchange>.partition-<partition_id>`, no exclusiva ni autoeliminable, y la vincula con las routing keys configuradas. Una instancia usada solamente para publicar declara el exchange sin crear una cola innecesaria. Cuando varias réplicas vinculan sus colas con la misma clave, una publicación de control llega a todas ellas. El negocio no conoce bindings ni detalles de RabbitMQ. DATA continúa usando colas compartidas o particionadas y el control de finalización utiliza este broadcast al grupo. El patrón está integrado en Preprocessor, QueryRouter, Until2020Filter, Q1EnglishFilter, Q2BiographyFilter, ImageFetcher, WordExtractor, Q3WordProjector, Q4Q5WordProjector y Q5DateRouter.
+
+Las colas de control conservan `durable=false`, igual que DATA, porque RabbitMQ no
+cae en el modelo evaluado. La ausencia de `exclusive` y `auto_delete` permite que
+el broker vivo retenga controles durante la caída de un consumidor. Se verificó
+con RabbitMQ real que, después de cerrar la conexión que declaró una cola, un
+control publicado sin consumidor queda pendiente y una conexión nueva lo recupera
+al redeclarar el mismo nombre. La prueba integral de reinicio de cada proceso se
+realizará junto con la recuperación de su barrera local.
+
+La confirmación del control también respeta el límite de aplicación. El thread que
+consume el exchange conserva la entrega sin ACK mientras el thread principal
+realiza el fence de DATA y ejecuta el callback del controller. Solo después de que
+ese callback termina se envía el ACK desde el thread dueño de la conexión Pika. Si
+el callback falla o comienza el shutdown antes de aplicarlo, se envía NACK con
+reencolado. La posible pérdida del ACK posterior al efecto se tolerará mediante la
+inbox y la outbox durable de cada etapa.
 
 ### 12.4 Publisher confirms, ACK, NACK y prefetch
 
@@ -818,12 +844,13 @@ la cola local de control durante el cierre y espera su thread de control. No se
 reinicia la misma instancia después de detenerla. El middleware reencola entregas
 que todavía no iniciaron su callback al detectar el stop.
 
-InputBatcher ejecuta el ACK de consumo de cada `ROUTED_ARTICLE` después de
-incorporarlo al buffer. Cuando el
-consumo retorna normalmente, publica los batches parciales y después los elimina
-del acumulador. Si el consumo lanza una excepción,
-este drenaje no se ejecuta. Si falla la publicación o se fuerza la terminación,
-pueden perderse artículos ya confirmados; no existe persistencia de ese buffer.
+InputBatcher ejecuta el ACK de consumo de cada `ROUTED_ARTICLE` después de confirmar
+en disco, en una misma transición, la inbox y el nuevo batch parcial. Cuando esa
+transición genera salidas, primero las guarda en la outbox y luego las publica. Un
+cierre normal ya no fuerza la emisión de un batch incompleto: el estado parcial
+permanece durable y se reconstruye al reiniciar. Los fallos entre persistencia,
+publicación y ACK se resuelven mediante recuperación de outbox y deduplicación, como
+se detalla en la sección 18.2.
 
 Gateway deja de aceptar conexiones y solicita el stop de cada `ClientSession`.
 Cada sesión agrupa thread, socket, middleware y sincronización. Interrumpir el
@@ -914,23 +941,96 @@ a aplicar el estado. Una caída después de publicar pero antes del ACK puede re
 físicamente la salida, pero conserva `message_id` y el siguiente consumidor la
 descarta mediante su inbox.
 
-La persistencia será propia, con biblioteca estándar, archivos simples, `fsync` y
-reemplazo atómico. Cada componente/partición tendrá un volumen separado; no habrá
+La persistencia es propia, con biblioteca estándar, archivos simples, `fsync` y
+reemplazo atómico. Cada componente/partición tiene un volumen separado; no hay
 estado mutable compartido entre workers. RabbitMQ queda excluido de esta
 persistencia porque el broker no cae en el modelo evaluado.
+
+El sustrato implementado utiliza un único objeto JSON por ejecución en
+`<state_root>/<component>/partition-<id>/executions/<execution_id>/state.json`.
+Inbox, estado del componente y outbox comparten ese objeto para que una
+transición lógica tenga un único punto de commit. La escritura se realiza sobre
+`.state.json.tmp` en el mismo directorio, seguida por `flush`, `fsync` del archivo,
+`os.replace` y `fsync` del directorio. Un temporal encontrado al recuperar se
+interpreta como una transición que no alcanzó el reemplazo y se descarta; el último
+estado confirmado se conserva. En cambio, un `state.json` corrupto genera un error
+explícito para evitar continuar desde un estado parcial o inventado.
+
+La capa común incluye también la transición `inbox + state + outbox`. Una entrada
+nueva y todas sus salidas se confirman en el mismo reemplazo atómico; una entrada
+cuyo `message_id` ya figura en inbox no vuelve a mutar el estado. Cada salida
+pendiente conserva destino, cuerpo serializado e identidad, y su clave durable es
+`(destination, message_id)` para soportar el envío del mismo control a varias
+particiones. Un publisher confirm permite retirar solamente esa salida. Si el
+proceso reinicia antes, la salida se recupera y se publica nuevamente con la misma
+identidad.
+
+InputBatcher utiliza ya esta capa para su batch parcial, sus IDs ordenados y las
+salidas `ArticleBatchMessage` y `RoutedInputEndMessage`. Las tres particiones tienen
+volúmenes independientes. Las pruebas cubren entrada duplicada, reconstrucción del
+batch con la misma frontera de bytes, fallo de publicación, recuperación de outbox
+y reentrega de `INPUT_END` sin doble publicación. También se inyectaron fallos en
+cinco ventanas: antes del commit durable, después del commit y antes de publicar,
+entre las dos publicaciones del fan-out, después de confirmar las salidas pero antes
+del ACK de consumo, y durante la compactación posterior al ACK. En particular, una
+recuperación a mitad del fan-out conserva solamente la salida no confirmada, mientras
+que la pérdida del ACK no vuelve a publicar salidas ya confirmadas. Un fallo de
+compactación deja información redundante recuperable y no altera la corrección.
+Esta primera implementación reescribe el snapshot parcial por artículo; se medirá
+su costo y se migrará a un journal incremental si el volumen de escritura resulta
+dominante.
+
+Preprocessor permanece deliberadamente stateless. La normalización de un batch es
+determinista y puede repetirse ante una redelivery; escribir un snapshot por batch
+agregaría un `fsync` sin evitar que una entrega reasignada a otra réplica produzca
+la misma salida física. Esa salida conserva su identidad lógica y la etapa siguiente
+la deduplica. Los controles, en cambio, permanecen sin ACK hasta que termina su
+callback, por lo que una caída anterior provoca su reencolado.
+
+QueryRouter es la primera barrera coordinada durable. Cada una de sus tres
+particiones persiste en su propio volumen el conjunto ordenado de particiones de
+Preprocessor observadas, la `reply_queue` y si la barrera ya se completó. Al recibir
+el último final, el mismo commit agrega a la outbox el `PARTITION_END` destinado a
+`until_2020.input` y a `word_extractor.input`. La clave `(destination, message_id)`
+permite confirmar ambas copias por separado. Las pruebas reconstruyen una barrera
+incompleta, recuperan únicamente la segunda rama después de una caída a mitad del
+fan-out y descartan una redelivery posterior a la confirmación de ambas salidas.
+
+El mismo patrón `DurableBarrier` se aplica a Until2020Filter, WordExtractor,
+Q1EnglishFilter, Q2BiographyFilter, ImageFetcher, Q3WordProjector,
+Q4Q5WordProjector y Q5DateRouter. Cada réplica persiste los finales de origen ya
+observados, el estado de completitud y una copia de la salida por destino. Si un
+proceso cae después de confirmar una rama de un fan-out, el reinicio publica
+solamente las ramas que continúan en la outbox.
+
+Los agregadores y reducers persisten además su estado de negocio. Q3WordAggregator
+guarda por palabra las presencias inglesa y francesa y si el resultado ya fue
+emitido. Q4WordCounter conserva conteos y finales; Q4Top20Reducer conserva
+candidatos, finales y resultados ordenados pendientes. Q5StatsWorker guarda suma y
+cantidad; Q5AverageReducer guarda los parciales y una copia del promedio por cola
+de Comparator; Q5Comparator combina su buffer JSONL de candidatos con un snapshot
+que contiene promedio, finales, completitud e inbox/outbox.
+
+ResultSink utiliza el mismo store para su inbox, las barreras de Q1-Q5 y la outbox
+hacia `results.<execution_id>`. Una cola de cliente ya eliminada es un destino
+terminal: la salida se descarta explícitamente y se confirma para liberar la
+ejecución. Un error transitorio conserva la salida pendiente y produce NACK. Todos
+estos procesos montan volúmenes nombrados independientes en `/state`.
 
 ### 18.3 Exactly-once observable
 
 El sistema no intenta convertir RabbitMQ en un transporte exactly-once. Mantiene
-entrega at-least-once y construye idempotencia en cada frontera. La garantía que se
-busca demostrar es que cada efecto lógico se aplica una vez y que los archivos del
+entrega at-least-once y construye idempotencia en cada frontera. La garantía
+implementada es que cada efecto lógico se aplica una vez y que los archivos del
 cliente contienen una sola línea por `result_id`, aunque haya publicaciones o
 entregas físicas repetidas.
 
-ResultSink persistirá los `result_id` emitidos y sus barreras. El cliente escribirá
-el resultado y registrará durablemente su ID antes de responder un ACK que indique
-qué `result_id` confirma. Si ese ACK se pierde, el mismo resultado puede reenviarse,
-pero el cliente no lo vuelve a escribir.
+ResultSink persiste la identidad de cada entrada aplicada, sus barreras y las
+salidas serializadas. El cliente escribe y sincroniza el resultado, registra y
+sincroniza su `result_id` y recién después responde ACK. Si ese ACK se pierde, el
+mismo resultado puede reenviarse, pero durante la sesión el cliente no lo vuelve a
+escribir. Una prueba entrega dos veces el mismo ID y verifica una sola línea y dos
+ACK.
 
 Las colas `results.<execution_id>` continúan siendo temporales, exclusivas y
 propiedad de la sesión Gateway. Recuperar una sesión después de la caída del
@@ -938,7 +1038,7 @@ Gateway está fuera del modelo acordado. La caída deliberada del cliente se pru
 en un escenario separado para verificar liberación de recursos, no para reanudar
 la ejecución completa.
 
-### 18.4 Estado de implementación
+### 18.4 Estado de implementación y validación pendiente
 
 Al cierre del baseline, `execution_id` y `article_id` ya existían. El helper común
 que genera y deriva IDs canónicos `m1` y `r1` está implementado y probado. Gateway
@@ -948,20 +1048,22 @@ barreras posteriores generan identidades deterministas según las reglas de esta
 sección. Los resultados y finales poseen `result_id`, y ese campo ya se transporta
 por el protocolo binario hasta el cliente.
 
-Esta propagación todavía no constituye tolerancia a fallos: el batch parcial y los
-estados de agregación viven en memoria, no hay inbox/outbox y ResultSink y Client
-aún no deduplican ni persisten `result_id`. Por lo tanto, una reentrega puede
-reproducir el mismo ID pero todavía volver a aplicar su efecto. Cada garantía se
-marcará como completa únicamente después de sus pruebas de reentrega, reinicio y
-comparación contra la referencia.
+La transición durable fue propagada a todos los grupos coordinados, agregadores,
+reducers, Q5Comparator y ResultSink. Compose asigna un volumen a cada réplica o
+partición. Los tests reconstruyen una barrera incompleta, un agregado de Q3, una
+salida comprometida antes de publicarse y un fan-out de Q5 confirmado solamente en
+uno de sus destinos. En todos los casos el reinicio drena la outbox sin volver a
+aplicar la entrada. El cliente prueba también la deduplicación por `result_id`.
 
-Esta diferencia está cubierta por pruebas de caracterización. Una falla en la
-segunda publicación de un fan-out provoca que la primera salida sea republicada
-con el mismo `message_id`; una reentrega sobre Q4WordCounter incrementa dos veces el
-contador; y ResultSink vuelve a publicar un resultado con el mismo `result_id`.
-Las pruebas no ocultan el defecto actual: verifican simultáneamente que la identidad
-es estable y que el próximo bloque debe impedir la doble aplicación mediante
-persistencia, inbox y outbox.
+La suite completa pasa con 305 tests, y la configuración de Compose, lint, formato
+y `git diff --check` son válidos. La recuperación también se validó punta a punta:
+durante una ejecución de 300 artículos se enviaron `SIGKILL` simultáneos a todas las
+réplicas del pipeline y a ResultSink, dejando Gateway y RabbitMQ activos. Después
+del reinicio manual, los cinco archivos coincidieron con la referencia y no quedaron
+mensajes ready ni unacked. Esto cierra la propagación y recuperación de datos, pero
+no el hito completo. Restan el plano de control de fallos —salud, FailureManagers,
+Bully y reinicio automático—, Chaos Monkey, cleanup distribuido y la medición de
+overhead.
 
 ---
 
@@ -1050,7 +1152,23 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 
 ### 22.2 Evidencia disponible al corte
 
-- La suite local completa pasa con 261 tests.
+- La suite local completa pasa con 305 tests.
+- Las pruebas de tolerancia reconstruyen estado durable de InputBatcher, QueryRouter,
+  Q3WordAggregator, Q5AverageReducer y ResultSink; incluyen caída antes de publicar,
+  barrera incompleta, fan-out parcialmente confirmado y redelivery al cliente.
+- Se ejecutó una prueba punta a punta de recuperación con 300 artículos equilibrados
+  entre ambos idiomas. La entrada se acumuló con InputBatcher detenido; al comenzar
+  el procesamiento se mataron simultáneamente todas las réplicas funcionales y
+  ResultSink, sin interrumpir Gateway ni RabbitMQ. Tras iniciarlas nuevamente, el
+  cliente recibió los cinco `QUERY_END` y 175 resultados: 7 de Q1, 0 de Q2, 86 de
+  Q3, 20 de Q4 y 62 de Q5. Los cinco archivos dieron `Match` contra la referencia,
+  todas las colas terminaron con cero mensajes ready/unacked y todos los containers
+  quedaron activos. El reinicio fue manual para validar exclusivamente este bloque;
+  su automatización corresponde a FailureManager.
+- Un primer intento con los 50.000 artículos evidenció que el snapshot con `fsync`
+  por cada entrada de InputBatcher tiene un costo demasiado alto para el smoke de
+  fallos. La corrección se conserva, pero el journal o batching de commits deberá
+  evaluarse en el benchmark de tolerancia antes de la entrega.
 - Se conectaron doce clientes mínimos al Gateway con los InputBatcher detenidos. Sus 24 mensajes —un artículo y un final por ejecución— quedaron distribuidos entre `input_batcher.input.0`, `.1` y `.2` sin dividir una ejecución. Al iniciar las tres particiones, cada cola tuvo un único consumidor, las tres quedaron vacías y `preprocessor.input` recibió los 24 mensajes esperados.
 - Se validaron con RabbitMQ real tres réplicas de Preprocessor y tres de QueryRouter, con tres bindings exclusivos en cada exchange de control. Nueve batches produjeron nueve mensajes y un único final en cada una de las cuatro salidas posteriores a Until2020Filter y WordExtractor. Una segunda ejecución confirmó que ambos grupos reanudan el consumo después de sus barreras.
 - Se validaron tres réplicas de Until2020Filter con tres bindings exclusivos. Seis batches y tres finales de QueryRouter produjeron tres resultados Q1, ningún resultado Q2 y un único `QUERY_END` por consulta. Una segunda ejecución vacía sin reiniciar containers confirmó la reanudación y limpieza de las barreras.
@@ -1065,7 +1183,8 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 - Se verificó con RabbitMQ real la barrera genérica de ResultSink: para Q1 configurada con tres particiones recibió los finales `0`, `1`, `1` y `2`, ignoró el duplicado y entregó un único `QUERY_END` después del resultado previo.
 - Se verificó también la barrera real de Q5 en ResultSink: los finales de comparator `2`, `0` y `1` produjeron exactamente un `QUERY_END` y ningún mensaje adicional.
 - Se verificó que ResultSink finaliza con código 0 ante `SIGTERM`.
-- Se verificó con RabbitMQ real que dos consumidores con colas exclusivas vinculadas a la misma routing key reciben una copia del mismo control y que ambas colas se eliminan al cerrar sus conexiones.
+- Como caracterización de la versión de escalabilidad, se verificó que dos consumidores con colas exclusivas vinculadas a la misma routing key recibían una copia del mismo control y que ambas colas se eliminaban al cerrar sus conexiones. Esa eliminación motivó el cambio posterior a colas estables.
+- Para tolerancia a fallos se verificó con RabbitMQ real que, tras cerrar el consumidor, un control publicado sin consumidores activos queda pendiente y una conexión nueva lo recupera al redeclarar el mismo nombre de cola.
 - Se verificó con RabbitMQ real que Q4Q5WordProjector consume un batch tokenizado, publica las dos proyecciones con los mismos metadatos de ejecución y propaga el final a ambas ramas.
 - Se verificó dentro de su imagen Docker que Q4Q5WordProjector dispone de las stopwords de NLTK sin depender de una descarga durante el arranque.
 - Se verificó con RabbitMQ real el recorrido funcional de Q4 desde `q4_q5_word_projector.input` hasta sus resultados ordenados y un único `QUERY_END` en `result_sink.input`.

@@ -14,6 +14,13 @@ from common.message_protocol.message import (
     QueryPartitionEndMessage,
     ResultMessage,
 )
+from common.persistence import (
+    AtomicJsonStore,
+    DurableExecutionStore,
+    PendingOutput,
+    PersistenceCorruptionError,
+    PersistenceLayout,
+)
 from q5.comparator.buffer import CandidateBuffer
 from q5.comparator.messaging import Ack, Nack, Q5ComparatorMessaging
 
@@ -33,6 +40,8 @@ class Q5ComparatorController:
         candidate_buffer: CandidateBuffer,
         partition_id: int = 0,
         date_router_partition_count: int = 1,
+        persistence_layout: PersistenceLayout | None = None,
+        output_destination: str = "result_sink.input",
     ) -> None:
         if date_router_partition_count <= 0:
             raise ValueError("date_router_partition_count must be positive")
@@ -41,6 +50,9 @@ class Q5ComparatorController:
         self._partition_id = partition_id
         self._date_router_partition_count = date_router_partition_count
         self._executions: dict[str, ExecutionState] = {}
+        self._persistence_layout = persistence_layout
+        self._output_destination = output_destination
+        self._stores: dict[str, DurableExecutionStore] = {}
 
     def process_message(
         self,
@@ -48,6 +60,9 @@ class Q5ComparatorController:
         ack: Ack,
         nack: Nack,
     ) -> None:
+        if self._persistence_layout is not None:
+            self._process_durable(message, ack, nack)
+            return
         try:
             self._handle_message(message)
         except Exception:
@@ -55,6 +70,185 @@ class Q5ComparatorController:
             raise
 
         ack()
+
+    def _process_durable(self, message: Message, ack: Ack, nack: Nack) -> None:
+        if not isinstance(
+            message, (Q5CandidateBatchMessage, PartitionEndMessage, Q5AverageMessage)
+        ):
+            nack()
+            raise ValueError(
+                "Q5Comparator expected Q5_CANDIDATE_BATCH, PARTITION_END or Q5_AVERAGE"
+            )
+        try:
+            if isinstance(message, PartitionEndMessage):
+                if message.stage != "q5_date_router":
+                    raise ValueError("Q5Comparator received an invalid partition stage")
+                if not 0 <= message.partition_id < self._date_router_partition_count:
+                    raise ValueError(
+                        "Q5DateRouter partition id is outside configured range"
+                    )
+            store = self._store_for(message.execution_id)
+            if store.has_applied(message.message_id):
+                self._publish_pending(store)
+                ack()
+                return
+            state = self._decode_state(store.state)
+            if state["completed"]:
+                raise PersistenceCorruptionError("Q5Comparator input after completion")
+
+            outputs: list[Message] = []
+            clear_buffer = False
+            if isinstance(message, Q5CandidateBatchMessage):
+                if not state["average_received"]:
+                    self._candidate_buffer.append(
+                        message.execution_id, message.articles
+                    )
+                elif state["average_word_count"] is not None:
+                    outputs.extend(
+                        self._matching_results(
+                            message.execution_id,
+                            message.articles,
+                            state["average_word_count"],
+                        )
+                    )
+            elif isinstance(message, Q5AverageMessage):
+                state["average_received"] = True
+                state["average_word_count"] = message.average_word_count
+                if message.average_word_count is not None:
+                    outputs.extend(
+                        self._matching_results(
+                            message.execution_id,
+                            self._candidate_buffer.iterate(message.execution_id),
+                            message.average_word_count,
+                        )
+                    )
+                clear_buffer = True
+            else:
+                state["ended_partitions"] = sorted(
+                    {*state["ended_partitions"], message.partition_id}
+                )
+
+            if (
+                state["average_received"]
+                and len(state["ended_partitions"]) == self._date_router_partition_count
+            ):
+                state["completed"] = True
+                outputs.append(
+                    QueryPartitionEndMessage(
+                        query_id=5,
+                        partition_id=self._partition_id,
+                        execution_id=message.execution_id,
+                        message_id=build_control_message_id(
+                            execution_id=message.execution_id,
+                            stage="q5_comparator",
+                            partition_id=self._partition_id,
+                            operation="query_partition_end",
+                        ),
+                    )
+                )
+                clear_buffer = True
+            store.apply(
+                message.message_id,
+                state,
+                [
+                    PendingOutput.from_message(self._output_destination, item)
+                    for item in outputs
+                ],
+            )
+            if clear_buffer:
+                self._candidate_buffer.clear(message.execution_id)
+            self._publish_pending(store)
+        except Exception:
+            nack()
+            raise
+        ack()
+
+    def _matching_results(self, execution_id, articles, average):
+        outputs = []
+        for article in articles:
+            if article["word_count"] <= average:
+                continue
+            result_id, message_id = build_result_message_ids(
+                execution_id=execution_id,
+                query_id=5,
+                result_kind="result",
+                identity={"url": article["url"]},
+                producer_id="q5_comparator",
+            )
+            outputs.append(
+                ResultMessage(
+                    5,
+                    {"url": article["url"], "word_count": article["word_count"]},
+                    execution_id,
+                    message_id,
+                    result_id,
+                )
+            )
+        return outputs
+
+    def _decode_state(self, state):
+        if not state:
+            return {
+                "average_received": False,
+                "average_word_count": None,
+                "ended_partitions": [],
+                "completed": False,
+            }
+        if set(state) != {
+            "average_received",
+            "average_word_count",
+            "ended_partitions",
+            "completed",
+        }:
+            raise PersistenceCorruptionError("invalid Q5Comparator state")
+        received, average, ended, completed = (
+            state["average_received"],
+            state["average_word_count"],
+            state["ended_partitions"],
+            state["completed"],
+        )
+        if (
+            type(received) is not bool
+            or (average is not None and not isinstance(average, (int, float)))
+            or (not received and average is not None)
+            or not isinstance(ended, list)
+            or ended != sorted(set(ended))
+            or any(
+                type(item) is not int
+                or not 0 <= item < self._date_router_partition_count
+                for item in ended
+            )
+            or type(completed) is not bool
+            or completed
+            != (received and len(ended) == self._date_router_partition_count)
+        ):
+            raise PersistenceCorruptionError("invalid Q5Comparator state")
+        return state
+
+    def _store_for(self, execution_id):
+        if execution_id not in self._stores:
+            self._stores[execution_id] = DurableExecutionStore(
+                AtomicJsonStore(self._persistence_layout.state_path(execution_id))
+            )
+        return self._stores[execution_id]
+
+    def _publish_pending(self, store):
+        for output in store.pending_outputs:
+            if output.destination != self._output_destination:
+                raise PersistenceCorruptionError("invalid Q5Comparator destination")
+            message = output.deserialize_message()
+            if not isinstance(message, (ResultMessage, QueryPartitionEndMessage)):
+                raise PersistenceCorruptionError("invalid Q5Comparator outbox")
+            self._messaging.publish(message)
+            store.confirm(output)
+
+    def _recover(self):
+        for execution_id in self._persistence_layout.execution_ids():
+            store = self._store_for(execution_id)
+            state = self._decode_state(store.state)
+            if state["average_received"]:
+                self._candidate_buffer.clear(execution_id)
+            self._publish_pending(store)
 
     def _handle_message(self, message: Message) -> None:
         if isinstance(message, Q5CandidateBatchMessage):
@@ -168,6 +362,8 @@ class Q5ComparatorController:
         self._executions.pop(execution_id, None)
 
     def start(self) -> None:
+        if self._persistence_layout is not None:
+            self._recover()
         self._messaging.start_consuming(self.process_message)
 
     def stop(self) -> None:

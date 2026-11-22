@@ -1,10 +1,12 @@
 from common.coordinated_consumer import Ack, Nack
+from common.durable_barrier import DurableBarrier
 from common.message_identity import build_control_message_id
 from common.message_protocol.message import (
     Message,
     PartitionEndMessage,
     Q1Q2ArticleBatchMessage,
 )
+from common.persistence import PersistenceLayout
 from until_2020_filter.filter import filter_batch
 from until_2020_filter.messaging import Until2020FilterMessaging
 
@@ -15,6 +17,9 @@ class Until2020FilterController:
         messaging: Until2020FilterMessaging,
         partition_id: int,
         query_router_partition_count: int,
+        persistence_layout: PersistenceLayout | None = None,
+        q1_destination: str = "q1.input",
+        q2_destination: str = "q2_biography_filter.input",
     ) -> None:
         if query_router_partition_count <= 0:
             raise ValueError("QueryRouter partition count must be positive")
@@ -23,6 +28,35 @@ class Until2020FilterController:
         self._partition_id = partition_id
         self._query_router_partition_count = query_router_partition_count
         self._finished_query_router_partitions: dict[str, set[int]] = {}
+        self._durable_barrier = (
+            DurableBarrier(
+                persistence_layout,
+                query_router_partition_count,
+                {
+                    q1_destination: self._messaging.publish_q1,
+                    q2_destination: self._messaging.publish_q2,
+                },
+                lambda message: {
+                    q1_destination: self._partition_end(message),
+                    q2_destination: self._partition_end(message),
+                },
+            )
+            if persistence_layout is not None
+            else None
+        )
+
+    def _partition_end(self, message: PartitionEndMessage) -> PartitionEndMessage:
+        return PartitionEndMessage(
+            stage="until_2020_filter",
+            partition_id=self._partition_id,
+            execution_id=message.execution_id,
+            reply_queue=message.reply_queue,
+            message_id=build_control_message_id(
+                execution_id=message.execution_id,
+                stage="until_2020_filter",
+                partition_id=self._partition_id,
+            ),
+        )
 
     def _validate_query_router_partition_end(
         self,
@@ -77,6 +111,9 @@ class Until2020FilterController:
         match message:
             case PartitionEndMessage():
                 self._validate_query_router_partition_end(message)
+                if self._durable_barrier is not None:
+                    self._durable_barrier.apply(message)
+                    return
 
                 finished_partitions = self._finished_query_router_partitions.setdefault(
                     message.execution_id,
@@ -87,17 +124,7 @@ class Until2020FilterController:
                 if len(finished_partitions) < self._query_router_partition_count:
                     return
 
-                partition_end = PartitionEndMessage(
-                    stage="until_2020_filter",
-                    partition_id=self._partition_id,
-                    execution_id=message.execution_id,
-                    reply_queue=message.reply_queue,
-                    message_id=build_control_message_id(
-                        execution_id=message.execution_id,
-                        stage="until_2020_filter",
-                        partition_id=self._partition_id,
-                    ),
-                )
+                partition_end = self._partition_end(message)
                 self._messaging.publish_q1(partition_end)
                 self._messaging.publish_q2(partition_end)
                 self._finished_query_router_partitions.pop(message.execution_id)
@@ -108,6 +135,8 @@ class Until2020FilterController:
                 )
 
     def start(self) -> None:
+        if self._durable_barrier is not None:
+            self._durable_barrier.recover()
         self._messaging.start_consuming(
             self.process_message,
             self.process_control_message,

@@ -1,4 +1,5 @@
 from common.coordinated_consumer import Ack, Nack
+from common.durable_barrier import DurableBarrier
 from common.message_identity import build_control_message_id
 from common.message_protocol.message import (
     Message,
@@ -6,6 +7,7 @@ from common.message_protocol.message import (
     TokenizedArticleBatchMessage,
 )
 from common.partition_router import PartitionRouter
+from common.persistence import PersistenceLayout
 from q3.word_projector.messaging import Q3WordProjectorMessaging
 from q3.word_projector.projector import project_batch
 
@@ -17,6 +19,7 @@ class Q3WordProjectorController:
         router: PartitionRouter,
         partition_id: int,
         word_extractor_partition_count: int,
+        persistence_layout: PersistenceLayout | None = None,
     ) -> None:
         if word_extractor_partition_count <= 0:
             raise ValueError("WordExtractor partition count must be positive")
@@ -26,6 +29,42 @@ class Q3WordProjectorController:
         self._partition_id = partition_id
         self._word_extractor_partition_count = word_extractor_partition_count
         self._finished_word_extractor_partitions: dict[str, set[int]] = {}
+        destinations = [
+            f"{self._router.queue_prefix}.{partition}"
+            for partition in range(self._router.partition_count)
+        ]
+        self._durable_barrier = (
+            DurableBarrier(
+                persistence_layout,
+                word_extractor_partition_count,
+                {
+                    queue: (
+                        lambda message, queue=queue: self._messaging.publish(
+                            queue, message
+                        )
+                    )
+                    for queue in destinations
+                },
+                lambda message: {
+                    queue: self._partition_end(message) for queue in destinations
+                },
+            )
+            if persistence_layout is not None
+            else None
+        )
+
+    def _partition_end(self, message: PartitionEndMessage) -> PartitionEndMessage:
+        return PartitionEndMessage(
+            stage="q3_word_projector",
+            partition_id=self._partition_id,
+            execution_id=message.execution_id,
+            reply_queue=message.reply_queue,
+            message_id=build_control_message_id(
+                execution_id=message.execution_id,
+                stage="q3_word_projector",
+                partition_id=self._partition_id,
+            ),
+        )
 
     def _validate_word_extractor_partition_end(
         self,
@@ -68,6 +107,9 @@ class Q3WordProjectorController:
         match message:
             case PartitionEndMessage():
                 self._validate_word_extractor_partition_end(message)
+                if self._durable_barrier is not None:
+                    self._durable_barrier.apply(message)
+                    return
 
                 finished_partitions = (
                     self._finished_word_extractor_partitions.setdefault(
@@ -80,17 +122,7 @@ class Q3WordProjectorController:
                 if len(finished_partitions) < self._word_extractor_partition_count:
                     return
 
-                partition_end = PartitionEndMessage(
-                    stage="q3_word_projector",
-                    partition_id=self._partition_id,
-                    execution_id=message.execution_id,
-                    reply_queue=message.reply_queue,
-                    message_id=build_control_message_id(
-                        execution_id=message.execution_id,
-                        stage="q3_word_projector",
-                        partition_id=self._partition_id,
-                    ),
-                )
+                partition_end = self._partition_end(message)
                 for partition in range(self._router.partition_count):
                     queue = f"{self._router.queue_prefix}.{partition}"
                     self._messaging.publish(queue, partition_end)
@@ -103,6 +135,8 @@ class Q3WordProjectorController:
                 )
 
     def start(self) -> None:
+        if self._durable_barrier is not None:
+            self._durable_barrier.recover()
         self._messaging.start_consuming(
             self.process_message,
             self.process_control_message,
