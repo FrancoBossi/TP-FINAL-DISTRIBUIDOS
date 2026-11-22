@@ -652,6 +652,12 @@ o commits agrupados sin debilitar el ACK durable.
 - [ ] Interrumpir un cliente en un escenario separado y verificar que se liberen
   todos sus recursos aunque no forme parte de la demo completa.
 
+Gateway usa `EXECUTION_TIMEOUT_SECONDS` (3600 por defecto) como plazo total de
+la sesión desde que empieza a atenderla. El plazo cubre la carga, la espera de
+resultados y los ACK del cliente. Durante la espera, Gateway también detecta el
+cierre del socket aunque todavía no haya resultados. Ambos casos generan
+`EXECUTION_FAILED` con la causa correspondiente.
+
 #### Bloque 8 - Chaos Monkey, benchmark, informe y demo
 
 - [ ] Implementar Chaos Monkey reproducible y escenarios automatizados.

@@ -30,7 +30,9 @@ class GatewayMessaging:
         if self._lifecycle_queue is not None:
             self._lifecycle_queue.send(message.serialize())
 
-    def start_consuming_results(self, on_result: ResultCallback) -> None:
+    def start_consuming_results(
+        self, on_result: ResultCallback, on_idle: Callable[[], None] | None = None
+    ) -> None:
         def deserialize_result(
             body: bytes,
             ack: Acknowledgement,
@@ -39,7 +41,7 @@ class GatewayMessaging:
             message = Message.deserialize(body)
             on_result(message, ack, nack)
 
-        self._result_queue.start_consuming(deserialize_result)
+        self._result_queue.start_consuming(deserialize_result, on_idle=on_idle)
 
     def stop_consuming_results(self) -> None:
         with self._lifecycle_lock:

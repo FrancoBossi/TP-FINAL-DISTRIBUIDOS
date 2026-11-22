@@ -3,12 +3,15 @@ import socket
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
+from select import select
 from threading import Event
+from time import monotonic
 from uuid import uuid4
 
 from common.message_identity import build_message_id
 from common.message_protocol.external import (
     QUERY_IDS,
+    apply_socket_deadline,
     recv_msg,
     send_msg,
     validate_result,
@@ -60,9 +63,10 @@ def forward_message(
     messaging: GatewayMessaging,
     execution_id: str,
     published: int,
+    deadline: float | None = None,
 ) -> tuple[int, bool]:
     input_finished = False
-    message = recv_msg(client_socket)
+    message = recv_msg(client_socket, deadline=deadline)
 
     match message:
         case ArticleMessage(article=dict() as article):
@@ -100,7 +104,9 @@ def forward_message(
         routed.type,
     )
     try:
-        send_msg(client_socket, AckMessage())
+        send_msg(client_socket, AckMessage(), deadline=deadline)
+    except TimeoutError:
+        raise
     except OSError as error:
         if not input_finished:
             raise UploadDisconnected(published) from error
@@ -156,13 +162,16 @@ def deliver_result(
     message: Message,
     execution_id: str,
     state: ResultForwardingState,
+    deadline: float | None = None,
 ) -> None:
     if state.discard:
         return
     try:
-        send_msg(client_socket, message)
-        if not isinstance(recv_msg(client_socket), AckMessage):
+        send_msg(client_socket, message, deadline=deadline)
+        if not isinstance(recv_msg(client_socket, deadline=deadline), AckMessage):
             raise ValueError("Expected ACK for result")
+    except TimeoutError:
+        raise
     except (EOFError, OSError):
         state.discard = True
         logger.info("Execution %s: discarding remaining results", execution_id)
@@ -177,10 +186,11 @@ def on_result(
     messaging: GatewayMessaging,
     execution_id: str,
     state: ResultForwardingState,
+    deadline: float | None = None,
 ) -> None:
     try:
         query_id = validate_execution_result(message, execution_id, state.completed)
-        deliver_result(client_socket, message, execution_id, state)
+        deliver_result(client_socket, message, execution_id, state, deadline)
     except Exception:
         nack()
         messaging.stop_consuming_results()
@@ -205,6 +215,7 @@ def forward_results(
     client_socket: socket.socket,
     messaging: GatewayMessaging,
     execution_id: str,
+    deadline: float | None = None,
 ) -> bool:
     state = ResultForwardingState()
 
@@ -220,20 +231,43 @@ def forward_results(
         messaging=messaging,
         execution_id=execution_id,
         state=state,
+        deadline=deadline,
     )
 
-    messaging.start_consuming_results(callback)
+    def check_client() -> None:
+        if state.discard:
+            messaging.stop_consuming_results()
+            return
+        apply_socket_deadline(client_socket, deadline)
+        readable, _, _ = select([client_socket], [], [], 0)
+        if readable:
+            try:
+                pending = client_socket.recv(1, socket.MSG_PEEK)
+            except TimeoutError:
+                raise
+            except OSError:
+                pending = b""
+            if pending:
+                raise ValueError("Unexpected client data while waiting for results")
+            state.discard = True
+            messaging.stop_consuming_results()
 
+    messaging.start_consuming_results(callback, on_idle=check_client)
+
+    if state.discard:
+        return False
     if state.completed != QUERY_IDS:
         raise EOFError("Results ended before all queries completed")
-    return not state.discard
+    return True
 
 
 def handle_client(
     client_socket: socket.socket,
     messaging_factory: Callable[[str], GatewayMessaging],
     stop_event: Event,
+    timeout_seconds: float | None = None,
 ) -> None:
+    deadline = None if timeout_seconds is None else monotonic() + timeout_seconds
     execution_id = uuid4().hex
     messaging = None
     published = 0
@@ -259,7 +293,10 @@ def handle_client(
                     messaging,
                     execution_id,
                     published,
+                    deadline,
                 )
+        except TimeoutError:
+            raise
         except UploadDisconnected as error:
             published = error.published
             terminal_cause = "client_disconnected"
@@ -293,7 +330,9 @@ def handle_client(
             return
 
         if not stop_event.is_set():
-            completed = forward_results(client_socket, messaging, execution_id)
+            completed = forward_results(
+                client_socket, messaging, execution_id, deadline
+            )
             terminal_cause = (
                 "all_queries_acknowledged" if completed else "client_disconnected"
             )
@@ -306,6 +345,8 @@ def handle_client(
             execution_id,
             published,
         )
+        if deadline is not None:
+            client_socket.settimeout(0.25)
         send_error_message(
             client_socket,
             error,

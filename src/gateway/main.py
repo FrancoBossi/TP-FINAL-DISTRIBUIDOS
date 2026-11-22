@@ -73,6 +73,7 @@ def main() -> int:
                     lifecycle_queue_name=config.lifecycle_queue,
                 ),
                 stop_event=stop_event,
+                timeout_seconds=config.execution_timeout_seconds,
             )
     except KeyboardInterrupt:
         return 0

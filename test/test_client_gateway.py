@@ -39,7 +39,7 @@ class FakeMessaging:
     def publish_terminal(self, message):
         self.terminal.append(message)
 
-    def start_consuming_results(self, on_result):
+    def start_consuming_results(self, on_result, on_idle=None):
         execution_id = self.published[-1].execution_id
         messages = [
             ResultMessage(
@@ -247,6 +247,49 @@ class TestClientGateway(unittest.TestCase):
                 identity={"article_count": 1},
             ),
         )
+
+    def test_deadline_expires_while_waiting_for_first_result(self):
+        messaging = FakeMessaging()
+        messaging.start_consuming_results = Mock(
+            side_effect=lambda _, on_idle: on_idle()
+        )
+        client_socket = Mock()
+        with (
+            patch("gateway.handler.monotonic", return_value=100),
+            patch("common.message_protocol.external.monotonic", return_value=111),
+            patch("gateway.handler.recv_msg", return_value=InputEndMessage()),
+            patch("gateway.handler.send_msg") as send,
+        ):
+            with self.assertRaisesRegex(TimeoutError, "deadline exceeded"):
+                handle_client(
+                    client_socket,
+                    lambda _: messaging,
+                    threading.Event(),
+                    timeout_seconds=10,
+                )
+
+        self.assertIsInstance(send.call_args.args[1], ErrorMessage)
+        self.assertEqual(messaging.terminal[0].cause, "timeout")
+        self.assertTrue(messaging.closed)
+
+    def test_gateway_detects_disconnect_before_first_result(self):
+        messaging = FakeMessaging()
+        messaging.start_consuming_results = Mock(
+            side_effect=lambda _, on_idle: on_idle()
+        )
+        client_socket = Mock()
+        client_socket.recv.return_value = b""
+        with (
+            patch("gateway.handler.recv_msg", return_value=InputEndMessage()),
+            patch("gateway.handler.send_msg"),
+            patch("gateway.handler.select", return_value=([client_socket], [], [])),
+        ):
+            handle_client(client_socket, lambda _: messaging, threading.Event())
+
+        self.assertTrue(messaging.consumption_stopped)
+        self.assertIsInstance(messaging.terminal[0], ExecutionFailedMessage)
+        self.assertEqual(messaging.terminal[0].cause, "client_disconnected")
+        self.assertTrue(messaging.closed)
 
     def test_gateway_reports_completion_after_client_acks(self):
         messaging = FakeMessaging()

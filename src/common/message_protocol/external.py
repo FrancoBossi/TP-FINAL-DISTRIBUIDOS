@@ -3,6 +3,7 @@ import struct
 from collections.abc import Set
 from io import BytesIO
 from socket import socket
+from time import monotonic
 from typing import Any
 
 from common.message_protocol.message import (
@@ -285,9 +286,18 @@ def _decode_message(body: bytes) -> Message:
     return message
 
 
-def _recv_exact(sock: socket, size: int) -> bytes:
+def apply_socket_deadline(sock: socket, deadline: float | None) -> None:
+    if deadline is not None:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Execution deadline exceeded")
+        sock.settimeout(remaining)
+
+
+def _recv_exact(sock: socket, size: int, deadline: float | None) -> bytes:
     data = bytearray()
     while len(data) < size:
+        apply_socket_deadline(sock, deadline)
         chunk = sock.recv(size - len(data))
         if not chunk:
             raise EOFError("Connection closed before the complete message arrived")
@@ -295,22 +305,23 @@ def _recv_exact(sock: socket, size: int) -> bytes:
     return bytes(data)
 
 
-def send_msg(sock: socket, message: Message) -> None:
+def send_msg(sock: socket, message: Message, *, deadline: float | None = None) -> None:
     body = _encode_message(message)
 
     if not 0 < len(body) <= MAX_MESSAGE_SIZE:
         raise ValueError("Message exceeds the permitted size")
 
+    apply_socket_deadline(sock, deadline)
     sock.sendall(struct.pack("!I", len(body)) + body)
 
 
-def recv_msg(sock: socket) -> Message:
-    size = struct.unpack("!I", _recv_exact(sock, 4))[0]
+def recv_msg(sock: socket, *, deadline: float | None = None) -> Message:
+    size = struct.unpack("!I", _recv_exact(sock, 4, deadline))[0]
 
     if not 0 < size <= MAX_MESSAGE_SIZE:
         raise ValueError("Invalid message size")
 
-    return _decode_message(_recv_exact(sock, size))
+    return _decode_message(_recv_exact(sock, size, deadline))
 
 
 def validate_result(message: Message, completed: Set[int]) -> int:
