@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-def confirmed_cycles(log: Path) -> int:
+def confirmed_cycles(log: Path, required_targets: set[str] | None = None) -> int:
     if not log.is_file():
         return 0
     with log.open(encoding="utf-8") as lines:
@@ -18,13 +18,21 @@ def confirmed_cycles(log: Path) -> int:
             {
                 event["cycle"]
                 for event in events
-                if event["event"] == "injection_finished" and event["returncode"] == 0
+                if event["event"] == "injection_finished"
+                and event["returncode"] == 0
+                and (
+                    required_targets is None
+                    or required_targets.issubset(event["targets"])
+                )
             }
         )
 
 
 def assess_interval(
-    directory: Path, exit_code: int, expected_runs: int
+    directory: Path,
+    exit_code: int,
+    expected_runs: int,
+    required_targets: set[str] | None = None,
 ) -> dict[str, Any]:
     summary_path = next(directory.glob("*/summary.json"), None)
     runs = []
@@ -32,7 +40,8 @@ def assess_interval(
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
         for run in summary["runs"]:
             cycles = confirmed_cycles(
-                summary_path.parent / f"run-{run['run']:02d}" / "chaos.jsonl"
+                summary_path.parent / f"run-{run['run']:02d}" / "chaos.jsonl",
+                required_targets,
             )
             runs.append(
                 {

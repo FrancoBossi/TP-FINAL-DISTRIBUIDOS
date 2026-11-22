@@ -783,6 +783,21 @@ conservan sus marcas hasta que se pueda verificar el drenaje.
 | Ejecución fallida | Cliente informado y recursos eliminados |
 | Chaos Monkey cada cinco segundos | Cinco salidas iguales a referencia, sin duplicados ni recursos huérfanos |
 
+Para listar los escenarios de caída de procesos sin levantar Compose:
+
+```sh
+.venv/bin/python -m scripts.run_chaos_matrix --scope representative --list
+.venv/bin/python -m scripts.run_chaos_matrix --scope all --list
+```
+
+Para ejecutarlos, reemplazar `--list` por `--dataset`, `--expected-output`,
+`--output` y `--timeout-seconds` con sus valores. La matriz ejecuta tres
+ejecuciones por caso a intervalos de cinco segundos por defecto y guarda
+`matrix.json`, los logs y los resultados, incluidos los casos fallidos o
+pendientes. `--scope all` elige una réplica por tipo de servicio. Los casos
+en puntos específicos de persistencia, barrera o ACK requieren pruebas
+dirigidas adicionales.
+
 ### Comparación de performance
 
 Con tres o más ejecuciones válidas por caso, calcular la variación de las medianas:
