@@ -474,6 +474,22 @@ def read_first_result_seconds(log: Path) -> float | None:
     return None
 
 
+def read_journal_bytes(log: Path) -> int | None:
+    marker = re.compile(
+        r"Journal bytes execution=(\S+) partition=(\d+) "
+        r"file=(pending-\d+\.jsonl) bytes=(\d+)"
+    )
+    sizes: dict[tuple[str, str, str], int] = {}
+    with log.open(encoding="utf-8", errors="replace") as lines:
+        for line in lines:
+            match = marker.search(line)
+            if match:
+                execution, partition, name, size = match.groups()
+                key = (execution, partition, name)
+                sizes[key] = max(sizes.get(key, 0), int(size))
+    return sum(sizes.values()) if sizes else None
+
+
 def run_network_bytes(run: dict[str, Any], direction: str) -> int | None:
     containers = run.get("metrics", {}).values()
     sampled_field = f"network_{direction}_bytes_sampled"
@@ -503,6 +519,7 @@ def summarize_runs(
             "duration_seconds",
             "articles_per_second",
             "first_result_seconds",
+            "input_batcher_journal_bytes",
         )
     }
     for direction in ("receive", "transmit"):
@@ -532,6 +549,7 @@ def write_summary_csv(path: Path, runs: list[dict[str, Any]]) -> None:
                 "duration_seconds",
                 "articles_per_second",
                 "first_result_seconds",
+                "input_batcher_journal_bytes",
                 "matches_first_success",
                 "matches_expected",
             ),
@@ -833,6 +851,12 @@ def main() -> int:
                     "confirmed_injections": injected,
                 }
                 chaos_ok = injected > 0 and injector_status == 0 and cleanup["passed"]
+                capture_compose_logs(
+                    compose_command, repo_root, run_env, run_dir / "compose.log"
+                )
+            run_result["input_batcher_journal_bytes"] = read_journal_bytes(
+                run_dir / "compose.log"
+            )
             try:
                 fingerprints = fingerprint_output(output_dir)
                 run_result["fingerprints"] = fingerprints

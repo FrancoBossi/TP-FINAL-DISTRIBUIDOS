@@ -817,6 +817,12 @@ La comparación debe separar el overhead normal de la recuperación:
   contador caído, el runner acumula el tramo nuevo. Un reinicio entre muestras
   puede subestimar el total. Para ejecuciones sin fallas, los resúmenes anteriores
   aportan sus contadores finales.
+- `input_batcher_journal_bytes` suma el tamaño observado de cada journal
+  incremental de InputBatcher al retirarlo durante un checkpoint, recuperación
+  o cleanup. Usa el mayor tamaño por ejecución, partición y generación para
+  deduplicar reintentos. Requiere logs de InputBatcher a nivel INFO. Mide bytes
+  lógicos del journal y puede omitir un archivo si la ejecución termina antes de
+  que se registre su tamaño. El campo queda vacío cuando no hay muestras.
 - Medir tiempo total, artículos por segundo, tiempo hasta primer resultado, CPU,
   memoria, red, bytes escritos en journals y tiempo de recuperación.
 - Reducir progresivamente el intervalo entre fallas y documentar el menor valor

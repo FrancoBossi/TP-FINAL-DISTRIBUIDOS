@@ -11,6 +11,7 @@ from scripts.run_benchmark import (
     parse_io_bytes,
     parse_memory_bytes,
     read_first_result_seconds,
+    read_journal_bytes,
     resolve_dataset,
     summarize_metrics,
     summarize_runs,
@@ -87,6 +88,28 @@ class BenchmarkHelpersTest(unittest.TestCase):
         self.assertEqual(summarize_runs([run])["network_receive_bytes"]["median"], 70)
         run["chaos"] = True
         self.assertIsNone(summarize_runs([run])["network_receive_bytes"]["median"])
+
+    def test_journal_bytes_count_each_generation_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "compose.log"
+            log.write_text("No journal telemetry\n", encoding="utf-8")
+            self.assertIsNone(read_journal_bytes(log))
+            samples = [
+                ("first", 0, 0, 12),
+                ("first", 0, 0, 30),
+                ("first", 0, 0, 30),
+                ("first", 0, 1, 40),
+                ("second", 1, 0, 50),
+            ]
+            log.write_text(
+                "".join(
+                    f"Journal bytes execution={execution} partition={partition} "
+                    f"file=pending-{generation}.jsonl bytes={size}\n"
+                    for execution, partition, generation, size in samples
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(read_journal_bytes(log), 120)
 
     def test_first_result_metric_is_optional_and_parsed_from_client_log(self):
         with tempfile.TemporaryDirectory() as directory:
