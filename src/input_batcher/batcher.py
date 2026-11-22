@@ -2,6 +2,7 @@ import json
 import logging
 from typing import Optional
 
+from common.message_identity import build_message_id
 from common.message_protocol.message import (
     ArticleBatchMessage,
     RoutedArticleMessage,
@@ -14,15 +15,19 @@ SEPARATOR_LENGTH = 2  # ", " in JSON encoding
 
 
 class BatchAccumulator:
-    def __init__(self, batch_size: int):
+    def __init__(self, batch_size: int, partition_id: int = 0):
 
         if batch_size <= 0:
             raise ValueError("batch_size must be greater than zero")
+        if partition_id < 0:
+            raise ValueError("partition_id must be nonnegative")
 
         self.batch_size = batch_size
+        self.partition_id = partition_id
         self.current_batch: dict[str, ArticleBatchMessage] = {}
         self._batch_sizes: dict[str, int] = {}
         self._envelope_sizes: dict[str, int] = {}
+        self._source_message_ids: dict[str, list[str]] = {}
 
     def add_article(
         self, message: RoutedArticleMessage
@@ -57,7 +62,13 @@ class BatchAccumulator:
                 + article_size
             )
             if candidate_size <= self.batch_size:
-                current.articles.append(message.article)
+                source_message_ids = self._source_message_ids[message.execution_id]
+                source_message_ids.append(message.message_id)
+                self.current_batch[message.execution_id] = self._build_batch(
+                    message,
+                    [*current.articles, message.article],
+                    source_message_ids,
+                )
                 self._batch_sizes[message.execution_id] = candidate_size
                 return None
 
@@ -78,6 +89,7 @@ class BatchAccumulator:
                     articles=[],
                     execution_id=message.execution_id,
                     reply_queue=message.reply_queue,
+                    message_id=self._build_message_id(message.execution_id, []),
                 ).serialize()
             )
         else:
@@ -91,10 +103,12 @@ class BatchAccumulator:
         single_size: int,
         envelope_size: int,
     ) -> None:
-        self.current_batch[message.execution_id] = ArticleBatchMessage(
-            articles=[message.article],
-            execution_id=message.execution_id,
-            reply_queue=message.reply_queue,
+        source_message_ids = [message.message_id]
+        self._source_message_ids[message.execution_id] = source_message_ids
+        self.current_batch[message.execution_id] = self._build_batch(
+            message,
+            [message.article],
+            source_message_ids,
         )
         self._batch_sizes[message.execution_id] = single_size
         self._envelope_sizes[message.execution_id] = envelope_size
@@ -114,4 +128,33 @@ class BatchAccumulator:
 
         del self._batch_sizes[message.execution_id]
         del self._envelope_sizes[message.execution_id]
+        del self._source_message_ids[message.execution_id]
         return self.current_batch.pop(message.execution_id)
+
+    def _build_batch(
+        self,
+        message: RoutedArticleMessage,
+        articles: list[dict],
+        source_message_ids: list[str],
+    ) -> ArticleBatchMessage:
+        return ArticleBatchMessage(
+            articles=articles,
+            execution_id=message.execution_id,
+            reply_queue=message.reply_queue,
+            message_id=self._build_message_id(
+                message.execution_id,
+                source_message_ids,
+            ),
+        )
+
+    def _build_message_id(
+        self,
+        execution_id: str,
+        source_message_ids: list[str],
+    ) -> str:
+        return build_message_id(
+            execution_id=execution_id,
+            producer_id=f"input_batcher:{self.partition_id}",
+            operation="article_batch",
+            identity={"source_message_ids": source_message_ids},
+        )

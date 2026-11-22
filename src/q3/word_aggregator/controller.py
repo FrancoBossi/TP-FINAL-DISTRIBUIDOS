@@ -1,5 +1,9 @@
 from dataclasses import dataclass
 
+from common.message_identity import (
+    build_control_message_id,
+    build_result_message_ids,
+)
 from common.message_protocol.message import (
     Message,
     PartitionEndMessage,
@@ -62,8 +66,20 @@ class Q3WordAggregatorController:
                     return
 
                 if self._partition_count == 1:
+                    result_id, message_id = build_result_message_ids(
+                        execution_id=message.execution_id,
+                        query_id=3,
+                        result_kind="end",
+                        identity={"end": True},
+                        producer_id="q3_word_aggregator",
+                    )
                     self._messaging.publish(
-                        QueryEndMessage(query_id=3, execution_id=message.execution_id)
+                        QueryEndMessage(
+                            query_id=3,
+                            execution_id=message.execution_id,
+                            message_id=message_id,
+                            result_id=result_id,
+                        )
                     )
                 else:
                     self._messaging.publish(
@@ -71,6 +87,12 @@ class Q3WordAggregatorController:
                             query_id=3,
                             partition_id=self._partition_id,
                             execution_id=message.execution_id,
+                            message_id=build_control_message_id(
+                                execution_id=message.execution_id,
+                                stage="q3_word_aggregator",
+                                partition_id=self._partition_id,
+                                operation="query_partition_end",
+                            ),
                         )
                     )
                 self._executions.pop(message.execution_id, None)
@@ -107,11 +129,20 @@ class Q3WordAggregatorController:
         else:
             state.seen_fr = True
         if state.seen_en and state.seen_fr and not state.emitted:
+            result_id, message_id = build_result_message_ids(
+                execution_id=execution_id,
+                query_id=3,
+                result_kind="result",
+                identity={"word": word},
+                producer_id="q3_word_aggregator",
+            )
             self._messaging.publish(
                 ResultMessage(
                     query_id=3,
                     record={"word": word},
                     execution_id=execution_id,
+                    message_id=message_id,
+                    result_id=result_id,
                 )
             )
             state.emitted = True

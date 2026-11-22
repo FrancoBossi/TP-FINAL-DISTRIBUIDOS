@@ -1,6 +1,7 @@
 import json
 from collections.abc import Iterator
 
+from common.message_identity import derive_message_id
 from common.message_protocol.message import (
     Q3WordPresenceBatchMessage,
     TokenizedArticleBatchMessage,
@@ -44,5 +45,12 @@ def _append_presence(
             presences=[],
             execution_id=message.execution_id,
             reply_queue=message.reply_queue,
+            message_id=derive_message_id(
+                execution_id=message.execution_id,
+                input_message_id=message.message_id,
+                producer_id="q3_word_projector",
+                operation="word_presence_batch",
+                identity={"destination": queue},
+            ),
         )
     batches[queue].presences.append(presence)

@@ -23,6 +23,7 @@ class TestInputBatcherMessaging(unittest.TestCase):
             articles=[{"name": "Example article"}],
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id="m1:batch",
         )
 
         self.messaging.publish(message)
@@ -42,6 +43,7 @@ class TestInputBatcherMessaging(unittest.TestCase):
         message = RoutedInputEndMessage(
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id="m1:input-end",
         )
         middleware_callback(message.serialize(), ack, nack)
 

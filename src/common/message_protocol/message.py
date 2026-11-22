@@ -1,5 +1,5 @@
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, ClassVar
 
 from common.message_protocol.message_type import MessageType
@@ -22,6 +22,15 @@ class Message:
         kind = MessageType(fields.pop("type"))
         message_class = MESSAGE_CLASSES[kind]
 
+        if kind in INTERNAL_MESSAGE_TYPES:
+            message_id = fields.get("message_id")
+            if not isinstance(message_id, str) or not message_id:
+                raise ValueError(f"{kind} requires a nonempty message_id")
+        if kind in RESULT_MESSAGE_TYPES:
+            result_id = fields.get("result_id")
+            if not isinstance(result_id, str) or not result_id:
+                raise ValueError(f"{kind} requires a nonempty result_id")
+
         if "execution_id" in fields:
             message_class = ROUTED_CLASSES.get(kind, message_class)
 
@@ -41,6 +50,7 @@ class ArticleMessage(Message):
 class RoutedArticleMessage(ArticleMessage):
     execution_id: str
     reply_queue: str
+    message_id: str
 
 
 @dataclass(frozen=True)
@@ -48,6 +58,7 @@ class ArticleBatchMessage(Message):
     articles: list[dict[str, Any]]
     execution_id: str
     reply_queue: str
+    message_id: str
     type: ClassVar[MessageType] = MessageType.ARTICLE_BATCH
 
 
@@ -56,6 +67,7 @@ class NormalizedArticleBatchMessage(Message):
     articles: list[dict[str, Any]]
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.NORMALIZED_ARTICLE_BATCH
 
 
@@ -64,6 +76,7 @@ class Q1Q2ArticleBatchMessage(Message):
     articles: list[dict[str, Any]]
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.Q1_Q2_ARTICLE_BATCH
 
 
@@ -72,6 +85,7 @@ class Q1CandidateBatchMessage(Message):
     articles: list[dict[str, Any]]
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.Q1_CANDIDATE_BATCH
 
 
@@ -80,6 +94,7 @@ class Q2CandidateBatchMessage(Message):
     articles: list[dict[str, Any]]
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.Q2_CANDIDATE_BATCH
 
 
@@ -88,6 +103,7 @@ class ImageCandidateBatchMessage(Message):
     articles: list[dict[str, Any]]
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.IMAGE_CANDIDATE_BATCH
 
 
@@ -102,6 +118,7 @@ class TokenizedArticleBatchMessage(Message):
     articles: list[dict[str, Any]]
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.TOKENIZED_ARTICLE_BATCH
 
 
@@ -116,6 +133,7 @@ class Q3WordPresenceBatchMessage(Message):
     presences: list[dict[str, str]]
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.Q3_WORD_PRESENCE_BATCH
 
 
@@ -130,6 +148,7 @@ class Q4WordBatchMessage(Message):
     words: list[str]
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.Q4_WORD_BATCH
 
 
@@ -140,6 +159,7 @@ class Q4PartialTopBatchMessage(Message):
     words: list[dict[str, Any]]
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.Q4_PARTIAL_TOP_BATCH
 
 
@@ -150,6 +170,7 @@ class Q4PartitionEndMessage(Message):
     partition_id: int
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.Q4_PARTITION_END
 
 
@@ -160,6 +181,7 @@ class Q5ArticleWordCountBatchMessage(Message):
     articles: list[dict[str, Any]]
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.Q5_ARTICLE_WORD_COUNT_BATCH
 
 
@@ -170,6 +192,7 @@ class Q5HistoricalWordCountBatchMessage(Message):
     word_counts: list[int]
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.Q5_HISTORICAL_WORD_COUNT_BATCH
 
 
@@ -180,6 +203,7 @@ class Q5CandidateBatchMessage(Message):
     articles: list[dict[str, Any]]
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.Q5_CANDIDATE_BATCH
 
 
@@ -191,6 +215,7 @@ class Q5PartialStatsMessage(Message):
     abstract_count: int
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.Q5_PARTIAL_STATS
 
 
@@ -201,6 +226,7 @@ class Q5StatsPartitionEndMessage(Message):
     partition_id: int
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.Q5_STATS_PARTITION_END
 
 
@@ -211,6 +237,7 @@ class Q5AverageMessage(Message):
     average_word_count: float | None
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.Q5_AVERAGE
 
 
@@ -219,6 +246,7 @@ class TextArticleBatchMessage(Message):
     articles: list[dict[str, Any]]
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.TEXT_ARTICLE_BATCH
 
 
@@ -231,6 +259,7 @@ class InputEndMessage(Message):
 class RoutedInputEndMessage(InputEndMessage):
     execution_id: str
     reply_queue: str
+    message_id: str
 
 
 @dataclass(frozen=True)
@@ -241,6 +270,7 @@ class PartitionEndMessage(Message):
     partition_id: int
     execution_id: str
     reply_queue: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.PARTITION_END
 
 
@@ -251,6 +281,7 @@ class QueryPartitionEndMessage(Message):
     query_id: int
     partition_id: int
     execution_id: str
+    message_id: str = field(default="m1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.QUERY_PARTITION_END
 
 
@@ -270,6 +301,8 @@ class ResultMessage(Message):
     query_id: int
     record: dict[str, Any]
     execution_id: str
+    message_id: str = field(default="m1:fixture", compare=False)
+    result_id: str = field(default="r1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.RESULT
 
 
@@ -277,6 +310,8 @@ class ResultMessage(Message):
 class QueryEndMessage(Message):
     query_id: int
     execution_id: str
+    message_id: str = field(default="m1:fixture", compare=False)
+    result_id: str = field(default="r1:fixture", compare=False)
     type: ClassVar[MessageType] = MessageType.QUERY_END
 
 
@@ -308,6 +343,19 @@ MESSAGE_CLASSES: dict[MessageType, type[Message]] = {
     MessageType.PARTITION_END: PartitionEndMessage,
     MessageType.QUERY_PARTITION_END: QueryPartitionEndMessage,
 }
+
+INTERNAL_MESSAGE_TYPES = frozenset(MESSAGE_CLASSES) - {
+    MessageType.ARTICLE,
+    MessageType.INPUT_END,
+    MessageType.ACK,
+    MessageType.ERROR,
+}
+RESULT_MESSAGE_TYPES = frozenset(
+    {
+        MessageType.RESULT,
+        MessageType.QUERY_END,
+    }
+)
 
 ROUTED_CLASSES: dict[MessageType, type[Message]] = {
     MessageType.ARTICLE: RoutedArticleMessage,

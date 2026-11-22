@@ -1,5 +1,6 @@
 import unittest
 
+from common.message_identity import derive_message_id
 from common.message_protocol.message import (
     ArticleBatchMessage,
     NormalizedArticleBatchMessage,
@@ -27,6 +28,7 @@ class TestPreprocessor(unittest.TestCase):
             ],
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id="m1:batch",
         )
 
         result = normalize_batch(message)
@@ -48,6 +50,15 @@ class TestPreprocessor(unittest.TestCase):
         )
 
         self.assertEqual(result, expected)
+        self.assertEqual(
+            result.message_id,
+            derive_message_id(
+                execution_id=message.execution_id,
+                input_message_id=message.message_id,
+                producer_id="preprocessor",
+                operation="normalized_article_batch",
+            ),
+        )
 
 
 if __name__ == "__main__":

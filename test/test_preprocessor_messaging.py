@@ -38,6 +38,7 @@ class TestPreprocessorMessaging(unittest.TestCase):
         message = RoutedInputEndMessage(
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id="m1:input-end",
         )
 
         self.messaging.broadcast_control(message)
@@ -53,6 +54,7 @@ class TestPreprocessorMessaging(unittest.TestCase):
         message = RoutedInputEndMessage(
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id="m1:input-end",
         )
 
         def consume_input(middleware_callback, on_idle=None):
@@ -78,6 +80,7 @@ class TestPreprocessorMessaging(unittest.TestCase):
         message = RoutedInputEndMessage(
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id="m1:input-end",
         )
 
         def consume_input(_middleware_callback, on_idle):

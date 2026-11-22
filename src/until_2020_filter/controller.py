@@ -1,4 +1,5 @@
 from common.coordinated_consumer import Ack, Nack
+from common.message_identity import build_control_message_id
 from common.message_protocol.message import (
     Message,
     PartitionEndMessage,
@@ -91,6 +92,11 @@ class Until2020FilterController:
                     partition_id=self._partition_id,
                     execution_id=message.execution_id,
                     reply_queue=message.reply_queue,
+                    message_id=build_control_message_id(
+                        execution_id=message.execution_id,
+                        stage="until_2020_filter",
+                        partition_id=self._partition_id,
+                    ),
                 )
                 self._messaging.publish_q1(partition_end)
                 self._messaging.publish_q2(partition_end)

@@ -296,7 +296,7 @@ Gateway adapta el protocolo externo a mensajes internos:
 2. Crea `execution_id`.
 3. Crea la cola temporal `results.<execution_id>`.
 4. Asigna la ejecución a una partición de InputBatcher.
-5. Agrega `execution_id` y `reply_queue` a artículos y al final de entrada.
+5. Agrega `execution_id`, `reply_queue` y `message_id` a artículos y al final de entrada.
 6. Publica en RabbitMQ.
 7. Después de publicar cada artículo individual en RabbitMQ, envía al cliente un ACK por TCP; también confirma `INPUT_END` de la misma manera.
 8. Cuando recibe `INPUT_END`, deja de recibir artículos y comienza la fase de resultados: consume mensajes desde `results.<execution_id>` en RabbitMQ y envía cada `RESULT` o `QUERY_END` al cliente por la misma conexión TCP.
@@ -309,6 +309,13 @@ cuando RabbitMQ acepta la publicación mediante publisher confirms, responde
 terminar la entrada se repite la secuencia con `INPUT_END`. Este ACK significa
 que el broker aceptó el mensaje, no que el artículo ya recorrió el pipeline ni
 que sus resultados fueron calculados.
+
+Gateway utiliza la posición secuencial del artículo dentro de la conexión para
+calcular su `message_id` determinista. El primer artículo usa secuencia cero. El
+ID de `INPUT_END` se deriva de la cantidad total publicada. Estas secuencias son
+estado efímero de la sesión y no se transmiten como campos separados; solamente
+viaja el ID resultante. InputBatcher ya exige y deserializa esa identidad, aunque
+la deduplicación durable se incorporará con su inbox.
 
 La conexión tiene entonces dos fases. Primero el cliente envía artículos y Gateway los publica en RabbitMQ. Después de `INPUT_END`, el flujo se invierte: Gateway recibe los resultados producidos por el sistema distribuido y los transmite al cliente. Por cada resultado, espera el ACK por TCP del cliente antes de ejecutar el ACK de consumo en RabbitMQ.
 
@@ -328,6 +335,14 @@ Para cada artículo:
 6. Ante `INPUT_END`, se publica el último batch parcial antes del final.
 
 El InputBatcher mantiene estado por ejecución. Por eso todos los artículos y el final de una ejecución deben llegar a la misma partición. Distintas ejecuciones sí pueden asignarse a distintas particiones. Compose despliega tres colas e instancias con identificadores `0`, `1` y `2`; Gateway calcula la partición mediante SHA-256 sobre `execution_id`. Cada cola tiene un solo consumidor, mientras las tres instancias comparten `preprocessor.input` como salida.
+
+Cada `ArticleBatchMessage` recibe una identidad determinista calculada a partir de
+la partición de InputBatcher y de la lista ordenada de los `message_id` de sus
+artículos. Se eligió esta clave en lugar de un contador durable porque expresa el
+contenido lógico exacto del batch y no introduce otro estado secuencial. La lista
+se conserva localmente mientras se arma el batch y solo el hash resultante viaja
+por RabbitMQ. La futura persistencia del batch parcial deberá guardar también esos
+IDs para reproducir la misma identidad después de una caída.
 
 ---
 
@@ -826,21 +841,127 @@ pueden quedar parciales y el código de salida actual no identifica la interrupc
 
 ## 18. Durabilidad y tolerancia a fallos
 
-Las colas actuales son no durables y los mensajes no son persistentes. Esto es coherente con el alcance funcional del hito de escalabilidad, pero no permite recuperar el sistema luego de reiniciar RabbitMQ.
+El hito de escalabilidad implementa transporte at-least-once: el broker conserva
+una entrega hasta recibir ACK y puede volver a entregarla si el consumidor se cae.
+Esto evita perder el mensaje pendiente, pero no evita repetir sus efectos. Si un
+worker publica una salida y cae antes del ACK de su entrada, RabbitMQ reentrega la
+entrada y la salida puede publicarse nuevamente.
 
-Declarar una cola durable no alcanza por sí solo. Una solución completa necesita además mensajes persistentes, almacenamiento persistente del broker, restauración del estado de aplicación, idempotencia y deduplicación.
+La solución de tolerancia a fallos se diseña sobre el modelo confirmado con el
+corrector: RabbitMQ y Gateway no se caen; sí pueden caer workers, componentes con
+estado, ResultSink y FailureManagers, incluso varios simultáneamente. Por lo tanto,
+no se intenta reconstruir el broker ni trasladar coordinación durable al Gateway.
+La recuperación se concentra en el estado propio de cada componente y en los
+mensajes que RabbitMQ conserva mientras no existe un consumidor activo.
 
-Las colas `results.<execution_id>` son deliberadamente temporales, exclusivas y autoeliminables. Su ciclo de vida coincide con la sesión del Gateway.
+### 18.1 Identidad lógica mínima
 
-En el hito de tolerancia a fallos se revisarán:
+Cada mensaje interno de DATA o CONTROL tendrá solamente dos campos de identidad
+obligatorios:
 
-- Persistencia de mensajes y estado.
-- Reanudación de ejecuciones.
-- Deduplicación mediante `message_id` o `article_id`.
-- Exactly-once hacia el cliente.
-- Recuperación de CandidateBuffer.
-- Chaos Monkey automatizado.
-- Limpieza de ejecuciones resueltas o fallidas.
+- `execution_id`, que aísla una ejecución completa;
+- `message_id`, que identifica una ocurrencia lógica y no cambia cuando RabbitMQ
+  vuelve a entregar físicamente el mensaje.
+
+Los resultados y finales que cruzan la frontera hacia el cliente agregan
+`result_id`. Este identificador permite que el cliente reconozca un resultado ya
+escrito cuando se perdió su ACK y vuelva a confirmarlo sin duplicar una línea.
+
+Se evaluó transportar también `producer_id`, `sequence` y `causation_id` en todos
+los mensajes. Se descartó porque downstream no necesita esos datos para decidir si
+una entrada ya fue aplicada. El productor utiliza localmente su identidad estable,
+una secuencia persistida o el ID de la entrada para calcular `message_id`; la
+relación causal queda disponible en sus logs y journal. Así se mantiene pequeño el
+contrato compartido y se evita acoplar cada consumidor a detalles internos de la
+etapa anterior.
+
+Los IDs se calculan con SHA-256 sobre una representación JSON canónica, con versión
+y dominio explícitos. El prefijo `m1` corresponde a mensajes y `r1` a resultados.
+No se hashea el mensaje serializado completo: modificar metadata no relacionada o
+el orden de los campos JSON no debe cambiar la identidad lógica.
+
+La fuente concreta depende de la operación:
+
+| Operación | Material estable utilizado para el ID |
+|---|---|
+| Artículo de ingreso | `execution_id` y secuencia asignada por Gateway durante la conexión |
+| Batch de InputBatcher | `execution_id`, partición y lista ordenada de IDs de entrada |
+| Transformación o fan-out | `message_id` de entrada, etapa, destino e índice determinista de salida |
+| Final de partición | ejecución, etapa o query, partición y literal `end` |
+| Parcial o agregado | ejecución, productor lógico, partición y clase de agregado |
+| Resultado Q1/Q2/Q5 | ejecución, query y URL del artículo |
+| Resultado Q3/Q4 | ejecución, query y palabra |
+| Final externo | ejecución, query y literal `end` |
+
+Gateway mantiene únicamente un contador efímero durante la carga secuencial del
+cliente. Esto no contradice su rol mínimo: Gateway está excluido de caídas y el
+contador no representa estado de negocio ni requiere un journal durable.
+
+### 18.2 Aplicación durable e inbox/outbox
+
+El estado objetivo de cada consumidor se organiza por `execution_id` y dueño
+lógico. Una entrada se considera aplicada cuando una transición recuperable y
+sincronizada a disco contiene conjuntamente:
+
+1. el `message_id` incorporado a la inbox;
+2. la nueva versión del estado del componente;
+3. todas las salidas lógicas pendientes en la outbox, ya identificadas.
+
+Después de esa transición el proceso publica la outbox, espera publisher confirms
+y recién entonces envía el ACK de la entrada. Una caída antes de persistir provoca
+una reentrega normal. Una caída después de persistir recupera la outbox sin volver
+a aplicar el estado. Una caída después de publicar pero antes del ACK puede repetir
+físicamente la salida, pero conserva `message_id` y el siguiente consumidor la
+descarta mediante su inbox.
+
+La persistencia será propia, con biblioteca estándar, archivos simples, `fsync` y
+reemplazo atómico. Cada componente/partición tendrá un volumen separado; no habrá
+estado mutable compartido entre workers. RabbitMQ queda excluido de esta
+persistencia porque el broker no cae en el modelo evaluado.
+
+### 18.3 Exactly-once observable
+
+El sistema no intenta convertir RabbitMQ en un transporte exactly-once. Mantiene
+entrega at-least-once y construye idempotencia en cada frontera. La garantía que se
+busca demostrar es que cada efecto lógico se aplica una vez y que los archivos del
+cliente contienen una sola línea por `result_id`, aunque haya publicaciones o
+entregas físicas repetidas.
+
+ResultSink persistirá los `result_id` emitidos y sus barreras. El cliente escribirá
+el resultado y registrará durablemente su ID antes de responder un ACK que indique
+qué `result_id` confirma. Si ese ACK se pierde, el mismo resultado puede reenviarse,
+pero el cliente no lo vuelve a escribir.
+
+Las colas `results.<execution_id>` continúan siendo temporales, exclusivas y
+propiedad de la sesión Gateway. Recuperar una sesión después de la caída del
+Gateway está fuera del modelo acordado. La caída deliberada del cliente se prueba
+en un escenario separado para verificar liberación de recursos, no para reanudar
+la ejecución completa.
+
+### 18.4 Estado de implementación
+
+Al cierre del baseline, `execution_id` y `article_id` ya existían. El helper común
+que genera y deriva IDs canónicos `m1` y `r1` está implementado y probado. Gateway
+asigna `message_id` al ingreso; InputBatcher deriva el batch de los IDs ordenados de
+entrada; y las transformaciones, fan-outs, splits particionados, agregados y
+barreras posteriores generan identidades deterministas según las reglas de esta
+sección. Los resultados y finales poseen `result_id`, y ese campo ya se transporta
+por el protocolo binario hasta el cliente.
+
+Esta propagación todavía no constituye tolerancia a fallos: el batch parcial y los
+estados de agregación viven en memoria, no hay inbox/outbox y ResultSink y Client
+aún no deduplican ni persisten `result_id`. Por lo tanto, una reentrega puede
+reproducir el mismo ID pero todavía volver a aplicar su efecto. Cada garantía se
+marcará como completa únicamente después de sus pruebas de reentrega, reinicio y
+comparación contra la referencia.
+
+Esta diferencia está cubierta por pruebas de caracterización. Una falla en la
+segunda publicación de un fan-out provoca que la primera salida sea republicada
+con el mismo `message_id`; una reentrega sobre Q4WordCounter incrementa dos veces el
+contador; y ResultSink vuelve a publicar un resultado con el mismo `result_id`.
+Las pruebas no ocultan el defecto actual: verifican simultáneamente que la identidad
+es estable y que el próximo bloque debe impedir la doble aplicación mediante
+persistencia, inbox y outbox.
 
 ---
 
@@ -869,6 +990,10 @@ El monitoreo no participa del flujo funcional y su caída no debe impedir el pro
 | Streaming de Parquet | Cargar dataset completo | Memoria acotada y cumplimiento del criterio de streaming | Mayor cantidad de mensajes y necesidad de batching |
 | Batches por bytes | Cantidad fija de artículos | Controla el tamaño real pese a artículos heterogéneos | Medir requiere serializar el batch candidato |
 | SHA-256 para particionar | `hash()` de Python | Determinismo entre procesos y reinicios | Más CPU que un hash no criptográfico, irrelevante frente al beneficio actual |
+| Envelope interno mínimo con `message_id` | Propagar además productor, secuencia y causalidad en cada mensaje | Downstream solo necesita una identidad estable para deduplicar; productor y secuencia quedan locales | La relación causal completa se consulta en logs/journal y no directamente en el DTO |
+| IDs deterministas por operación | UUID nuevo en cada publicación o hash del payload completo | Una reentrega y una recuperación reproducen el mismo ID incluso si el payload se repite legítimamente | Cada clase de operación debe definir y probar su clave lógica |
+| ID de batch derivado de sus entradas ordenadas | Contador durable por ejecución y partición | Identifica el contenido lógico exacto y evita mantener un contador adicional | El batch parcial debe persistir también los IDs de entrada para reproducirlo tras una caída |
+| At-least-once más idempotencia | Intentar transporte exactly-once | Se apoya en las garantías reales de RabbitMQ y permite recuperación con inbox/outbox | Puede haber tráfico físico duplicado y se necesita persistencia local |
 | Normalización temprana | Parsear en cada query | Evita duplicación e interpretaciones divergentes | El artículo normalizado contiene campos para más de una rama hasta el fan-out |
 | Proyecciones mínimas | Propagar el artículo completo | Menos tráfico y menor acoplamiento | Más tipos de mensajes |
 | Filtro temporal común Q1/Q2 | Un filtro por query | Evalúa una sola vez la misma condición | Introduce una etapa compartida adicional |
@@ -925,7 +1050,7 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 
 ### 22.2 Evidencia disponible al corte
 
-- La suite local completa pasa con 228 tests.
+- La suite local completa pasa con 261 tests.
 - Se conectaron doce clientes mínimos al Gateway con los InputBatcher detenidos. Sus 24 mensajes —un artículo y un final por ejecución— quedaron distribuidos entre `input_batcher.input.0`, `.1` y `.2` sin dividir una ejecución. Al iniciar las tres particiones, cada cola tuvo un único consumidor, las tres quedaron vacías y `preprocessor.input` recibió los 24 mensajes esperados.
 - Se validaron con RabbitMQ real tres réplicas de Preprocessor y tres de QueryRouter, con tres bindings exclusivos en cada exchange de control. Nueve batches produjeron nueve mensajes y un único final en cada una de las cuatro salidas posteriores a Until2020Filter y WordExtractor. Una segunda ejecución confirmó que ambos grupos reanudan el consumo después de sus barreras.
 - Se validaron tres réplicas de Until2020Filter con tres bindings exclusivos. Seis batches y tres finales de QueryRouter produjeron tres resultados Q1, ningún resultado Q2 y un único `QUERY_END` por consulta. Una segunda ejecución vacía sin reiniciar containers confirmó la reanudación y limpieza de las barreras.
@@ -953,7 +1078,107 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 - Después de deshabilitar los heartbeats de las conexiones bloqueantes no volvieron a registrarse cierres por `missed heartbeats` y todos los componentes funcionales permanecieron activos.
 - Se verificó el arranque separado de los containers implementados.
 
-El pipeline funcional y las barreras replicadas quedan validados mediante pruebas unitarias y smokes por ramas. También se verificó una desconexión antes del primer artículo: Gateway eliminó su cola temporal, Q1-Q5 completaron la ejecución vacía, ResultSink descartó los cinco finales sin destino, no quedaron mensajes ni archivos temporales y todos los componentes permanecieron activos. Resta repetir la comparación completa de 50.000 artículos con esta topología replicada y concentrar las pruebas siguientes en múltiples clientes y graceful shutdown.
+El pipeline funcional y las barreras replicadas quedan validados mediante pruebas
+unitarias, smokes por ramas y ejecuciones completas. También se verificó una
+desconexión antes del primer artículo: Gateway eliminó su cola temporal, Q1-Q5
+completaron la ejecución vacía, ResultSink descartó los cinco finales sin destino,
+no quedaron mensajes ni archivos temporales y todos los componentes permanecieron
+activos. Las pruebas siguientes se concentran en persistencia, reentrega,
+reinicio, múltiples fallas y cleanup.
+
+### 22.3 Línea base previa a tolerancia a fallos
+
+Antes de incorporar persistencia, deduplicación o supervisión se congeló una línea
+base del sistema escalable. Su objetivo es separar el costo propio del pipeline del
+overhead que introducirá la tolerancia a fallos. El commit funcional utilizado fue
+`44636953cf1f903e3fd63a60a5c7bdeab6428418`; el runner registró el repositorio como
+`dirty` porque el propio tooling del benchmark aún no estaba versionado, pero no
+existían modificaciones funcionales del pipeline.
+
+#### Dataset y criterio de tamaño
+
+El dataset de la demo completa contiene 90 shards por idioma y más de cinco
+millones de artículos. Una primera corrida permaneció más de 110 minutos en Q2
+debido a las descargas HTTP externas, por lo que ese tamaño no resultó práctico
+para repetir mediciones durante el desarrollo. Esa ejecución interrumpida no se
+consideró parte del baseline.
+
+Se construyó una muestra determinista con los primeros 12 shards en inglés y los
+primeros 12 en francés:
+
+| Propiedad | Valor |
+|---|---:|
+| Archivo | `datasets/wikipedia_benchmark_12.parquet` |
+| Artículos totales | 612.475 |
+| Artículos en inglés | 302.499 |
+| Artículos en francés | 309.976 |
+| Tamaño | 895.138.775 bytes |
+| SHA-256 | `47a250453b588c2c39354f92657af3ec522f09a61e17561c37c58c7aaee0ac70` |
+
+La muestra es aproximadamente doce veces mayor que el smoke funcional de 50.000
+artículos y permite repetir escenarios sin convertir cada validación en una prueba
+de varias horas. El script conserva un manifest con los shards y conteos, por lo
+que otro integrante puede reconstruir el mismo archivo desde la caché local.
+
+#### Procedimiento reproducible
+
+El comando `make benchmark-baseline` ejecuta tres corridas independientes. El
+runner realiza los siguientes pasos:
+
+1. registra commit, rama, estado del repositorio, configuración y hash del dataset;
+2. construye las imágenes y levanta la misma topología de Docker Compose;
+3. parte de una topología limpia en cada repetición;
+4. mide desde el inicio hasta la finalización del cliente real;
+5. toma muestras de CPU, memoria y red de los containers cada cinco segundos;
+6. guarda logs del cliente y de Compose;
+7. calcula fingerprints de multiconjunto para Q1-Q5, independientes del orden pero
+   sensibles a faltantes, adicionales y duplicados;
+8. compara las tres corridas y baja la topología al finalizar.
+
+No se inyectan fallas en esta medición. El cliente, Gateway, RabbitMQ, cantidad de
+réplicas, dataset y host deben mantenerse iguales al medir posteriormente la
+versión tolerante a fallos sin Chaos.
+
+#### Resultados
+
+| Corrida | Duración | Throughput | CPU agregada media | CPU agregada pico | Memoria agregada pico |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 553,43 s | 1.106,69 artículos/s | 141,33 % | 389,57 % | 2,42 GiB |
+| 2 | 549,45 s | 1.114,70 artículos/s | 147,94 % | 402,76 % | 2,46 GiB |
+| 3 | 552,18 s | 1.109,19 artículos/s | 155,65 % | 404,71 % | 2,46 GiB |
+
+La duración media fue 551,69 segundos —9 minutos y 11,69 segundos— con desvío
+estándar de 2,03 segundos y coeficiente de variación de 0,369 %. El throughput
+medio fue 1.110,19 artículos por segundo. Un porcentaje de CPU superior a 100 %
+representa utilización simultánea de más de un core al sumar los containers.
+
+El I/O final agregado de interfaces fue aproximadamente 25,79 GB recibidos y
+23,44 GB transmitidos por corrida. Esta suma incluye tráfico interno observado en
+las interfaces de cada container y, por lo tanto, no representa únicamente bytes
+externos ni debe interpretarse como consumo de Internet.
+
+Las tres corridas terminaron con código cero y fingerprints idénticos:
+
+| Query | Registros por corrida |
+|---:|---:|
+| Q1 | 24.764 |
+| Q2 | 637 |
+| Q3 | 137.673 |
+| Q4 | 20 |
+| Q5 | 235.306 |
+
+Q2 depende de Wikimedia y puede variar si un recurso externo cambia o falla. En
+esta línea base produjo exactamente los mismos 637 resultados en las tres
+repeticiones. Mantener tres corridas permite detectar esa variabilidad en lugar de
+ocultarla dentro de una única medición.
+
+Los artefactos completos quedaron en
+`benchmarks/results/20261115-202022-44636953cf1f/` y se excluyen de Git por su
+tamaño; el informe conserva los valores necesarios para la entrega. Al finalizar
+la implementación se repetirá el mismo procedimiento con tolerancia habilitada y
+sin fallas. El overhead temporal se calculará como
+`(tiempo_tolerante - tiempo_base) / tiempo_base * 100`; las corridas con Chaos se
+reportarán por separado porque miden recuperación, no costo estacionario.
 
 ---
 

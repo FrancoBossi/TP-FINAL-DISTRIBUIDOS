@@ -1,5 +1,6 @@
 import unittest
 
+from common.message_identity import build_message_id
 from common.message_protocol.message import (
     ArticleBatchMessage,
     RoutedArticleMessage,
@@ -9,6 +10,21 @@ from input_batcher.batcher import BatchAccumulator
 
 
 class TestBatchAccumulator(unittest.TestCase):
+    def _batch_id(
+        self,
+        execution_id: str,
+        *messages: RoutedArticleMessage,
+        partition_id: int = 0,
+    ) -> str:
+        return build_message_id(
+            execution_id=execution_id,
+            producer_id=f"input_batcher:{partition_id}",
+            operation="article_batch",
+            identity={
+                "source_message_ids": [message.message_id for message in messages]
+            },
+        )
+
     def _article(
         self,
         name: str,
@@ -18,12 +34,14 @@ class TestBatchAccumulator(unittest.TestCase):
             article={"name": name},
             execution_id=execution_id,
             reply_queue=f"results.{execution_id}",
+            message_id=f"m1:{execution_id}:{name}",
         )
 
     def _end(self, execution_id: str) -> RoutedInputEndMessage:
         return RoutedInputEndMessage(
             execution_id=execution_id,
             reply_queue=f"results.{execution_id}",
+            message_id=f"m1:{execution_id}:end",
         )
 
     def test_accumulates_and_splits_at_serialized_size_limit(self):
@@ -35,6 +53,7 @@ class TestBatchAccumulator(unittest.TestCase):
             articles=[first.article, second.article],
             execution_id=first.execution_id,
             reply_queue=first.reply_queue,
+            message_id=self._batch_id(first.execution_id, first, second),
         )
         max_batch_bytes = len(two_article_batch.serialize())
 
@@ -90,6 +109,7 @@ class TestBatchAccumulator(unittest.TestCase):
             articles=[article.article],
             execution_id=article.execution_id,
             reply_queue=article.reply_queue,
+            message_id=self._batch_id(article.execution_id, article),
         )
         accumulator = BatchAccumulator(len(single_article_batch.serialize()) - 1)
 
@@ -103,14 +123,19 @@ class TestBatchAccumulator(unittest.TestCase):
             article={"name": 'Café "東京"', "sections": [{"text": "a\\b\n😀"}]},
             execution_id='exécution"1',
             reply_queue='results.é"1',
+            message_id="m1:first",
         )
         second = RoutedArticleMessage(
             article={"name": "Deux", "image": None, "values": [True, 3.25]},
             execution_id=first.execution_id,
             reply_queue=first.reply_queue,
+            message_id="m1:second",
         )
         expected = ArticleBatchMessage(
-            [first.article, second.article], first.execution_id, first.reply_queue
+            [first.article, second.article],
+            first.execution_id,
+            first.reply_queue,
+            self._batch_id(first.execution_id, first, second),
         )
         for delta in (0, -1):
             with self.subTest(delta=delta):
@@ -118,7 +143,11 @@ class TestBatchAccumulator(unittest.TestCase):
                 accumulator = BatchAccumulator(limit)
                 self.assertIsNone(accumulator.add_article(first))
                 published = accumulator.add_article(second)
-                end = RoutedInputEndMessage(first.execution_id, first.reply_queue)
+                end = RoutedInputEndMessage(
+                    first.execution_id,
+                    first.reply_queue,
+                    "m1:input-end",
+                )
                 remaining = accumulator.flush(end)
                 if delta == 0:
                     self.assertIsNone(published)
@@ -128,6 +157,28 @@ class TestBatchAccumulator(unittest.TestCase):
                     self.assertEqual(remaining.articles, [second.article])
                     self.assertLessEqual(len(published.serialize()), limit)
                 self.assertLessEqual(len(remaining.serialize()), limit)
+
+    def test_batch_identity_depends_on_order_and_partition(self):
+        first = self._article("A")
+        second = self._article("B")
+
+        first_order = BatchAccumulator(4096, partition_id=0)
+        first_order.add_article(first)
+        first_order.add_article(second)
+        first_batch = first_order.flush(self._end(first.execution_id))
+
+        second_order = BatchAccumulator(4096, partition_id=0)
+        second_order.add_article(second)
+        second_order.add_article(first)
+        second_batch = second_order.flush(self._end(first.execution_id))
+
+        another_partition = BatchAccumulator(4096, partition_id=1)
+        another_partition.add_article(first)
+        another_partition.add_article(second)
+        partitioned_batch = another_partition.flush(self._end(first.execution_id))
+
+        self.assertNotEqual(first_batch.message_id, second_batch.message_id)
+        self.assertNotEqual(first_batch.message_id, partitioned_batch.message_id)
 
     def test_oversized_articles_are_isolated_without_losing_pending_articles(self):
         first = self._article("A")

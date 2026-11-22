@@ -1,4 +1,5 @@
 from common.coordinated_consumer import Ack, Nack
+from common.message_identity import build_control_message_id
 from common.message_protocol.message import (
     Message,
     PartitionEndMessage,
@@ -86,6 +87,12 @@ class Q1Controller:
                         query_id=1,
                         partition_id=self._partition_id,
                         execution_id=message.execution_id,
+                        message_id=build_control_message_id(
+                            execution_id=message.execution_id,
+                            stage="q1",
+                            partition_id=self._partition_id,
+                            operation="query_partition_end",
+                        ),
                     )
                 )
                 self._finished_until_2020_partitions.pop(message.execution_id)

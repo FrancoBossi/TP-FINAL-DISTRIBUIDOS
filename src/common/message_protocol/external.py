@@ -188,6 +188,7 @@ def _encode_message(message: Message) -> bytes:
             bytes([_MESSAGE_RESULT])
             + _encode_value(message.query_id)
             + _encode_value(message.execution_id)
+            + _encode_value(message.result_id)
             + _encode_value(message.record)
         )
 
@@ -196,6 +197,7 @@ def _encode_message(message: Message) -> bytes:
             bytes([_MESSAGE_QUERY_END])
             + _encode_value(message.query_id)
             + _encode_value(message.execution_id)
+            + _encode_value(message.result_id)
         )
 
     raise TypeError(
@@ -232,6 +234,7 @@ def _decode_message(body: bytes) -> Message:
     elif message_type == _MESSAGE_RESULT:
         query_id = _decode_value(stream)
         execution_id = _decode_value(stream)
+        result_id = _decode_value(stream)
         record = _decode_value(stream)
 
         if type(query_id) is not int:
@@ -240,6 +243,9 @@ def _decode_message(body: bytes) -> Message:
         if not isinstance(execution_id, str):
             raise ValueError("RESULT requires a string execution_id")
 
+        if not isinstance(result_id, str) or not result_id:
+            raise ValueError("RESULT requires a nonempty string result_id")
+
         if not isinstance(record, dict):
             raise ValueError("RESULT requires a dictionary record")
 
@@ -247,11 +253,13 @@ def _decode_message(body: bytes) -> Message:
             query_id=query_id,
             execution_id=execution_id,
             record=record,
+            result_id=result_id,
         )
 
     elif message_type == _MESSAGE_QUERY_END:
         query_id = _decode_value(stream)
         execution_id = _decode_value(stream)
+        result_id = _decode_value(stream)
 
         if type(query_id) is not int:
             raise ValueError("QUERY_END requires an integer query_id")
@@ -259,9 +267,13 @@ def _decode_message(body: bytes) -> Message:
         if not isinstance(execution_id, str):
             raise ValueError("QUERY_END requires a string execution_id")
 
+        if not isinstance(result_id, str) or not result_id:
+            raise ValueError("QUERY_END requires a nonempty string result_id")
+
         message = QueryEndMessage(
             query_id=query_id,
             execution_id=execution_id,
+            result_id=result_id,
         )
 
     else:
@@ -311,4 +323,6 @@ def validate_result(message: Message, completed: Set[int]) -> int:
         raise ValueError("Received a message after QUERY_END")
     if isinstance(message, ResultMessage) and not isinstance(message.record, dict):
         raise ValueError("RESULT requires a record object")
+    if not isinstance(message.result_id, str) or not message.result_id:
+        raise ValueError("Result requires a nonempty result_id")
     return query_id

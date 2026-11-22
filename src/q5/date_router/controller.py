@@ -1,6 +1,7 @@
 import json
 
 from common.coordinated_consumer import Ack, Nack
+from common.message_identity import build_control_message_id, derive_message_id
 from common.message_protocol.message import (
     Message,
     PartitionEndMessage,
@@ -86,6 +87,11 @@ class Q5DateRouterController:
             self._partition_id,
             message.execution_id,
             message.reply_queue,
+            build_control_message_id(
+                execution_id=message.execution_id,
+                stage="q5_date_router",
+                partition_id=self._partition_id,
+            ),
         )
         if self._historical_router is None:
             self._messaging.publish_historical(partition_end)
@@ -132,6 +138,13 @@ class Q5DateRouterController:
                     articles,
                     message.execution_id,
                     message.reply_queue,
+                    derive_message_id(
+                        execution_id=message.execution_id,
+                        input_message_id=message.message_id,
+                        producer_id="q5_date_router",
+                        operation="candidate_partition_batch",
+                        identity={"destination": queue},
+                    ),
                 ),
             )
 

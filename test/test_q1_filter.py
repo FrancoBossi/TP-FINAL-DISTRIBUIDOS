@@ -1,5 +1,6 @@
 import unittest
 
+from common.message_identity import build_result_message_ids
 from common.message_protocol.message import (
     Q1CandidateBatchMessage,
     ResultMessage,
@@ -41,6 +42,15 @@ class TestQ1EnglishFilter(unittest.TestCase):
                 )
             ],
         )
+        result_id, message_id = build_result_message_ids(
+            execution_id="execution-123",
+            query_id=1,
+            result_kind="result",
+            identity={"url": "https://example.com/english"},
+            producer_id="q1",
+        )
+        self.assertEqual(result_id, results[0].result_id)
+        self.assertEqual(message_id, results[0].message_id)
 
 
 if __name__ == "__main__":

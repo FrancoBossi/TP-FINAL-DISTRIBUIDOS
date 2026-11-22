@@ -1,6 +1,7 @@
 import json
 
 from common.coordinated_consumer import Ack, Nack
+from common.message_identity import build_control_message_id, derive_message_id
 from common.message_protocol.message import (
     Message,
     PartitionEndMessage,
@@ -70,6 +71,13 @@ class Q4Q5WordProjectorController:
                     words=words,
                     execution_id=message.execution_id,
                     reply_queue=message.reply_queue,
+                    message_id=derive_message_id(
+                        execution_id=message.execution_id,
+                        input_message_id=q4_batch.message_id,
+                        producer_id="q4_q5_word_projector",
+                        operation="q4_partition_batch",
+                        identity={"destination": queue},
+                    ),
                 ),
             )
         if q5_batch.articles:
@@ -91,6 +99,11 @@ class Q4Q5WordProjectorController:
                     partition_id=self._partition_id,
                     execution_id=message.execution_id,
                     reply_queue=message.reply_queue,
+                    message_id=build_control_message_id(
+                        execution_id=message.execution_id,
+                        stage="q4_q5_word_projector",
+                        partition_id=self._partition_id,
+                    ),
                 )
                 for partition in range(self._router.partition_count):
                     self._messaging.publish_q4_to(

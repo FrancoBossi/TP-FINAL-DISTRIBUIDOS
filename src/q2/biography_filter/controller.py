@@ -1,4 +1,5 @@
 from common.coordinated_consumer import Ack, Nack
+from common.message_identity import build_control_message_id
 from common.message_protocol.message import (
     Message,
     PartitionEndMessage,
@@ -89,6 +90,11 @@ class Q2BiographyFilterController:
                         partition_id=self._partition_id,
                         execution_id=message.execution_id,
                         reply_queue=message.reply_queue,
+                        message_id=build_control_message_id(
+                            execution_id=message.execution_id,
+                            stage="q2_biography_filter",
+                            partition_id=self._partition_id,
+                        ),
                     )
                 )
                 self._finished_until_2020_partitions.pop(message.execution_id)

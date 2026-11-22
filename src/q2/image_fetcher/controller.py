@@ -1,4 +1,5 @@
 from common.coordinated_consumer import Ack, Nack
+from common.message_identity import build_control_message_id
 from common.message_protocol.message import (
     ImageCandidateBatchMessage,
     Message,
@@ -94,6 +95,12 @@ class ImageFetcherController:
                         query_id=2,
                         partition_id=self._partition_id,
                         execution_id=message.execution_id,
+                        message_id=build_control_message_id(
+                            execution_id=message.execution_id,
+                            stage="q2_image_fetcher",
+                            partition_id=self._partition_id,
+                            operation="query_partition_end",
+                        ),
                     )
                 )
                 self._finished_biography_filter_partitions.pop(message.execution_id)

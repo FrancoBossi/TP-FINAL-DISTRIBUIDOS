@@ -36,11 +36,13 @@ class TestPreprocessorController(unittest.TestCase):
             ],
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id="m1:batch",
         )
 
         self.input_end = RoutedInputEndMessage(
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id="m1:input-end",
         )
 
     def test_normalizes_and_publishes_batch(self):
@@ -113,6 +115,7 @@ class TestPreprocessorController(unittest.TestCase):
             article={"name": "Example article"},
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id="m1:article",
         )
 
         with self.assertRaisesRegex(

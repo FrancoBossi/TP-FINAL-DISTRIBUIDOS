@@ -3,6 +3,7 @@ from unittest.mock import Mock, call, patch
 
 import pika
 
+from common.message_identity import build_result_message_ids
 from common.message_protocol.message import (
     AckMessage,
     QueryEndMessage,
@@ -17,6 +18,21 @@ from result_sink.messaging import ResultSinkMessaging
 
 
 class TestResultSink(unittest.TestCase):
+    def _query_end(self, query_id: int, execution_id: str) -> QueryEndMessage:
+        result_id, message_id = build_result_message_ids(
+            execution_id=execution_id,
+            query_id=query_id,
+            result_kind="end",
+            identity={"end": True},
+            producer_id="result_sink",
+        )
+        return QueryEndMessage(
+            query_id=query_id,
+            execution_id=execution_id,
+            message_id=message_id,
+            result_id=result_id,
+        )
+
     def setUp(self):
         self.input_queue = Mock()
         self.publisher = Mock()
@@ -86,7 +102,7 @@ class TestResultSink(unittest.TestCase):
 
         self.deliver(ends[-1].serialize(), self.ack, self.nack)
 
-        query_end = QueryEndMessage(1, "execution-a")
+        query_end = self._query_end(1, "execution-a")
         self.publisher.send_to.assert_called_once_with(
             "results.execution-a",
             query_end.serialize(),
@@ -106,7 +122,7 @@ class TestResultSink(unittest.TestCase):
         for message in messages:
             self.deliver(message.serialize(), self.ack, self.nack)
 
-        query_end = QueryEndMessage(2, "execution-a")
+        query_end = self._query_end(2, "execution-a")
         self.publisher.send_to.assert_called_once_with(
             "results.execution-a",
             query_end.serialize(),
@@ -125,7 +141,7 @@ class TestResultSink(unittest.TestCase):
         self.publisher.send_to.side_effect = None
         self.deliver(message.serialize(), self.ack, self.nack)
 
-        query_end = QueryEndMessage(3, "execution-a")
+        query_end = self._query_end(3, "execution-a")
         self.publisher.send_to.assert_called_with(
             "results.execution-a",
             query_end.serialize(),
