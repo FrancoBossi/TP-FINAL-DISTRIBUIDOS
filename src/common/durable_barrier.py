@@ -1,5 +1,6 @@
 from collections.abc import Callable, Mapping
 
+from common.execution_cleanup import ExecutionCleanup
 from common.message_protocol.message import Message, PartitionEndMessage
 from common.persistence import (
     AtomicJsonStore,
@@ -31,7 +32,18 @@ class DurableBarrier:
         self._expected_partitions = expected_partitions
         self._publishers = dict(publishers)
         self._output_factory = output_factory
+        self._cleanup = ExecutionCleanup(layout, retention_seconds=3600)
         self._stores: dict[str, DurableExecutionStore] = {}
+
+    def is_closed(self, message: Message) -> bool:
+        execution_id = getattr(message, "execution_id", None)
+        return execution_id is not None and self._cleanup.is_closed(execution_id)
+
+    def cleanup(self, execution_id: str) -> None:
+        self._cleanup.cleanup(execution_id, self._clear_execution)
+
+    def _clear_execution(self, execution_id: str) -> None:
+        self._stores.pop(execution_id, None)
 
     def apply(self, message: PartitionEndMessage) -> None:
         store = self._store_for(message.execution_id)
@@ -70,7 +82,10 @@ class DurableBarrier:
         self._publish_pending(store)
 
     def recover(self) -> None:
+        self._cleanup.recover(self._clear_execution)
         for execution_id in self._layout.execution_ids():
+            if self._cleanup.is_closed(execution_id):
+                continue
             store = self._store_for(execution_id)
             self._decode_state(store.state)
             self._publish_pending(store)

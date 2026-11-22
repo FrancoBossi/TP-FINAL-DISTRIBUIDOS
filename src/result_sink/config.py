@@ -42,3 +42,6 @@ class ResultSinkConfig:
     input_batcher_partitions: int = field(
         default_factory=lambda: int(os.environ.get("INPUT_BATCHER_PARTITIONS", "1"))
     )
+    cleanup_queues: tuple[str, ...] = field(
+        default_factory=lambda: tuple(os.environ.get("CLEANUP_QUEUES", "").split())
+    )

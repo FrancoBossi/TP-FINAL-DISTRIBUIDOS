@@ -5,6 +5,7 @@ import shutil
 import time
 from collections.abc import Callable
 
+from common.message_protocol.message import ExecutionCleanupMessage, Message
 from common.persistence import AtomicJsonStore, PersistenceLayout
 
 
@@ -25,6 +26,16 @@ class ExecutionCleanup:
     def is_closed(self, execution_id: str) -> bool:
         """Check before applying work, including startup outbox replay."""
         return self._marker(execution_id).load() is not None
+
+    def handle_message(
+        self, message: Message, clear_local: Callable[[str], None]
+    ) -> bool:
+        """Handle a cleanup order or identify work for an already closed execution."""
+        if isinstance(message, ExecutionCleanupMessage):
+            self.cleanup(message.execution_id, clear_local)
+            return True
+        execution_id = getattr(message, "execution_id", None)
+        return execution_id is not None and self.is_closed(execution_id)
 
     def cleanup(self, execution_id: str, clear_local: Callable[[str], None]) -> None:
         """Persist closure before deleting state. The local callback must be idempotent."""

@@ -4,6 +4,7 @@ from common.coordinated_consumer import Ack, Nack
 from common.durable_barrier import DurableBarrier
 from common.message_identity import build_control_message_id, derive_message_id
 from common.message_protocol.message import (
+    ExecutionCleanupMessage,
     Message,
     PartitionEndMessage,
     Q4WordBatchMessage,
@@ -85,6 +86,11 @@ class Q4Q5WordProjectorController:
 
     def process_message(self, message: Message, ack: Ack, nack: Nack) -> None:
         try:
+            if self._durable_barrier is not None and self._durable_barrier.is_closed(
+                message
+            ):
+                ack()
+                return
             match message:
                 case TokenizedArticleBatchMessage():
                     self._project_batch(message)
@@ -127,6 +133,12 @@ class Q4Q5WordProjectorController:
             self._messaging.publish_q5(q5_batch)
 
     def process_control_message(self, message: Message) -> None:
+        if self._durable_barrier is not None:
+            if isinstance(message, ExecutionCleanupMessage):
+                self._durable_barrier.cleanup(message.execution_id)
+                return
+            if self._durable_barrier.is_closed(message):
+                return
         match message:
             case PartitionEndMessage():
                 self._validate_word_extractor_end(message)

@@ -58,6 +58,7 @@ def main() -> int:
         persistence_layout=PersistenceLayout(config.state_root, "result_sink", 0),
         cleanup_destinations=lambda execution_id: (
             input_router.queue_for(execution_id),
+            *config.cleanup_queues,
         ),
     )
 

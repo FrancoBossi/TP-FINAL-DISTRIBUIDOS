@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 from common.message_protocol.message import (
+    ExecutionCleanupMessage,
     PartitionEndMessage,
     Q5AverageMessage,
     Q5CandidateBatchMessage,
@@ -31,6 +32,36 @@ class TestQ5ComparatorRecovery(unittest.TestCase):
             date_router_partition_count=1,
             persistence_layout=self.layout,
         )
+
+    def test_cleanup_removes_candidate_file_and_discards_late_batch(self):
+        message = Q5CandidateBatchMessage(
+            [{"article_id": "a", "url": "https://a", "word_count": 5}],
+            "execution-1",
+            "results.execution-1",
+            "candidate-batch",
+        )
+        controller = self._controller(Mock())
+        controller.process_message(message, Mock(), Mock())
+        self.assertTrue(list(self.buffer.iterate(message.execution_id)))
+
+        ack, nack = Mock(), Mock()
+        controller.process_message(
+            ExecutionCleanupMessage(
+                message.execution_id, "cleanup", "client_disconnected"
+            ),
+            ack,
+            nack,
+        )
+        messaging = Mock()
+        restarted = self._controller(messaging)
+        restarted.start()
+        restarted.process_message(message, ack, nack)
+
+        self.assertFalse(self.layout.state_path(message.execution_id).parent.exists())
+        self.assertEqual(list(self.buffer.iterate(message.execution_id)), [])
+        self.assertEqual(ack.call_count, 2)
+        nack.assert_not_called()
+        messaging.publish.assert_not_called()
 
     def test_restart_restores_candidates_and_final_before_average(self):
         controller = self._controller(Mock())

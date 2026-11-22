@@ -1,6 +1,8 @@
 from common.coordinated_consumer import Ack, Nack
+from common.execution_cleanup import ExecutionCleanup
 from common.message_identity import build_control_message_id
 from common.message_protocol.message import (
+    ExecutionCleanupMessage,
     Message,
     NormalizedArticleBatchMessage,
     PartitionEndMessage,
@@ -40,6 +42,7 @@ class QueryRouterController:
         self._q1_q2_destination = q1_q2_destination
         self._text_destination = text_destination
         self._finished_preprocessor_partitions: dict[str, set[int]] = {}
+        self._cleanup = ExecutionCleanup(persistence_layout, retention_seconds=3600)
         self._stores: dict[str, DurableExecutionStore] = {}
 
     def _validate_preprocessor_partition_end(
@@ -63,6 +66,11 @@ class QueryRouterController:
         nack: Nack,
     ) -> None:
         try:
+            if isinstance(
+                message, (NormalizedArticleBatchMessage, PartitionEndMessage)
+            ) and self._cleanup.is_closed(message.execution_id):
+                ack()
+                return
             match message:
                 case NormalizedArticleBatchMessage():
                     q1_q2_batch, text_batch = route_batch(message)
@@ -88,6 +96,13 @@ class QueryRouterController:
         self,
         message: Message,
     ) -> None:
+        if isinstance(message, ExecutionCleanupMessage):
+            self._cleanup.cleanup(message.execution_id, self._clear_execution)
+            return
+        if isinstance(message, PartitionEndMessage) and self._cleanup.is_closed(
+            message.execution_id
+        ):
+            return
         match message:
             case PartitionEndMessage():
                 self._validate_preprocessor_partition_end(message)
@@ -205,8 +220,15 @@ class QueryRouterController:
                 )
             store.confirm(output)
 
+    def _clear_execution(self, execution_id: str) -> None:
+        self._stores.pop(execution_id, None)
+        self._finished_preprocessor_partitions.pop(execution_id, None)
+
     def _recover(self) -> None:
+        self._cleanup.recover(self._clear_execution)
         for execution_id in self._persistence_layout.execution_ids():
+            if self._cleanup.is_closed(execution_id):
+                continue
             store = self._store_for(execution_id)
             finished, _reply_queue, completed = self._decode_state(store.state)
             self._restore_memory(execution_id, finished, completed)
