@@ -427,6 +427,17 @@ menos una según el estado observado antes de cada ciclo. Usar un solo inyector
 por proyecto. El inyector registra las caídas y la supervisión se ocupa de
 reiniciar los procesos.
 
+Para observar Chaos Monkey en otra terminal:
+
+```sh
+uv run scripts/monitor_chaos.py --follow chaos.jsonl
+```
+
+Pasar el `chaos.jsonl` de la ejecución para monitorear un benchmark. Sin
+`--follow`, el comando muestra el historial y sale. El monitor muestra el SCHEDULE, los intentos, las
+confirmaciones de Compose y el motivo de cada skip. Una confirmación indica
+que Compose ejecutó el stop.
+
 El escenario automatizado mínimo deberá:
 
 1. Generar o verificar la referencia serial.
@@ -439,6 +450,22 @@ El escenario automatizado mínimo deberá:
    procesos caídos mediante comunicación.
 8. Verificar que no quedaron recursos de la ejecución.
 9. Guardar logs y resumen del escenario como evidencia.
+
+Para incorporar estas caídas a una corrida de benchmark:
+
+```sh
+.venv/bin/python scripts/run_benchmark.py \
+  --dataset datasets/wikipedia_sample.parquet --expected-output output/reference \
+  --project-name wikipedia-chaos --timeout-seconds 1800 \
+  --chaos-target preprocessor-0 --chaos-target q3-word-aggregator-0 \
+  --chaos-seed 42 --chaos-interval 5 --chaos-max-failures 8
+```
+
+Si Compose falla al levantar el entorno, consultar `startup.log` y `compose.log`
+en el directorio de la corrida. Cada corrida con fallas
+guarda `chaos.jsonl`, `chaos.log`, `client.log` y `compose.log`. Para pasar
+debe confirmar al menos una inyección y coincidir con la referencia para
+Q1–Q5. El runner detiene el inyector al terminar el cliente o vencer el plazo.
 
 ### Plan de implementación
 
