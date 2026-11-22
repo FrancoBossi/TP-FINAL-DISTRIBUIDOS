@@ -785,6 +785,20 @@ conservan sus marcas hasta que se pueda verificar el drenaje.
 
 ### Comparación de performance
 
+Con tres o más ejecuciones válidas por caso, calcular la variación de las medianas:
+
+```sh
+.venv/bin/python -m scripts.compare_benchmarks \
+  ruta/baseline/summary.json ruta/sin-fallas/summary.json \
+  --faults ruta/con-fallas/summary.json
+```
+
+`--faults` es opcional. La ejecución sin fallas debe incluir verificación contra la
+referencia serial mediante `--expected-output`. El comparador exige el mismo
+SHA-256 del dataset y contrasta Q1–Q5 de cada ejecución exitosa. El JSON de salida
+incluye ejecuciones fallidas y separa la variación con tolerancia habilitada de la
+variación bajo fallas.
+
 La comparación debe separar el overhead normal de la recuperación:
 
 - **Baseline:** commit final de escalabilidad, sin fallas.
