@@ -407,6 +407,26 @@ La herramienta será propia y separada de los supervisores:
 - Docker puede utilizarse aquí para **introducir** la falla; esta información no se
   comparte como detector de disponibilidad con los supervisores.
 
+Con el proyecto de Compose ya levantado y el cliente en ejecución, el inyector
+puede ejecutarse desde otra terminal:
+
+```sh
+uv run scripts/chaos_monkey.py \
+  --target preprocessor-0 --target q3-word-aggregator-0 \
+  --seed 42 --interval 5 --max-failures 8 --log chaos.jsonl
+```
+
+Si Compose se levantó con `-p`, pasar ese mismo nombre con `--project-name`.
+Si se omite, Docker Compose resuelve el nombre del proyecto con su configuración
+habitual. El log debe ser un archivo nuevo. El primer ciclo se programa después del intervalo indicado.
+`--batch-size` permite incluir varios servicios distintos en un ciclo.
+`--max-failures` limita los intentos programados: si un servicio ya está caído,
+se registra el salto sin cambiar el calendario. Las réplicas supervisoras deben
+usar nombres de servicio `failure-manager-*` para que el inyector preserve al
+menos una según el estado observado antes de cada ciclo. Usar un solo inyector
+por proyecto. El inyector registra las caídas y la supervisión se ocupa de
+reiniciar los procesos.
+
 El escenario automatizado mínimo deberá:
 
 1. Generar o verificar la referencia serial.

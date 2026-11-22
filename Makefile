@@ -27,12 +27,12 @@ test:
 	PYTHONPATH=src $(PYTHON) -m unittest discover -s test -v
 
 lint:
-	$(PYTHON) -m ruff check src test scripts/run_benchmark.py
-	$(PYTHON) -m ruff format --check src test scripts/run_benchmark.py
+	$(PYTHON) -m ruff check src test scripts/run_benchmark.py scripts/chaos_monkey.py
+	$(PYTHON) -m ruff format --check src test scripts/run_benchmark.py scripts/chaos_monkey.py
 
 lint-fix:
-	$(PYTHON) -m ruff check --fix src test scripts/run_benchmark.py
-	$(PYTHON) -m ruff format src test scripts/run_benchmark.py
+	$(PYTHON) -m ruff check --fix src test scripts/run_benchmark.py scripts/chaos_monkey.py
+	$(PYTHON) -m ruff format src test scripts/run_benchmark.py scripts/chaos_monkey.py
 
 check: lint
 
