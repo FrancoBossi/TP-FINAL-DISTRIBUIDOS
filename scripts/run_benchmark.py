@@ -118,10 +118,18 @@ def parse_io_bytes(value: str) -> tuple[int, int]:
     return parse_size_bytes(received), parse_size_bytes(transmitted)
 
 
+def sampled_counter_total(samples: list[int]) -> int:
+    """Sum observed counter increments across resets."""
+    total = 0
+    previous = 0
+    for value in samples:
+        total += value - previous if value >= previous else value
+        previous = value
+    return total
+
+
 def summarize_metrics(path: Path) -> dict[str, dict[str, float | int]]:
-    by_container: dict[str, dict[str, list[float] | list[int]]] = defaultdict(
-        lambda: {"cpu": [], "memory": [], "network_rx": [], "network_tx": []}
-    )
+    by_container: dict[str, list[tuple[float, int, int, int]]] = defaultdict(list)
     if not path.exists():
         return {}
 
@@ -131,33 +139,26 @@ def summarize_metrics(path: Path) -> dict[str, dict[str, float | int]]:
             if "error" in sample:
                 continue
             name = sample.get("Name") or sample.get("Container") or "unknown"
-            cpu_value = str(sample.get("CPUPerc", "0")).rstrip("%")
-            memory_value = str(sample.get("MemUsage", "0B / 0B"))
-            network_value = str(sample.get("NetIO", "0B / 0B"))
             try:
-                by_container[name]["cpu"].append(float(cpu_value))
-                by_container[name]["memory"].append(parse_memory_bytes(memory_value))
-                received, transmitted = parse_io_bytes(network_value)
-                by_container[name]["network_rx"].append(received)
-                by_container[name]["network_tx"].append(transmitted)
-            except ValueError:
+                cpu = float(sample["CPUPerc"].rstrip("%"))
+                memory = parse_memory_bytes(sample["MemUsage"])
+                received, transmitted = parse_io_bytes(sample["NetIO"])
+            except (KeyError, ValueError):
                 continue
+            by_container[name].append((cpu, memory, received, transmitted))
 
     summary = {}
-    for name, values in sorted(by_container.items()):
-        cpu_values = values["cpu"]
-        memory_values = values["memory"]
-        network_rx_values = values["network_rx"]
-        network_tx_values = values["network_tx"]
-        if not cpu_values or not memory_values:
-            continue
+    for name, samples in sorted(by_container.items()):
+        cpu, memory, received, transmitted = map(list, zip(*samples))
         summary[name] = {
-            "samples": len(cpu_values),
-            "cpu_percent_mean": sum(cpu_values) / len(cpu_values),
-            "cpu_percent_peak": max(cpu_values),
-            "memory_bytes_peak": max(memory_values),
-            "network_receive_bytes_final": network_rx_values[-1],
-            "network_transmit_bytes_final": network_tx_values[-1],
+            "samples": len(samples),
+            "cpu_percent_mean": statistics.mean(cpu),
+            "cpu_percent_peak": max(cpu),
+            "memory_bytes_peak": max(memory),
+            "network_receive_bytes_final": received[-1],
+            "network_transmit_bytes_final": transmitted[-1],
+            "network_receive_bytes_sampled": sampled_counter_total(received),
+            "network_transmit_bytes_sampled": sampled_counter_total(transmitted),
         }
     return summary
 
@@ -473,6 +474,21 @@ def read_first_result_seconds(log: Path) -> float | None:
     return None
 
 
+def run_network_bytes(run: dict[str, Any], direction: str) -> int | None:
+    containers = run.get("metrics", {}).values()
+    sampled_field = f"network_{direction}_bytes_sampled"
+    legacy_field = f"network_{direction}_bytes_final"
+    totals = [
+        metrics.get(sampled_field)
+        if run.get("chaos")
+        else metrics.get(sampled_field, metrics.get(legacy_field))
+        for metrics in containers
+    ]
+    if not totals or any(total is None for total in totals):
+        return None
+    return sum(totals)
+
+
 def summarize_runs(
     runs: list[dict[str, Any]],
 ) -> dict[str, dict[str, float | int | None]]:
@@ -481,9 +497,22 @@ def summarize_runs(
         for run in runs
         if run["status"] == "success" and run.get("matches_first_success") is not False
     ]
+    observations = {
+        metric: [run.get(metric) for run in successful]
+        for metric in (
+            "duration_seconds",
+            "articles_per_second",
+            "first_result_seconds",
+        )
+    }
+    for direction in ("receive", "transmit"):
+        observations[f"network_{direction}_bytes"] = [
+            run_network_bytes(run, direction) for run in successful
+        ]
+
     summary = {}
-    for metric in ("duration_seconds", "articles_per_second", "first_result_seconds"):
-        values = [run[metric] for run in successful if run.get(metric) is not None]
+    for metric, samples in observations.items():
+        values = [value for value in samples if value is not None]
         summary[metric] = {
             "samples": len(values),
             "median": statistics.median(values) if values else None,

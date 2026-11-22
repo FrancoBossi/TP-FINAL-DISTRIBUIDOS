@@ -811,7 +811,12 @@ La comparación debe separar el overhead normal de la recuperación:
   que persiste el primer resultado, incluido su ID. Queda vacío si no hay
   resultados o si la imagen del cliente no emite esa medición. `summary.json`
   agrega mediana, desvío estándar muestral y cantidad de mediciones de las
-  ejecuciones válidas para duración, throughput y tiempo al primer resultado.
+  ejecuciones válidas para duración, throughput, tiempo al primer resultado y
+  bytes de red recibidos y transmitidos. El total suma los contadores de los
+  contenedores e incluye tráfico interno. Cuando una muestra detecta que un
+  contador caído, el runner acumula el tramo nuevo. Un reinicio entre muestras
+  puede subestimar el total. Para ejecuciones sin fallas, los resúmenes anteriores
+  aportan sus contadores finales.
 - Medir tiempo total, artículos por segundo, tiempo hasta primer resultado, CPU,
   memoria, red, bytes escritos en journals y tiempo de recuperación.
 - Reducir progresivamente el intervalo entre fallas y documentar el menor valor

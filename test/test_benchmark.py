@@ -12,6 +12,7 @@ from scripts.run_benchmark import (
     parse_memory_bytes,
     read_first_result_seconds,
     resolve_dataset,
+    summarize_metrics,
     summarize_runs,
     verify_cleanup,
 )
@@ -51,6 +52,42 @@ class MultisetFingerprintTest(unittest.TestCase):
 
 
 class BenchmarkHelpersTest(unittest.TestCase):
+    def test_network_summary_accumulates_observed_counter_resets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "metrics.jsonl"
+            samples = [
+                {
+                    "Name": "worker",
+                    "CPUPerc": "10%",
+                    "MemUsage": "1MiB / 2MiB",
+                    "NetIO": net,
+                }
+                for net in ("100B / 50B", "140B / 90B", "20B / 10B", "70B / 40B")
+            ]
+            path.write_text(
+                "".join(json.dumps(sample) + "\n" for sample in samples),
+                encoding="utf-8",
+            )
+            metrics = summarize_metrics(path)
+
+        worker = metrics["worker"]
+        self.assertEqual(worker["network_receive_bytes_final"], 70)
+        self.assertEqual(worker["network_receive_bytes_sampled"], 210)
+        self.assertEqual(worker["network_transmit_bytes_sampled"], 130)
+        report = summarize_runs(
+            [{"status": "success", "chaos": True, "metrics": metrics}]
+        )
+        self.assertEqual(report["network_receive_bytes"]["median"], 210)
+
+    def test_legacy_final_network_counter_is_used_only_for_fault_free_runs(self):
+        run = {
+            "status": "success",
+            "metrics": {"worker": {"network_receive_bytes_final": 70}},
+        }
+        self.assertEqual(summarize_runs([run])["network_receive_bytes"]["median"], 70)
+        run["chaos"] = True
+        self.assertIsNone(summarize_runs([run])["network_receive_bytes"]["median"])
+
     def test_first_result_metric_is_optional_and_parsed_from_client_log(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "client.log"
