@@ -6,8 +6,8 @@ from functools import partial
 from select import select
 from threading import Event
 from time import monotonic
-from uuid import uuid4
 
+from common.execution_id import new_execution_id
 from common.message_identity import build_message_id
 from common.message_protocol.external import (
     QUERY_IDS,
@@ -268,7 +268,7 @@ def handle_client(
     timeout_seconds: float | None = None,
 ) -> None:
     deadline = None if timeout_seconds is None else monotonic() + timeout_seconds
-    execution_id = uuid4().hex
+    execution_id = new_execution_id(timeout_seconds)
     messaging = None
     published = 0
     input_finished = False

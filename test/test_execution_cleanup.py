@@ -38,3 +38,36 @@ class ExecutionCleanupTest(unittest.TestCase):
                 self.assertTrue(cleanup.is_closed("abandoned"))
                 cleanup.expire(lambda _: True)
             self.assertFalse(cleanup.is_closed("abandoned"))
+
+    def test_expired_marker_is_evicted_and_late_work_rejected_after_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            layout = PersistenceLayout(directory, "worker", 0)
+            execution_id = "e1-150-00000000000000000000000000000001"
+            newer_id = "e1-250-00000000000000000000000000000002"
+            with patch("common.execution_cleanup.time.time", return_value=100):
+                cleanup = ExecutionCleanup(layout, retention_seconds=10)
+                cleanup.cleanup(execution_id, lambda _: None)
+
+            with (
+                patch("common.execution_cleanup.time.time", return_value=120),
+                patch("common.execution_cleanup.time.monotonic", return_value=10),
+            ):
+                cleanup.sweep()
+                self.assertTrue(cleanup.has_marker(execution_id))
+
+            with (
+                patch("common.execution_cleanup.time.time", return_value=151),
+                patch(
+                    "common.execution_cleanup.time.monotonic",
+                    return_value=71,
+                ),
+            ):
+                cleanup.sweep()
+            self.assertFalse(cleanup.has_marker(execution_id))
+
+            with patch("common.execution_cleanup.time.time", return_value=90):
+                restarted = ExecutionCleanup(layout, retention_seconds=10)
+                self.assertTrue(restarted.is_closed(execution_id))
+                self.assertFalse(restarted.is_closed(newer_id))
+                restarted.cleanup(execution_id, lambda _: None)
+                self.assertFalse(restarted.has_marker(execution_id))
