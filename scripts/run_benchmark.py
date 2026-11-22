@@ -9,11 +9,13 @@ import hashlib
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import threading
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -339,6 +341,117 @@ def capture_compose_logs(
     path.write_text(result.stdout + result.stderr, encoding="utf-8")
 
 
+def execution_ids_from_logs(log: Path) -> list[str]:
+    pattern = re.compile(r"Execution ((?:e1-[0-9]+-)?[a-f0-9]{32}): starting upload")
+    with log.open(encoding="utf-8") as lines:
+        return sorted({match[1] for line in lines if (match := pattern.search(line))})
+
+
+def verify_cleanup(
+    compose: list[str], cwd: Path, env: dict[str, str], log: Path, timeout: float
+) -> dict[str, Any]:
+    execution_ids = execution_ids_from_logs(log)
+    if len(execution_ids) != 1:
+        return {
+            "passed": False,
+            "error": "Expected one execution in Gateway logs",
+            "execution_ids": execution_ids,
+        }
+
+    execution_id = execution_ids[0]
+    candidate = hashlib.sha256(execution_id.encode()).hexdigest() + ".jsonl"
+
+    def query(*args: str) -> str:
+        result = subprocess.run(
+            [*compose, *args],
+            cwd=cwd,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=15,
+        )
+        if result.returncode:
+            raise RuntimeError(
+                result.stderr.strip() or f"Compose exited {result.returncode}"
+            )
+        return result.stdout
+
+    try:
+        config = json.loads(query("config", "--format", "json"))
+        state_services = {
+            name: service["environment"]
+            for name, service in config["services"].items()
+            if service.get("environment", {}).get("STATE_ROOT")
+        }
+        if "result-sink" not in state_services:
+            raise ValueError("Compose configuration has no persistent ResultSink")
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        return {"passed": False, "execution_id": execution_id, "error": str(error)}
+
+    def inspect(service: str) -> tuple[str, list[str]]:
+        try:
+            if service == "rabbitmq":
+                queue = f"results.{execution_id}"
+                queues = query(
+                    "exec", "-T", service, "rabbitmqctl", "-q", "list_queues", "name"
+                )
+                return service, [queue] if queue in queues.splitlines() else []
+
+            service_env = state_services[service]
+            paths = query(
+                "exec",
+                "-T",
+                service,
+                "sh",
+                "-ec",
+                """
+                find "$1" -type d -path "*/executions/$2" -print
+                find "$1" -type f -path "*/active/$2.json" -print
+                if [ -n "$3" ] && [ -e "$3/$4" ]; then
+                    printf '%s\n' "$3/$4"
+                fi
+                if [ "$5" = result-sink ]; then
+                    marker="$1/result_sink/partition-0/tombstones/$2.json"
+                    if [ ! -s "$marker" ] || ! grep -Eq '"expires_at"[[:space:]]*:[[:space:]]*[0-9]' "$marker"; then
+                        echo "ResultSink cleanup marker is missing or incomplete"
+                    fi
+                fi
+                """,
+                "verify-cleanup",
+                service_env["STATE_ROOT"],
+                execution_id,
+                service_env.get("Q5_BUFFER_DIRECTORY", ""),
+                candidate,
+                service,
+            )
+            return service, paths.splitlines()
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            return service, [f"Inspection failed: {error}"]
+
+    deadline = time.monotonic() + timeout
+    attempts = 0
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        while True:
+            attempts += 1
+            findings = {
+                service: resources
+                for service, resources in pool.map(
+                    inspect, ["rabbitmq", *state_services]
+                )
+                if resources
+            }
+            remaining = deadline - time.monotonic()
+            if not findings or remaining <= 0:
+                return {
+                    "passed": not findings,
+                    "execution_id": execution_id,
+                    "checked_services": sorted(["rabbitmq", *state_services]),
+                    "attempts": attempts,
+                    "remaining": findings,
+                }
+            time.sleep(min(1.0, remaining))
+
+
 def git_value(repo_root: Path, *arguments: str) -> str:
     return subprocess.run(
         ["git", *arguments],
@@ -384,7 +497,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chaos-interval", type=float, default=5.0)
     parser.add_argument("--chaos-max-failures", type=int, default=8)
     parser.add_argument("--chaos-batch-size", type=int, default=1)
+    parser.add_argument(
+        "--cleanup-wait-seconds",
+        type=float,
+        default=30.0,
+        help="Time allowed for distributed cleanup after a chaos run",
+    )
     args = parser.parse_args()
+    if not math.isfinite(args.cleanup_wait_seconds) or args.cleanup_wait_seconds < 0:
+        parser.error("--cleanup-wait-seconds must be finite and nonnegative")
     if args.chaos_target:
         if args.expected_output is None or args.timeout_seconds is None:
             parser.error("chaos runs require --expected-output and --timeout-seconds")
@@ -471,6 +592,7 @@ def main() -> int:
             "interval_seconds": args.chaos_interval,
             "max_failures": args.chaos_max_failures,
             "batch_size": args.chaos_batch_size,
+            "cleanup_wait_seconds": args.cleanup_wait_seconds,
         }
     (benchmark_dir / "benchmark.json").write_text(
         json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -634,12 +756,20 @@ def main() -> int:
             }
             chaos_ok = True
             if args.chaos_target:
+                cleanup = verify_cleanup(
+                    compose_command,
+                    repo_root,
+                    run_env,
+                    run_dir / "compose.log",
+                    args.cleanup_wait_seconds,
+                )
+                run_result["cleanup"] = cleanup
                 injected = count_injections(chaos_events)
                 run_result["chaos"] = {
                     "exit_code": injector_status,
                     "confirmed_injections": injected,
                 }
-                chaos_ok = injected > 0 and injector_status == 0
+                chaos_ok = injected > 0 and injector_status == 0 and cleanup["passed"]
             try:
                 fingerprints = fingerprint_output(output_dir)
                 run_result["fingerprints"] = fingerprints

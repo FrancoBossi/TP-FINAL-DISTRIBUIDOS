@@ -1,7 +1,9 @@
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.run_benchmark import (
     count_injections,
@@ -9,6 +11,7 @@ from scripts.run_benchmark import (
     parse_io_bytes,
     parse_memory_bytes,
     resolve_dataset,
+    verify_cleanup,
 )
 
 
@@ -46,6 +49,36 @@ class MultisetFingerprintTest(unittest.TestCase):
 
 
 class BenchmarkHelpersTest(unittest.TestCase):
+    @patch("scripts.run_benchmark.subprocess.run")
+    def test_cleanup_requires_queue_and_persistent_state_to_disappear(self, run):
+        execution_id = "e1-123-" + "a" * 32
+        config = {
+            "services": {"result-sink": {"environment": {"STATE_ROOT": "/state"}}}
+        }
+
+        def compose_query(command, **kwargs):
+            if "config" in command:
+                output = json.dumps(config)
+            elif "rabbitmqctl" in command:
+                output = f"results.{execution_id}\n"
+            else:
+                output = f"/state/result_sink/partition-0/active/{execution_id}.json\n"
+            return subprocess.CompletedProcess(command, 0, output, "")
+
+        run.side_effect = compose_query
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "compose.log"
+            log.write_text(
+                f"gateway-1 | Execution {execution_id}: starting upload\n",
+                encoding="utf-8",
+            )
+            verdict = verify_cleanup(["docker", "compose"], Path(directory), {}, log, 0)
+
+        self.assertFalse(verdict["passed"])
+        self.assertEqual(verdict["execution_id"], execution_id)
+        self.assertEqual(verdict["remaining"]["rabbitmq"], [f"results.{execution_id}"])
+        self.assertIn("result-sink", verdict["remaining"])
+
     def test_only_confirmed_injections_count(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "chaos.jsonl"
