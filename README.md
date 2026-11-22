@@ -753,15 +753,32 @@ conservan sus marcas hasta que se pueda verificar el drenaje.
 
 #### Bloque 8 - Chaos Monkey, benchmark, informe y demo
 
-- [ ] Implementar Chaos Monkey reproducible y escenarios automatizados.
-- [ ] Comenzar con una falla cada cinco segundos y reducir el intervalo hasta
-  encontrar el límite reproducible del sistema.
-- [ ] Ejecutar matriz de caídas sobre componentes representativos y luego sobre todos los tipos.
-- [ ] Comparar automáticamente resultados y recursos al terminar cada escenario.
+**Implementado y verificado**
+
+- [x] Implementar Chaos Monkey reproducible y el monitor del log de inyecciones.
+- [x] Automatizar la matriz por tipo de servicio y el barrido de intervalos,
+  conservando la evidencia de cada intento.
+- [x] Automatizar la comparación de Q1–Q5 y la auditoría de cleanup antes de
+  bajar Compose. Verificar ambas con caídas reales de InputBatcher y
+  ResultSink y reinicio manual.
 - [ ] Repetir benchmark sin fallas con tolerancia habilitada y calcular overhead contra el bloque 0.
 - [ ] Medir por separado el costo y tiempo de recuperación bajo fallas.
 - [ ] Actualizar `INFORME.md` y diagramas de robustez, despliegue, actividades, paquetes, secuencia y DAG.
 - [ ] Ensayar la demo completa con fallas periódicas y conservar logs de evidencia.
+
+**Pendiente**
+
+- [ ] Completar el bloque 5 y verificar en una ejecución real la detección,
+  elección Bully y reposición automática de servicios.
+- [ ] Ejecutar la matriz de caídas con reinicio automático, primero sobre
+  casos representativos y luego sobre todos los tipos. Completar los casos
+  dirigidos de la matriz que requieran una falla en un punto exacto.
+- [ ] Ejecutar el barrido desde cinco segundos y registrar el menor intervalo
+  probado que completa varias corridas correctas.
+- [ ] Medir el overhead a escala con al menos tres corridas válidas por
+  versión, sin fallas y con la misma configuración. Recuperar el Parquet
+  original de 612.475 artículos o volver a medir ambas versiones sobre la
+  reconstrucción, cuyo SHA-256 difiere del histórico.
 
 ### Matriz mínima de pruebas de fallos
 
