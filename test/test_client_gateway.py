@@ -14,6 +14,7 @@ from common.message_protocol.message import (
     ErrorMessage,
     ExecutionCompletedMessage,
     ExecutionFailedMessage,
+    ExecutionStartedMessage,
     InputEndMessage,
     QueryEndMessage,
     ResultMessage,
@@ -27,6 +28,7 @@ class FakeMessaging:
     def __init__(self):
         self.published = []
         self.terminal = []
+        self.started = []
         self.closed = False
         self.result_queue_name = "results.execution-123"
         self.acks = []
@@ -35,6 +37,9 @@ class FakeMessaging:
 
     def publish(self, message):
         self.published.append(message)
+
+    def publish_started(self, message):
+        self.started.append(message)
 
     def publish_terminal(self, message):
         self.terminal.append(message)
@@ -246,6 +251,28 @@ class TestClientGateway(unittest.TestCase):
                 operation="input_end",
                 identity={"article_count": 1},
             ),
+        )
+
+    def test_gateway_registers_execution_before_handling_upload(self):
+        messaging = FakeMessaging()
+
+        def fail_upload(*args, **kwargs):
+            self.assertEqual(len(messaging.started), 1)
+            self.assertIsInstance(messaging.started[0], ExecutionStartedMessage)
+            raise TimeoutError("expired")
+
+        with (
+            patch("gateway.handler.recv_msg", side_effect=fail_upload),
+            patch("gateway.handler.send_msg"),
+            self.assertRaises(TimeoutError),
+        ):
+            handle_client(
+                Mock(), lambda _: messaging, threading.Event(), timeout_seconds=10
+            )
+
+        self.assertEqual(messaging.published, [])
+        self.assertEqual(
+            messaging.started[0].execution_id, messaging.terminal[0].execution_id
         )
 
     def test_deadline_expires_while_waiting_for_first_result(self):

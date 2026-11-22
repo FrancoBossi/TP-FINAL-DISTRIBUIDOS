@@ -7,7 +7,7 @@ from select import select
 from threading import Event
 from time import monotonic
 
-from common.execution_id import new_execution_id
+from common.execution_id import execution_deadline, new_execution_id
 from common.message_identity import build_message_id
 from common.message_protocol.external import (
     QUERY_IDS,
@@ -22,6 +22,7 @@ from common.message_protocol.message import (
     ErrorMessage,
     ExecutionCompletedMessage,
     ExecutionFailedMessage,
+    ExecutionStartedMessage,
     InputEndMessage,
     Message,
     QueryEndMessage,
@@ -279,6 +280,19 @@ def handle_client(
 
     try:
         messaging = messaging_factory(execution_id)
+        if deadline is not None:
+            messaging.publish_started(
+                ExecutionStartedMessage(
+                    execution_id=execution_id,
+                    message_id=build_message_id(
+                        execution_id=execution_id,
+                        producer_id="gateway",
+                        operation=ExecutionStartedMessage.type,
+                        identity={},
+                    ),
+                    expires_at=execution_deadline(execution_id),
+                )
+            )
         logger.debug(
             "Execution %s: messaging connections ready",
             execution_id,

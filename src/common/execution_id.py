@@ -18,3 +18,10 @@ def new_execution_id(timeout_seconds: float | None) -> str:
 def execution_cutoff(execution_id: str) -> int | None:
     match = _TIMED_ID.fullmatch(execution_id)
     return int(match[1]) if match is not None else None
+
+
+def execution_deadline(execution_id: str) -> int:
+    cutoff = execution_cutoff(execution_id)
+    if cutoff is None:
+        raise ValueError("execution ID does not include a deadline")
+    return cutoff - _LATE_WORK_GRACE_SECONDS

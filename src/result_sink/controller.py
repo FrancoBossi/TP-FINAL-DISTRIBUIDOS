@@ -3,10 +3,12 @@ from collections.abc import Callable, Iterable, Mapping
 
 from common.cleanup_outbox import CleanupOutbox
 from common.execution_cleanup import ExecutionCleanup
-from common.message_identity import build_result_message_ids
+from common.message_identity import build_message_id, build_result_message_ids
 from common.message_protocol.external import QUERY_IDS, validate_result
 from common.message_protocol.message import (
+    ExecutionFailedMessage,
     ExecutionLifecycleMessage,
+    ExecutionStartedMessage,
     Message,
     QueryEndMessage,
     QueryPartitionEndMessage,
@@ -20,6 +22,7 @@ from common.persistence import (
     PersistenceCorruptionError,
     PersistenceLayout,
 )
+from result_sink.active_executions import ActiveExecutions
 from result_sink.messaging import Ack, Nack, ResultSinkMessaging
 
 logger = logging.getLogger(__name__)
@@ -45,6 +48,11 @@ class ResultSinkController:
         self._persistence_layout = persistence_layout
         self._cleanup = (
             ExecutionCleanup(persistence_layout, retention_seconds=3600)
+            if persistence_layout is not None
+            else None
+        )
+        self._active = (
+            ActiveExecutions(persistence_layout)
             if persistence_layout is not None
             else None
         )
@@ -90,6 +98,7 @@ class ResultSinkController:
                 QueryEndMessage,
                 QueryPartitionEndMessage,
                 ExecutionLifecycleMessage,
+                ExecutionStartedMessage,
             ),
         ):
             nack()
@@ -98,6 +107,11 @@ class ResultSinkController:
             )
         try:
             self._validate_execution_id(message.execution_id)
+            if isinstance(message, ExecutionStartedMessage):
+                if not self._cleanup.is_closed(message.execution_id):
+                    self._active.register(message.execution_id, message.expires_at)
+                ack()
+                return
             if isinstance(message, ExecutionLifecycleMessage):
                 self._apply_terminal(message)
                 ack()
@@ -227,6 +241,7 @@ class ResultSinkController:
         if outbox is not None and not self._cleanup.has_marker(execution_id):
             outbox.prepare(message)
         self._cleanup.cleanup(execution_id, self._clear_execution)
+        self._active.remove(execution_id)
         if outbox is not None:
             outbox.drain(execution_id)
 
@@ -235,11 +250,31 @@ class ResultSinkController:
         for query_id in QUERY_IDS:
             self._ended_partitions.pop((execution_id, query_id), None)
 
+    def _sweep(self) -> None:
+        for execution_id in self._active.expired():
+            # Queue the timeout behind terminal events already accepted by RabbitMQ.
+            self._messaging.enqueue_timeout(
+                ExecutionFailedMessage(
+                    execution_id=execution_id,
+                    message_id=build_message_id(
+                        execution_id=execution_id,
+                        producer_id="result_sink",
+                        operation=ExecutionFailedMessage.type,
+                        identity={"cause": "timeout"},
+                    ),
+                    cause="timeout",
+                )
+            )
+            self._active.mark_scheduled(execution_id)
+        self._cleanup.sweep()
+
     def _recover(self):
+        self._active.recover()
         self._cleanup.recover(self._clear_execution)
         if self._cleanup_outbox is not None:
             for execution_id in self._cleanup_outbox.execution_ids():
                 self._cleanup.cleanup(execution_id, self._clear_execution)
+                self._active.remove(execution_id)
                 self._cleanup_outbox.drain(execution_id)
         for execution_id in self._persistence_layout.execution_ids():
             if self._cleanup.is_closed(execution_id):
@@ -318,7 +353,7 @@ class ResultSinkController:
             self._recover()
         self._messaging.start_consuming(
             self.process_message,
-            **({"on_idle": self._cleanup.sweep} if self._cleanup is not None else {}),
+            **({"on_idle": self._sweep} if self._cleanup is not None else {}),
         )
 
     def stop(self) -> None:

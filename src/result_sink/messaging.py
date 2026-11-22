@@ -2,6 +2,7 @@ from collections.abc import Callable
 
 from common.message_protocol.message import (
     ExecutionCleanupMessage,
+    ExecutionFailedMessage,
     Message,
     QueryEndMessage,
     ResultMessage,
@@ -27,6 +28,9 @@ class ResultSinkMessaging:
 
     def publish(self, message: ResultMessage | QueryEndMessage) -> None:
         self._publisher.send_to(f"results.{message.execution_id}", message.serialize())
+
+    def enqueue_timeout(self, message: ExecutionFailedMessage) -> None:
+        self._input_queue.send(message.serialize())
 
     def publish_cleanup(
         self, destination: str, message: ExecutionCleanupMessage

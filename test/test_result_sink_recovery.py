@@ -1,11 +1,13 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from common.message_protocol.message import (
     ExecutionCleanupMessage,
+    ExecutionCompletedMessage,
     ExecutionFailedMessage,
+    ExecutionStartedMessage,
     QueryEndMessage,
     QueryPartitionEndMessage,
 )
@@ -26,6 +28,57 @@ class TestResultSinkRecovery(unittest.TestCase):
             self.partition_counts,
             persistence_layout=self.layout,
             cleanup_destinations=cleanup_destinations,
+        )
+
+    def test_restart_expires_active_execution_with_no_terminal_event(self):
+        registered = ExecutionStartedMessage("execution-1", "start", 100)
+        ack, nack = Mock(), Mock()
+        controller = self._controller(Mock())
+        controller.process_message(registered, ack, nack)
+        controller.process_message(self._end(0, "partition-0-end"), ack, nack)
+        ack.assert_called_with()
+
+        messaging = Mock()
+        recovered = self._controller(messaging, lambda _: ("worker.input",))
+        recovered.start()
+        idle = messaging.start_consuming.call_args.kwargs["on_idle"]
+        with patch("result_sink.active_executions.time", return_value=104):
+            idle()
+        messaging.enqueue_timeout.assert_not_called()
+        with patch("result_sink.active_executions.time", return_value=105):
+            idle()
+            idle()
+        messaging.enqueue_timeout.assert_called_once()
+        timeout = messaging.enqueue_timeout.call_args.args[0]
+        self.assertIsInstance(timeout, ExecutionFailedMessage)
+        self.assertEqual(timeout.cause, "timeout")
+        recovered.process_message(timeout, ack, nack)
+
+        self.assertFalse(self.layout.state_path("execution-1").exists())
+        self.assertEqual(
+            list(self.layout.executions_path.with_name("active").glob("*.json")), []
+        )
+        self.assertEqual(messaging.publish_cleanup.call_args.args[0], "worker.input")
+        nack.assert_not_called()
+
+    def test_queued_completion_wins_over_fallback_timeout(self):
+        messaging = Mock()
+        controller = self._controller(messaging, lambda _: ("worker.input",))
+        controller.process_message(
+            ExecutionStartedMessage("execution-1", "start", 100), Mock(), Mock()
+        )
+        controller.start()
+        with patch("result_sink.active_executions.time", return_value=105):
+            messaging.start_consuming.call_args.kwargs["on_idle"]()
+        timeout = messaging.enqueue_timeout.call_args.args[0]
+        completed = ExecutionCompletedMessage(
+            "execution-1", "completed", "all_queries_acknowledged"
+        )
+        controller.process_message(completed, Mock(), Mock())
+        controller.process_message(timeout, Mock(), Mock())
+        messaging.publish_cleanup.assert_called_once()
+        self.assertEqual(
+            messaging.publish_cleanup.call_args.args[1].cause, completed.cause
         )
 
     def test_restart_retries_only_unconfirmed_cleanup_destinations(self):

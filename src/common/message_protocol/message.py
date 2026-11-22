@@ -316,6 +316,14 @@ class QueryEndMessage(Message):
 
 
 @dataclass(frozen=True)
+class ExecutionStartedMessage(Message):
+    execution_id: str
+    message_id: str
+    expires_at: int
+    type: ClassVar[MessageType] = MessageType.EXECUTION_STARTED
+
+
+@dataclass(frozen=True)
 class ExecutionLifecycleMessage(Message):
     execution_id: str
     message_id: str
@@ -338,6 +346,7 @@ class ExecutionCleanupMessage(ExecutionLifecycleMessage):
 
 
 MESSAGE_CLASSES: dict[MessageType, type[Message]] = {
+    MessageType.EXECUTION_STARTED: ExecutionStartedMessage,
     MessageType.EXECUTION_COMPLETED: ExecutionCompletedMessage,
     MessageType.EXECUTION_FAILED: ExecutionFailedMessage,
     MessageType.EXECUTION_CLEANUP: ExecutionCleanupMessage,

@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from threading import Lock
 
-from common.message_protocol.message import Message
+from common.message_protocol.message import ExecutionStartedMessage, Message
 from common.middleware.middleware import MessageMiddlewareQueue
 
 Acknowledgement = Callable[[], None]
@@ -25,6 +25,11 @@ class GatewayMessaging:
 
     def publish(self, message: Message) -> None:
         self._input_queue.send(message.serialize())
+
+    def publish_started(self, message: ExecutionStartedMessage) -> None:
+        if self._lifecycle_queue is None:
+            raise RuntimeError("execution registration requires a lifecycle queue")
+        self._lifecycle_queue.send(message.serialize())
 
     def publish_terminal(self, message: Message) -> None:
         if self._lifecycle_queue is not None:
