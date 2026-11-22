@@ -793,6 +793,11 @@ La comparación debe separar el overhead normal de la recuperación:
   documentados; comenzar con intervalos de cinco segundos.
 - Ejecutar al menos tres corridas por caso y reportar mediana y dispersión, no una
   única medición.
+- El runner registra `first_result_seconds` desde el inicio del cliente hasta
+  que persiste el primer resultado, incluido su ID. Queda vacío si no hay
+  resultados o si la imagen del cliente no emite esa medición. `summary.json`
+  agrega mediana, desvío estándar muestral y cantidad de mediciones de las
+  ejecuciones válidas para duración, throughput y tiempo al primer resultado.
 - Medir tiempo total, artículos por segundo, tiempo hasta primer resultado, CPU,
   memoria, red, bytes escritos en journals y tiempo de recuperación.
 - Reducir progresivamente el intervalo entre fallas y documentar el menor valor

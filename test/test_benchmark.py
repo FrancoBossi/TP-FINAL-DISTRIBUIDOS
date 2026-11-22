@@ -10,7 +10,9 @@ from scripts.run_benchmark import (
     multiset_fingerprint,
     parse_io_bytes,
     parse_memory_bytes,
+    read_first_result_seconds,
     resolve_dataset,
+    summarize_runs,
     verify_cleanup,
 )
 
@@ -49,6 +51,36 @@ class MultisetFingerprintTest(unittest.TestCase):
 
 
 class BenchmarkHelpersTest(unittest.TestCase):
+    def test_first_result_metric_is_optional_and_parsed_from_client_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "client.log"
+            log.write_text("All queries complete: 0 results\n", encoding="utf-8")
+            self.assertIsNone(read_first_result_seconds(log))
+            log.write_text(
+                "2026-11-22 18:00:00 INFO First result persisted after 1.234567 seconds\n",
+                encoding="utf-8",
+            )
+            self.assertAlmostEqual(read_first_result_seconds(log), 1.234567)
+
+    def test_aggregate_excludes_failed_and_inconsistent_runs(self):
+        runs = [
+            {"status": "success", "duration_seconds": 10, "first_result_seconds": 2},
+            {"status": "success", "duration_seconds": 14},
+            {"status": "failed", "duration_seconds": 1, "first_result_seconds": 1},
+            {
+                "status": "success",
+                "duration_seconds": 1,
+                "matches_first_success": False,
+            },
+        ]
+
+        summary = summarize_runs(runs)
+
+        self.assertEqual(summary["duration_seconds"]["median"], 12)
+        self.assertAlmostEqual(summary["duration_seconds"]["sample_stddev"], 8**0.5)
+        self.assertEqual(summary["first_result_seconds"]["samples"], 1)
+        self.assertIsNone(summary["first_result_seconds"]["sample_stddev"])
+
     @patch("scripts.run_benchmark.subprocess.run")
     def test_cleanup_requires_queue_and_persistent_state_to_disappear(self, run):
         execution_id = "e1-123-" + "a" * 32

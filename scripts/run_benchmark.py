@@ -10,6 +10,7 @@ import json
 import math
 import os
 import re
+import statistics
 import subprocess
 import sys
 import threading
@@ -462,6 +463,35 @@ def git_value(repo_root: Path, *arguments: str) -> str:
     ).stdout.strip()
 
 
+def read_first_result_seconds(log: Path) -> float | None:
+    marker = re.compile(r"First result persisted after ([0-9]+\.[0-9]+) seconds")
+    with log.open(encoding="utf-8", errors="replace") as lines:
+        for line in lines:
+            match = marker.search(line)
+            if match:
+                return float(match[1])
+    return None
+
+
+def summarize_runs(
+    runs: list[dict[str, Any]],
+) -> dict[str, dict[str, float | int | None]]:
+    successful = [
+        run
+        for run in runs
+        if run["status"] == "success" and run.get("matches_first_success") is not False
+    ]
+    summary = {}
+    for metric in ("duration_seconds", "articles_per_second", "first_result_seconds"):
+        values = [run[metric] for run in successful if run.get(metric) is not None]
+        summary[metric] = {
+            "samples": len(values),
+            "median": statistics.median(values) if values else None,
+            "sample_stddev": statistics.stdev(values) if len(values) >= 2 else None,
+        }
+    return summary
+
+
 def write_summary_csv(path: Path, runs: list[dict[str, Any]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(
@@ -472,6 +502,7 @@ def write_summary_csv(path: Path, runs: list[dict[str, Any]]) -> None:
                 "exit_code",
                 "duration_seconds",
                 "articles_per_second",
+                "first_result_seconds",
                 "matches_first_success",
                 "matches_expected",
             ),
@@ -750,6 +781,9 @@ def main() -> int:
                 "exit_code": exit_code,
                 "timed_out": timed_out,
                 "duration_seconds": duration,
+                "first_result_seconds": read_first_result_seconds(
+                    run_dir / "client.log"
+                ),
                 "articles_per_second": metadata["dataset"]["rows"] / duration,
                 "status": "failed",
                 "metrics": summarize_metrics(metrics_path),
@@ -811,7 +845,7 @@ def main() -> int:
             check=False,
         )
 
-    summary = metadata | {"runs": runs}
+    summary = metadata | {"runs": runs, "aggregate_metrics": summarize_runs(runs)}
     (benchmark_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
