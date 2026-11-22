@@ -3,6 +3,7 @@ from types import FrameType
 
 from common.middleware import MessageMiddlewareQueueRabbitMQ
 from common.middleware.middleware_rabbitmq import MessagePublisherRabbitMQ
+from common.partition_router import PartitionRouter
 from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from result_sink.config import ResultSinkConfig, configure_logging
@@ -48,10 +49,16 @@ def main() -> int:
         mom_host=config.mom_host,
         input_queue_name=config.input_queue,
     )
+    input_router = PartitionRouter(
+        config.input_batcher_queue_prefix, config.input_batcher_partitions
+    )
     controller = ResultSinkController(
         messaging=messaging,
         partition_counts=config.partition_counts,
         persistence_layout=PersistenceLayout(config.state_root, "result_sink", 0),
+        cleanup_destinations=lambda execution_id: (
+            input_router.queue_for(execution_id),
+        ),
     )
 
     logger.info(

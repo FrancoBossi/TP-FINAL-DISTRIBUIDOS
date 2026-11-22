@@ -1,7 +1,9 @@
 import logging
 
+from common.execution_cleanup import ExecutionCleanup
 from common.message_protocol.message import (
     ArticleBatchMessage,
+    ExecutionCleanupMessage,
     Message,
     RoutedArticleMessage,
     RoutedInputEndMessage,
@@ -33,6 +35,7 @@ class InputBatcherController:
         self._messaging = messaging
         self._persistence_layout = persistence_layout
         self._output_destination = output_destination
+        self._cleanup = ExecutionCleanup(persistence_layout, retention_seconds=3600)
         self._stores: dict[str, DurableExecutionStore] = {}
 
     def process_message(
@@ -41,11 +44,21 @@ class InputBatcherController:
         ack: Ack,
         nack: Nack,
     ) -> None:
-        if not isinstance(message, (RoutedArticleMessage, RoutedInputEndMessage)):
+        if not isinstance(
+            message,
+            (RoutedArticleMessage, RoutedInputEndMessage, ExecutionCleanupMessage),
+        ):
             nack()
             raise ValueError("InputBatcher expected ROUTED_ARTICLE or ROUTED_INPUT_END")
 
         try:
+            if isinstance(message, ExecutionCleanupMessage):
+                self._cleanup.cleanup(message.execution_id, self._clear_execution)
+                ack()
+                return
+            if self._cleanup.is_closed(message.execution_id):
+                ack()
+                return
             store = self._store_for(message.execution_id)
         except Exception:
             nack()
@@ -128,8 +141,15 @@ class InputBatcherController:
             self._messaging.publish(message)
             store.confirm(output)
 
+    def _clear_execution(self, execution_id: str) -> None:
+        self._stores.pop(execution_id, None)
+        self._batcher.restore_state(execution_id, {})
+
     def _recover(self) -> None:
+        self._cleanup.recover(self._clear_execution)
         for execution_id in self._persistence_layout.execution_ids():
+            if self._cleanup.is_closed(execution_id):
+                continue
             store = self._store_for(execution_id)
             self._batcher.restore_state(execution_id, store.state)
             self._publish_pending(store)

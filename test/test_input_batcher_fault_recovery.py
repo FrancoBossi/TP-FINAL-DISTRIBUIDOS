@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 from common.message_protocol.message import (
     ArticleBatchMessage,
+    ExecutionCleanupMessage,
     RoutedArticleMessage,
     RoutedInputEndMessage,
 )
@@ -56,6 +57,31 @@ class InputBatcherFaultRecoveryTest(unittest.TestCase):
         return DurableExecutionStore(
             AtomicJsonStore(self.layout.state_path(self.article.execution_id))
         )
+
+    def test_cleanup_discards_batch_and_late_article_after_restart(self):
+        controller, batcher, messaging = self._controller()
+        controller.process_message(self.article, Mock(), Mock())
+        execution_id = self.article.execution_id
+        path = self.layout.state_path(execution_id)
+        self.assertTrue(path.exists())
+
+        cleanup = ExecutionCleanupMessage(
+            execution_id, "cleanup", "client_disconnected"
+        )
+        ack, nack = Mock(), Mock()
+        controller.process_message(cleanup, ack, nack)
+        self.assertNotIn(execution_id, batcher.current_batch)
+        self.assertFalse(path.parent.exists())
+        messaging.publish.assert_not_called()
+
+        restarted, batcher, messaging = self._controller()
+        restarted.start()
+        restarted.process_message(self.article, ack, nack)
+        self.assertNotIn(execution_id, batcher.current_batch)
+        self.assertFalse(path.parent.exists())
+        self.assertEqual(ack.call_count, 2)
+        nack.assert_not_called()
+        messaging.publish.assert_not_called()
 
     def test_failure_before_commit_rolls_back_memory_and_retry_applies_once(self):
         controller, batcher, messaging = self._controller()
