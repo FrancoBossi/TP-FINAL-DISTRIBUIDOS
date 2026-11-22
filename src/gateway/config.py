@@ -25,3 +25,6 @@ class GatewayConfig:
     input_batcher_partitions: int = field(
         default_factory=lambda: int(os.environ.get("INPUT_BATCHER_PARTITIONS", "1"))
     )
+    lifecycle_queue: str = field(
+        default_factory=lambda: os.environ.get("LIFECYCLE_QUEUE", "result_sink.input")
+    )

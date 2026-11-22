@@ -12,6 +12,8 @@ from common.message_protocol.message import (
     AckMessage,
     ArticleMessage,
     ErrorMessage,
+    ExecutionCompletedMessage,
+    ExecutionFailedMessage,
     InputEndMessage,
     QueryEndMessage,
     ResultMessage,
@@ -24,6 +26,7 @@ from gateway.handler import handle_client
 class FakeMessaging:
     def __init__(self):
         self.published = []
+        self.terminal = []
         self.closed = False
         self.result_queue_name = "results.execution-123"
         self.acks = []
@@ -32,6 +35,9 @@ class FakeMessaging:
 
     def publish(self, message):
         self.published.append(message)
+
+    def publish_terminal(self, message):
+        self.terminal.append(message)
 
     def start_consuming_results(self, on_result):
         execution_id = self.published[-1].execution_id
@@ -242,6 +248,21 @@ class TestClientGateway(unittest.TestCase):
             ),
         )
 
+    def test_gateway_reports_completion_after_client_acks(self):
+        messaging = FakeMessaging()
+        with (
+            patch(
+                "gateway.handler.recv_msg",
+                side_effect=[InputEndMessage(), *[AckMessage() for _ in range(6)]],
+            ),
+            patch("gateway.handler.send_msg"),
+        ):
+            handle_client(Mock(), lambda _: messaging, threading.Event())
+
+        self.assertEqual(len(messaging.terminal), 1)
+        self.assertIsInstance(messaging.terminal[0], ExecutionCompletedMessage)
+        self.assertEqual(messaging.terminal[0].cause, "all_queries_acknowledged")
+
     def test_disconnect_during_results_discards_remaining_results(self):
         messaging = FakeMessaging()
         with (
@@ -255,6 +276,8 @@ class TestClientGateway(unittest.TestCase):
         self.assertEqual(len(messaging.acks), 6)
         self.assertEqual(messaging.nacks, [])
         self.assertEqual(send.call_count, 2)
+        self.assertIsInstance(messaging.terminal[0], ExecutionFailedMessage)
+        self.assertEqual(messaging.terminal[0].cause, "client_disconnected")
         self.assertTrue(messaging.closed)
 
     def test_disconnect_during_end_ack_does_not_duplicate_end(self):

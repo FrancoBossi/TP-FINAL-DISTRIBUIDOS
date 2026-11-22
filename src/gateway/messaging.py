@@ -14,15 +14,21 @@ class GatewayMessaging:
         input_queue: MessageMiddlewareQueue,
         result_queue: MessageMiddlewareQueue,
         result_queue_name: str,
+        lifecycle_queue: MessageMiddlewareQueue | None = None,
     ) -> None:
         self._lifecycle_lock = Lock()
         self._closed = False
         self._input_queue = input_queue
+        self._lifecycle_queue = lifecycle_queue
         self._result_queue = result_queue
         self.result_queue_name = result_queue_name
 
     def publish(self, message: Message) -> None:
         self._input_queue.send(message.serialize())
+
+    def publish_terminal(self, message: Message) -> None:
+        if self._lifecycle_queue is not None:
+            self._lifecycle_queue.send(message.serialize())
 
     def start_consuming_results(self, on_result: ResultCallback) -> None:
         def deserialize_result(
@@ -48,4 +54,8 @@ class GatewayMessaging:
             try:
                 self._input_queue.close()
             finally:
-                self._result_queue.close()
+                try:
+                    self._result_queue.close()
+                finally:
+                    if self._lifecycle_queue is not None:
+                        self._lifecycle_queue.close()

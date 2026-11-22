@@ -17,6 +17,8 @@ from common.message_protocol.message import (
     AckMessage,
     ArticleMessage,
     ErrorMessage,
+    ExecutionCompletedMessage,
+    ExecutionFailedMessage,
     InputEndMessage,
     Message,
     QueryEndMessage,
@@ -203,7 +205,7 @@ def forward_results(
     client_socket: socket.socket,
     messaging: GatewayMessaging,
     execution_id: str,
-) -> None:
+) -> bool:
     state = ResultForwardingState()
 
     logger.info(
@@ -224,6 +226,7 @@ def forward_results(
 
     if state.completed != QUERY_IDS:
         raise EOFError("Results ended before all queries completed")
+    return not state.discard
 
 
 def handle_client(
@@ -235,6 +238,8 @@ def handle_client(
     messaging = None
     published = 0
     input_finished = False
+    terminal_cause = "gateway_shutdown"
+    completed = False
 
     logger.info("Execution %s: starting upload", execution_id)
 
@@ -257,6 +262,7 @@ def handle_client(
                 )
         except UploadDisconnected as error:
             published = error.published
+            terminal_cause = "client_disconnected"
             messaging.publish(
                 routed_input_end(
                     execution_id,
@@ -272,6 +278,7 @@ def handle_client(
         except (EOFError, OSError):
             if stop_event.is_set():
                 return
+            terminal_cause = "client_disconnected"
             messaging.publish(
                 routed_input_end(
                     execution_id,
@@ -286,8 +293,14 @@ def handle_client(
             return
 
         if not stop_event.is_set():
-            forward_results(client_socket, messaging, execution_id)
+            completed = forward_results(client_socket, messaging, execution_id)
+            terminal_cause = (
+                "all_queries_acknowledged" if completed else "client_disconnected"
+            )
     except Exception as error:
+        terminal_cause = (
+            "timeout" if isinstance(error, TimeoutError) else "gateway_error"
+        )
         logger.exception(
             "Execution %s: failed after %d articles published",
             execution_id,
@@ -301,7 +314,30 @@ def handle_client(
         raise
     finally:
         if messaging is not None:
-            messaging.close()
+            message_class = (
+                ExecutionCompletedMessage if completed else ExecutionFailedMessage
+            )
+            try:
+                messaging.publish_terminal(
+                    message_class(
+                        execution_id=execution_id,
+                        message_id=build_message_id(
+                            execution_id=execution_id,
+                            producer_id="gateway",
+                            operation=message_class.type,
+                            identity={"cause": terminal_cause},
+                        ),
+                        cause=terminal_cause,
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "Execution %s: terminal publication failed", execution_id
+                )
+                if completed:
+                    raise
+            finally:
+                messaging.close()
             logger.debug(
                 "Execution %s: messaging connections closed",
                 execution_id,

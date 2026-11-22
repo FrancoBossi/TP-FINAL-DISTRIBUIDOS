@@ -3,7 +3,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from common.message_protocol.message import QueryEndMessage, QueryPartitionEndMessage
+from common.message_protocol.message import (
+    ExecutionFailedMessage,
+    QueryEndMessage,
+    QueryPartitionEndMessage,
+)
 from common.persistence import PersistenceLayout
 from result_sink.controller import ResultSinkController
 
@@ -25,6 +29,30 @@ class TestResultSinkRecovery(unittest.TestCase):
     @staticmethod
     def _end(partition_id: int, message_id: str):
         return QueryPartitionEndMessage(1, partition_id, "execution-1", message_id)
+
+    def test_terminal_event_removes_state_and_late_message_is_acknowledged(self):
+        controller = self._controller(Mock())
+        controller.process_message(self._end(0, "partition-0-end"), Mock(), Mock())
+        path = self.layout.state_path("execution-1")
+        self.assertTrue(path.exists())
+
+        ack, nack = Mock(), Mock()
+        terminal = ExecutionFailedMessage(
+            "execution-1", "failed", "client_disconnected"
+        )
+        controller.process_message(terminal, ack, nack)
+        ack.assert_called_once()
+        self.assertFalse(path.exists())
+
+        messaging = Mock()
+        restarted = self._controller(messaging)
+        restarted.start()
+        restarted.process_message(terminal, ack, nack)
+        restarted.process_message(self._end(1, "partition-1-end"), ack, nack)
+        self.assertEqual(ack.call_count, 3)
+        nack.assert_not_called()
+        messaging.publish.assert_not_called()
+        self.assertFalse(path.exists())
 
     def test_restart_restores_partition_barrier(self):
         self._controller(Mock()).process_message(

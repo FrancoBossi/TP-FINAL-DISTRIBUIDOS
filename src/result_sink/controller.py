@@ -1,9 +1,11 @@
 import logging
 from collections.abc import Mapping
 
+from common.execution_cleanup import ExecutionCleanup
 from common.message_identity import build_result_message_ids
 from common.message_protocol.external import QUERY_IDS, validate_result
 from common.message_protocol.message import (
+    ExecutionLifecycleMessage,
     Message,
     QueryEndMessage,
     QueryPartitionEndMessage,
@@ -39,6 +41,11 @@ class ResultSinkController:
         self._partition_counts = dict(partition_counts)
         self._ended_partitions: dict[tuple[str, int], set[int]] = {}
         self._persistence_layout = persistence_layout
+        self._cleanup = (
+            ExecutionCleanup(persistence_layout, retention_seconds=3600)
+            if persistence_layout is not None
+            else None
+        )
         self._stores: dict[str, DurableExecutionStore] = {}
 
     def process_message(self, message: Message, ack: Ack, nack: Nack) -> None:
@@ -62,7 +69,13 @@ class ResultSinkController:
 
     def _process_durable(self, message: Message, ack: Ack, nack: Nack) -> None:
         if not isinstance(
-            message, (ResultMessage, QueryEndMessage, QueryPartitionEndMessage)
+            message,
+            (
+                ResultMessage,
+                QueryEndMessage,
+                QueryPartitionEndMessage,
+                ExecutionLifecycleMessage,
+            ),
         ):
             nack()
             raise ValueError(
@@ -70,6 +83,13 @@ class ResultSinkController:
             )
         try:
             self._validate_execution_id(message.execution_id)
+            if isinstance(message, ExecutionLifecycleMessage):
+                self._cleanup.cleanup(message.execution_id, self._clear_execution)
+                ack()
+                return
+            if self._cleanup.is_closed(message.execution_id):
+                ack()
+                return
             if isinstance(message, (ResultMessage, QueryEndMessage)):
                 validate_result(message, set())
             store = self._store_for(message.execution_id)
@@ -186,8 +206,16 @@ class ResultSinkController:
                 )
             store.confirm(output)
 
+    def _clear_execution(self, execution_id: str) -> None:
+        self._stores.pop(execution_id, None)
+        for query_id in QUERY_IDS:
+            self._ended_partitions.pop((execution_id, query_id), None)
+
     def _recover(self):
+        self._cleanup.recover(self._clear_execution)
         for execution_id in self._persistence_layout.execution_ids():
+            if self._cleanup.is_closed(execution_id):
+                continue
             store = self._store_for(execution_id)
             self._decode_state(store.state)
             self._publish_pending(store)

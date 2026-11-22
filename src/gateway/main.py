@@ -12,6 +12,7 @@ def create_messaging(
     mom_host: str,
     input_queue_name: str,
     execution_id: str,
+    lifecycle_queue_name: str = "result_sink.input",
 ) -> GatewayMessaging:
     result_queue_name = f"results.{execution_id}"
 
@@ -30,10 +31,22 @@ def create_messaging(
         input_queue.close()
         raise
 
+    try:
+        lifecycle_queue = MessageMiddlewareQueueRabbitMQ(
+            host=mom_host, queue_name=lifecycle_queue_name
+        )
+    except Exception:
+        try:
+            result_queue.close()
+        finally:
+            input_queue.close()
+        raise
+
     return GatewayMessaging(
         input_queue=input_queue,
         result_queue=result_queue,
         result_queue_name=result_queue_name,
+        lifecycle_queue=lifecycle_queue,
     )
 
 
@@ -57,6 +70,7 @@ def main() -> int:
                     mom_host=config.mom_host,
                     input_queue_name=input_router.queue_for(execution_id),
                     execution_id=execution_id,
+                    lifecycle_queue_name=config.lifecycle_queue,
                 ),
                 stop_event=stop_event,
             )
