@@ -1358,7 +1358,7 @@ Para ensayar tolerancia a fallos cuando esté integrado el bloque 5:
    con intervalos de cinco segundos, una seed fija y un proyecto Compose
    dedicado. Ejecutar primero la matriz representativa.
 2. En otra terminal, seguir `run-01/chaos.jsonl` con
-   `uv run scripts/monitor_chaos.py --follow <ruta-al-log>`. Identificar el
+   `uv run python -m scripts.chaos monitor --follow <ruta-al-log>`. Identificar el
    servicio afectado y el instante de la inyección.
 3. En los logs de FailureManager, seguir la detección, la elección Bully cuando
    corresponde, la decisión de reinicio y el retorno del servicio.

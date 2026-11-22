@@ -385,6 +385,21 @@ aunque su transformación de DATA sea pura.
 
 ### Herramienta Chaos Monkey
 
+Desde la raíz del repositorio, usar `uv run python -m scripts.chaos --help`
+para ver los subcomandos. También se puede ejecutar con `.venv/bin/python -m
+scripts.chaos`. Los subcomandos `sweep` y `matrix` usan el benchmark y
+requieren las dependencias de `make setup`.
+
+| Subcomando | Uso |
+|---|---|
+| `inject` | Inyectar caídas en un proyecto Compose activo. |
+| `monitor` | Mostrar el historial de inyecciones o seguirlo en vivo. |
+| `sweep` | Comparar intervalos de inyección y reportar el menor que superó las verificaciones. |
+| `matrix` | Listar o ejecutar escenarios por tipo de servicio. |
+
+Cada subcomando tiene su propio `--help`. Los comandos anteriores siguen
+disponibles para los scripts existentes.
+
 La herramienta será propia y separada de los supervisores:
 
 - Recibe seed, intervalo, cantidad máxima de fallas y allowlist de targets.
@@ -411,7 +426,7 @@ Con el proyecto de Compose ya levantado y el cliente en ejecución, el inyector
 puede ejecutarse desde otra terminal:
 
 ```sh
-uv run scripts/chaos_monkey.py \
+uv run python -m scripts.chaos inject \
   --target preprocessor-0 --target q3-word-aggregator-0 \
   --seed 42 --interval 5 --max-failures 8 --log chaos.jsonl
 ```
@@ -430,7 +445,7 @@ reiniciar los procesos.
 Para observar Chaos Monkey en otra terminal:
 
 ```sh
-uv run scripts/monitor_chaos.py --follow chaos.jsonl
+uv run python -m scripts.chaos monitor --follow chaos.jsonl
 ```
 
 Pasar el `chaos.jsonl` de la ejecución para monitorear un benchmark. Sin
@@ -803,8 +818,8 @@ conservan sus marcas hasta que se pueda verificar el drenaje.
 Para listar los escenarios de caída de procesos sin levantar Compose:
 
 ```sh
-.venv/bin/python -m scripts.run_chaos_matrix --scope representative --list
-.venv/bin/python -m scripts.run_chaos_matrix --scope all --list
+uv run python -m scripts.chaos matrix --scope representative --list
+uv run python -m scripts.chaos matrix --scope all --list
 ```
 
 Para ejecutarlos, reemplazar `--list` por `--dataset`, `--expected-output`,
@@ -872,7 +887,7 @@ La comparación debe separar el overhead normal de la recuperación:
 Para barrer intervalos cuando esté disponible el reinicio automático:
 
 ```sh
-.venv/bin/python scripts/sweep_chaos_intervals.py \
+uv run python -m scripts.chaos sweep \
   --dataset datasets/wikipedia_benchmark_12.parquet \
   --expected-output output/reference-benchmark \
   --output benchmarks/results/interval-sweep \

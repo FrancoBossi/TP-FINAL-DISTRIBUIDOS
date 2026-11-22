@@ -5,10 +5,15 @@ import json
 import math
 import re
 import subprocess
-import sys
-from pathlib import Path
 from typing import Any
 
+from scripts.chaos_benchmark import (
+    REPO_ROOT,
+    add_benchmark_arguments,
+    benchmark_command,
+    run_benchmark,
+    target_arguments,
+)
 from scripts.chaos_monkey import EXCLUDED_SERVICES, is_failure_manager
 from scripts.sweep_chaos_intervals import assess_interval
 
@@ -59,23 +64,20 @@ def matrix_cases(
     return cases, pending
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--scope", choices=("representative", "all"), default="representative"
     )
     parser.add_argument(
         "--list", action="store_true", help="Print the plan without starting Compose"
     )
-    parser.add_argument("--dataset", type=Path)
-    parser.add_argument("--expected-output", type=Path)
-    parser.add_argument("--output", type=Path, help="New evidence directory")
-    parser.add_argument("--timeout-seconds", type=float)
-    parser.add_argument("--project-name", default="wikipedia-chaos-matrix")
+    add_benchmark_arguments(
+        parser, required=False, project_name="wikipedia-chaos-matrix"
+    )
     parser.add_argument("--interval", type=float, default=5)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--skip-build", action="store_true")
-    args = parser.parse_args()
+
+
+def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if not args.list:
         if None in (
             args.dataset,
@@ -92,19 +94,18 @@ def main() -> int:
         ):
             parser.error("Interval and timeout must be finite and positive")
 
-    repo = Path(__file__).resolve().parents[1]
     compose = [
         "docker",
         "compose",
         "--project-name",
         args.project_name,
         "--file",
-        str(repo / "docker-compose.yaml"),
+        str(REPO_ROOT / "docker-compose.yaml"),
     ]
     try:
         services = subprocess.run(
             [*compose, "config", "--services"],
-            cwd=repo,
+            cwd=REPO_ROOT,
             check=True,
             text=True,
             stdout=subprocess.PIPE,
@@ -120,50 +121,16 @@ def main() -> int:
         report_path = output / "matrix.json"
         report["interval_seconds"] = args.interval
         report["seed"] = args.seed
-        command = [
-            sys.executable,
-            str(repo / "scripts" / "run_benchmark.py"),
-            "--dataset",
-            str(args.dataset.resolve()),
-            "--expected-output",
-            str(args.expected_output.resolve()),
-            "--project-name",
-            args.project_name,
-            "--runs",
-            "3",
-            "--timeout-seconds",
-            str(args.timeout_seconds),
-            "--chaos-interval",
-            str(args.interval),
-            "--chaos-seed",
-            str(args.seed),
-        ]
-        if args.skip_build:
-            command.append("--skip-build")
+        command = [*benchmark_command(args, 3), "--chaos-interval", str(args.interval)]
         report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         for case, targets in cases.items():
             directory = output / case
-            directory.mkdir()
-            options = [
-                "--results-root",
-                str(directory),
-                "--chaos-batch-size",
-                str(len(targets)),
-            ]
-            for target in targets:
-                options.extend(["--chaos-target", target])
-            log = directory / "benchmark.log"
-            print(f"Testing {case}. Logs: {log}", flush=True)
-            with log.open("wb") as capture:
-                result = subprocess.run(
-                    [*command, *options],
-                    cwd=repo,
-                    stdout=capture,
-                    stderr=subprocess.STDOUT,
-                )
+            exit_code, log = run_benchmark(
+                [*command, *target_arguments(targets, len(targets))], directory, case
+            )
             report["results"][case] = {
                 "log": str(log),
-                **assess_interval(directory, result.returncode, 3, set(targets)),
+                **assess_interval(directory, exit_code, 3, set(targets)),
             }
             report_path.write_text(
                 json.dumps(report, indent=2) + "\n", encoding="utf-8"
@@ -179,6 +146,12 @@ def main() -> int:
         and all(result["passed"] for result in report["results"].values())
         else 1
     )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_arguments(parser)
+    return run(parser.parse_args(), parser)
 
 
 if __name__ == "__main__":

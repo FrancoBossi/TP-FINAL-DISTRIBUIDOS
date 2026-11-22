@@ -3,10 +3,24 @@
 import argparse
 import json
 import math
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+if __package__:
+    from .chaos_benchmark import (
+        add_benchmark_arguments,
+        benchmark_command,
+        run_benchmark,
+        target_arguments,
+    )
+else:
+    from chaos_benchmark import (
+        add_benchmark_arguments,
+        benchmark_command,
+        run_benchmark,
+        target_arguments,
+    )
 
 
 def confirmed_cycles(log: Path, required_targets: set[str] | None = None) -> int:
@@ -69,13 +83,8 @@ def assess_interval(
     }
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", type=Path, required=True)
-    parser.add_argument("--expected-output", type=Path, required=True)
-    parser.add_argument(
-        "--output", type=Path, required=True, help="New evidence directory"
-    )
+def add_arguments(parser: argparse.ArgumentParser) -> None:
+    add_benchmark_arguments(parser, required=True, project_name="wikipedia-chaos-sweep")
     parser.add_argument("--target", action="append", required=True)
     parser.add_argument(
         "--interval",
@@ -83,14 +92,12 @@ def main() -> int:
         action="append",
         help="Repeat in descending order (default: 5, 2.5, 1)",
     )
-    parser.add_argument("--project-name", default="wikipedia-chaos-sweep")
     parser.add_argument("--runs", type=int, default=3)
-    parser.add_argument("--timeout-seconds", type=float, required=True)
-    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-failures", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=1)
-    parser.add_argument("--skip-build", action="store_true")
-    args = parser.parse_args()
+
+
+def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     intervals = args.interval or [5.0, 2.5, 1.0]
     if any(
         not math.isfinite(interval) or interval <= 0 for interval in intervals
@@ -107,32 +114,13 @@ def main() -> int:
     ):
         parser.error("The fault budget must allow at least two injection cycles")
 
-    repo = Path(__file__).resolve().parents[1]
     output = args.output.resolve()
     command = [
-        sys.executable,
-        str(repo / "scripts" / "run_benchmark.py"),
-        "--dataset",
-        str(args.dataset.resolve()),
-        "--expected-output",
-        str(args.expected_output.resolve()),
-        "--project-name",
-        args.project_name,
-        "--runs",
-        str(args.runs),
-        "--timeout-seconds",
-        str(args.timeout_seconds),
-        "--chaos-seed",
-        str(args.seed),
+        *benchmark_command(args, args.runs),
         "--chaos-max-failures",
         str(args.max_failures),
-        "--chaos-batch-size",
-        str(args.batch_size),
+        *target_arguments(args.target, args.batch_size),
     ]
-    for target in args.target:
-        command.extend(["--chaos-target", target])
-    if args.skip_build:
-        command.append("--skip-build")
 
     report: dict[str, Any] = {
         "benchmark_command": command,
@@ -144,23 +132,12 @@ def main() -> int:
         output.mkdir(parents=True)
         for index, interval in enumerate(intervals, 1):
             directory = output / f"{index:02d}-{interval:g}s"
-            directory.mkdir()
-            log = directory / "benchmark.log"
-            print(f"Testing {interval:g}s. Logs: {log}", flush=True)
-            with log.open("wb") as capture:
-                result = subprocess.run(
-                    [
-                        *command,
-                        "--chaos-interval",
-                        str(interval),
-                        "--results-root",
-                        str(directory),
-                    ],
-                    cwd=repo,
-                    stdout=capture,
-                    stderr=subprocess.STDOUT,
-                )
-            assessment = assess_interval(directory, result.returncode, args.runs)
+            exit_code, log = run_benchmark(
+                [*command, "--chaos-interval", str(interval)],
+                directory,
+                f"{interval:g}s",
+            )
+            assessment = assess_interval(directory, exit_code, args.runs)
             report["attempts"].append(
                 {"interval_seconds": interval, "log": str(log), **assessment}
             )
@@ -179,6 +156,12 @@ def main() -> int:
         return 1
     print(f"Smallest passing tested interval: {minimum:g}s. Report: {report_path}")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_arguments(parser)
+    return run(parser.parse_args(), parser)
 
 
 if __name__ == "__main__":

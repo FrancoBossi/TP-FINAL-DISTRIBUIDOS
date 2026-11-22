@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.sweep_chaos_intervals import main
+from scripts.chaos import main
 
 
 class ChaosIntervalSweepTest(unittest.TestCase):
@@ -13,7 +13,8 @@ class ChaosIntervalSweepTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "sweep"
             args = [
-                "sweep_chaos_intervals.py",
+                "chaos",
+                "sweep",
                 "--dataset",
                 "datasets/sample.parquet",
                 "--expected-output",
@@ -62,7 +63,7 @@ class ChaosIntervalSweepTest(unittest.TestCase):
             with (
                 patch("sys.argv", args),
                 patch(
-                    "scripts.sweep_chaos_intervals.subprocess.run",
+                    "scripts.chaos_benchmark.subprocess.run",
                     side_effect=run_benchmark,
                 ),
                 patch("builtins.print"),

@@ -819,7 +819,9 @@ def main() -> int:
                         if args.chaos_target:
                             injector_command = [
                                 sys.executable,
-                                str(repo_root / "scripts" / "chaos_monkey.py"),
+                                "-m",
+                                "scripts.chaos",
+                                "inject",
                                 "--compose-file",
                                 str(compose_file),
                                 "--project-name",

@@ -91,14 +91,15 @@ def format_event(event: dict[str, Any]) -> Iterator[str]:
         yield f"{prefix} {kind}: {json.dumps(event, ensure_ascii=False)}"
 
 
-def main() -> int:
-    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
-    parser = argparse.ArgumentParser(description=__doc__)
+def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("log", type=Path, help="Path to chaos.jsonl")
     parser.add_argument(
         "-f", "--follow", action="store_true", help="Wait for new events until Ctrl+C"
     )
-    args = parser.parse_args()
+
+
+def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
     try:
         with closing(read_lines(args.log, args.follow)) as lines:
             for line_number, line in enumerate(lines, 1):
@@ -112,6 +113,12 @@ def main() -> int:
     except (OSError, UnicodeError) as error:
         parser.exit(1, f"Chaos monitor: {error}\n")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_arguments(parser)
+    return run(parser.parse_args(), parser)
 
 
 if __name__ == "__main__":

@@ -138,8 +138,7 @@ def run_chaos(
         result.check_returncode()
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--project-name", help="Override the project name resolved by Docker Compose"
     )
@@ -154,7 +153,9 @@ def main() -> int:
     parser.add_argument("--max-failures", type=int, required=True)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--log", type=Path, required=True)
-    args = parser.parse_args()
+
+
+def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if not math.isfinite(args.interval) or args.interval <= 0:
         parser.error("--interval must be finite and positive")
     if args.max_failures < 1 or args.batch_size < 1:
@@ -183,6 +184,12 @@ def main() -> int:
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, f"Chaos Monkey: {error}\n")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_arguments(parser)
+    return run(parser.parse_args(), parser)
 
 
 if __name__ == "__main__":
