@@ -27,12 +27,12 @@ test:
 	PYTHONPATH=src $(PYTHON) -m unittest discover -s test -v
 
 lint:
-	$(PYTHON) -m ruff check src test scripts/run_benchmark.py scripts/chaos_monkey.py scripts/monitor_chaos.py scripts/compare_benchmarks.py
-	$(PYTHON) -m ruff format --check src test scripts/run_benchmark.py scripts/chaos_monkey.py scripts/monitor_chaos.py scripts/compare_benchmarks.py
+	$(PYTHON) -m ruff check src test scripts/run_benchmark.py scripts/chaos_monkey.py scripts/monitor_chaos.py scripts/compare_benchmarks.py scripts/sweep_chaos_intervals.py
+	$(PYTHON) -m ruff format --check src test scripts/run_benchmark.py scripts/chaos_monkey.py scripts/monitor_chaos.py scripts/compare_benchmarks.py scripts/sweep_chaos_intervals.py
 
 lint-fix:
-	$(PYTHON) -m ruff check --fix src test scripts/run_benchmark.py scripts/chaos_monkey.py scripts/monitor_chaos.py scripts/compare_benchmarks.py
-	$(PYTHON) -m ruff format src test scripts/run_benchmark.py scripts/chaos_monkey.py scripts/monitor_chaos.py scripts/compare_benchmarks.py
+	$(PYTHON) -m ruff check --fix src test scripts/run_benchmark.py scripts/chaos_monkey.py scripts/monitor_chaos.py scripts/compare_benchmarks.py scripts/sweep_chaos_intervals.py
+	$(PYTHON) -m ruff format src test scripts/run_benchmark.py scripts/chaos_monkey.py scripts/monitor_chaos.py scripts/compare_benchmarks.py scripts/sweep_chaos_intervals.py
 
 check: lint
 

@@ -831,6 +831,23 @@ La comparación debe separar el overhead normal de la recuperación:
 - Verificar Q1-Q5 en todas las corridas; una ejecución rápida pero incorrecta no
   forma parte de la comparación.
 
+Para barrer intervalos cuando esté disponible el reinicio automático:
+
+```sh
+.venv/bin/python scripts/sweep_chaos_intervals.py \
+  --dataset datasets/wikipedia_benchmark_12.parquet \
+  --expected-output output/reference-benchmark \
+  --output benchmarks/results/interval-sweep \
+  --timeout-seconds 1800 --target preprocessor-0 \
+  --interval 5 --interval 2.5 --interval 1
+```
+
+Cada intervalo conserva los logs y los
+artefactos del benchmark. `sweep.json` registra todos los intentos y el menor
+intervalo probado que pasó. Para pasar, las tres ejecuciones deben coincidir
+con la referencia, verificar el cleanup y confirmar inyecciones en al menos
+dos ciclos distintos.
+
 ### Decisiones confirmadas con el corrector
 
 | Tema | Decisión |
