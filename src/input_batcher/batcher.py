@@ -32,7 +32,7 @@ class BatchAccumulator:
         self._source_message_ids: dict[str, list[str]] = {}
 
     def add_article(
-        self, message: RoutedArticleMessage
+        self, message: RoutedArticleMessage, *, replay: bool = False
     ) -> Optional[ArticleBatchMessage]:
 
         current = self.current_batch.get(message.execution_id)
@@ -46,7 +46,7 @@ class BatchAccumulator:
         article_size, envelope_size = self._measure_article(message)
 
         single_size = envelope_size + article_size
-        if single_size > self.batch_size:
+        if not replay and single_size > self.batch_size:
             logger.warning(
                 "Article batch is %d bytes, exceeding target %d; "
                 "keeping article in a singleton batch (execution %s)",
@@ -63,7 +63,7 @@ class BatchAccumulator:
                 + SEPARATOR_LENGTH
                 + article_size
             )
-            if candidate_size <= self.batch_size:
+            if replay or candidate_size <= self.batch_size:
                 source_message_ids = self._source_message_ids[message.execution_id]
                 source_message_ids.append(message.message_id)
                 self.current_batch[message.execution_id] = self._build_batch(
