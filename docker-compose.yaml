@@ -32,11 +32,13 @@ services:
         condition: service_healthy
 
   input-batcher-0:
+    container_name: input-batcher-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/input_batcher/Dockerfile
     environment:
+      HEALTH_NAME: input-batcher-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_BATCHER_QUEUE_PREFIX: ${INPUT_BATCHER_QUEUE_PREFIX:-input_batcher.input}
@@ -48,11 +50,13 @@ services:
         condition: service_healthy
 
   input-batcher-1:
+    container_name: input-batcher-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/input_batcher/Dockerfile
     environment:
+      HEALTH_NAME: input-batcher-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_BATCHER_QUEUE_PREFIX: ${INPUT_BATCHER_QUEUE_PREFIX:-input_batcher.input}
@@ -64,11 +68,13 @@ services:
         condition: service_healthy
 
   input-batcher-2:
+    container_name: input-batcher-2
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/input_batcher/Dockerfile
     environment:
+      HEALTH_NAME: input-batcher-2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_BATCHER_QUEUE_PREFIX: ${INPUT_BATCHER_QUEUE_PREFIX:-input_batcher.input}
@@ -80,11 +86,13 @@ services:
         condition: service_healthy
 
   preprocessor-0:
+    container_name: preprocessor-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/preprocessor/Dockerfile
     environment:
+      HEALTH_NAME: preprocessor-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: preprocessor.input
@@ -96,11 +104,13 @@ services:
         condition: service_healthy
 
   preprocessor-1:
+    container_name: preprocessor-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/preprocessor/Dockerfile
     environment:
+      HEALTH_NAME: preprocessor-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: preprocessor.input
@@ -112,11 +122,13 @@ services:
         condition: service_healthy
 
   preprocessor-2:
+    container_name: preprocessor-2
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/preprocessor/Dockerfile
     environment:
+      HEALTH_NAME: preprocessor-2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: preprocessor.input
@@ -128,11 +140,13 @@ services:
         condition: service_healthy
 
   query-router-0:
+    container_name: query-router-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/query_router/Dockerfile
     environment:
+      HEALTH_NAME: query-router-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: query_router.input
@@ -146,11 +160,13 @@ services:
         condition: service_healthy
 
   query-router-1:
+    container_name: query-router-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/query_router/Dockerfile
     environment:
+      HEALTH_NAME: query-router-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: query_router.input
@@ -164,11 +180,13 @@ services:
         condition: service_healthy
 
   query-router-2:
+    container_name: query-router-2
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/query_router/Dockerfile
     environment:
+      HEALTH_NAME: query-router-2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: query_router.input
@@ -182,11 +200,13 @@ services:
         condition: service_healthy
 
   q3-word-aggregator-0:
+    container_name: q3-word-aggregator-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q3/word_aggregator/Dockerfile
     environment:
+      HEALTH_NAME: q3-word-aggregator-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q3_word_aggregator.input.0
@@ -199,11 +219,13 @@ services:
         condition: service_healthy
 
   q3-word-aggregator-1:
+    container_name: q3-word-aggregator-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q3/word_aggregator/Dockerfile
     environment:
+      HEALTH_NAME: q3-word-aggregator-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q3_word_aggregator.input.1
@@ -216,11 +238,13 @@ services:
         condition: service_healthy
 
   q3-word-aggregator-2:
+    container_name: q3-word-aggregator-2
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q3/word_aggregator/Dockerfile
     environment:
+      HEALTH_NAME: q3-word-aggregator-2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q3_word_aggregator.input.2
@@ -233,11 +257,13 @@ services:
         condition: service_healthy
 
   q3-word-projector-0:
+    container_name: q3-word-projector-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q3/word_projector/Dockerfile
     environment:
+      HEALTH_NAME: q3-word-projector-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q3_word_projector.input
@@ -251,11 +277,13 @@ services:
         condition: service_healthy
 
   q3-word-projector-1:
+    container_name: q3-word-projector-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q3/word_projector/Dockerfile
     environment:
+      HEALTH_NAME: q3-word-projector-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q3_word_projector.input
@@ -269,11 +297,13 @@ services:
         condition: service_healthy
 
   q3-word-projector-2:
+    container_name: q3-word-projector-2
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q3/word_projector/Dockerfile
     environment:
+      HEALTH_NAME: q3-word-projector-2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q3_word_projector.input
@@ -287,11 +317,13 @@ services:
         condition: service_healthy
 
   word-extractor-0:
+    container_name: word-extractor-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/word_extractor/Dockerfile
     environment:
+      HEALTH_NAME: word-extractor-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: word_extractor.input
@@ -305,11 +337,13 @@ services:
         condition: service_healthy
 
   word-extractor-1:
+    container_name: word-extractor-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/word_extractor/Dockerfile
     environment:
+      HEALTH_NAME: word-extractor-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: word_extractor.input
@@ -323,11 +357,13 @@ services:
         condition: service_healthy
 
   word-extractor-2:
+    container_name: word-extractor-2
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/word_extractor/Dockerfile
     environment:
+      HEALTH_NAME: word-extractor-2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: word_extractor.input
@@ -341,11 +377,13 @@ services:
         condition: service_healthy
 
   q4-q5-word-projector-0:
+    container_name: q4-q5-word-projector-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q4_q5_word_projector/Dockerfile
     environment:
+      HEALTH_NAME: q4-q5-word-projector-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q4_q5_word_projector.input
@@ -361,11 +399,13 @@ services:
         condition: service_healthy
 
   q4-q5-word-projector-1:
+    container_name: q4-q5-word-projector-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q4_q5_word_projector/Dockerfile
     environment:
+      HEALTH_NAME: q4-q5-word-projector-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q4_q5_word_projector.input
@@ -381,11 +421,13 @@ services:
         condition: service_healthy
 
   q4-q5-word-projector-2:
+    container_name: q4-q5-word-projector-2
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q4_q5_word_projector/Dockerfile
     environment:
+      HEALTH_NAME: q4-q5-word-projector-2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q4_q5_word_projector.input
@@ -401,11 +443,13 @@ services:
         condition: service_healthy
 
   q4-word-counter-0:
+    container_name: q4-word-counter-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q4/word_counter/Dockerfile
     environment:
+      HEALTH_NAME: q4-word-counter-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q4_word_counter.input.0
@@ -419,11 +463,13 @@ services:
         condition: service_healthy
 
   q4-word-counter-1:
+    container_name: q4-word-counter-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q4/word_counter/Dockerfile
     environment:
+      HEALTH_NAME: q4-word-counter-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q4_word_counter.input.1
@@ -437,11 +483,13 @@ services:
         condition: service_healthy
 
   q4-word-counter-2:
+    container_name: q4-word-counter-2
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q4/word_counter/Dockerfile
     environment:
+      HEALTH_NAME: q4-word-counter-2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q4_word_counter.input.2
@@ -455,11 +503,13 @@ services:
         condition: service_healthy
 
   q4-top20-reducer-0:
+    container_name: q4-top20-reducer-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q4/top20_reducer/Dockerfile
     environment:
+      HEALTH_NAME: q4-top20-reducer-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q4_top20_reducer.input.0
@@ -470,11 +520,13 @@ services:
         condition: service_healthy
 
   q4-top20-reducer-1:
+    container_name: q4-top20-reducer-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q4/top20_reducer/Dockerfile
     environment:
+      HEALTH_NAME: q4-top20-reducer-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q4_top20_reducer.input.1
@@ -485,11 +537,13 @@ services:
         condition: service_healthy
 
   q4-top20-reducer-2:
+    container_name: q4-top20-reducer-2
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q4/top20_reducer/Dockerfile
     environment:
+      HEALTH_NAME: q4-top20-reducer-2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q4_top20_reducer.input.2
@@ -500,11 +554,13 @@ services:
         condition: service_healthy
 
   q5-date-router-0:
+    container_name: q5-date-router-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q5/date_router/Dockerfile
     environment:
+      HEALTH_NAME: q5-date-router-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q5_date_router.input
@@ -522,11 +578,13 @@ services:
         condition: service_healthy
 
   q5-date-router-1:
+    container_name: q5-date-router-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q5/date_router/Dockerfile
     environment:
+      HEALTH_NAME: q5-date-router-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q5_date_router.input
@@ -544,11 +602,13 @@ services:
         condition: service_healthy
 
   q5-date-router-2:
+    container_name: q5-date-router-2
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q5/date_router/Dockerfile
     environment:
+      HEALTH_NAME: q5-date-router-2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q5_date_router.input
@@ -566,11 +626,13 @@ services:
         condition: service_healthy
 
   q5-stats-worker-0:
+    container_name: q5-stats-worker-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q5/stats_worker/Dockerfile
     environment:
+      HEALTH_NAME: q5-stats-worker-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q5_stats_worker.input.0
@@ -584,11 +646,13 @@ services:
         condition: service_healthy
 
   q5-stats-worker-1:
+    container_name: q5-stats-worker-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q5/stats_worker/Dockerfile
     environment:
+      HEALTH_NAME: q5-stats-worker-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q5_stats_worker.input.1
@@ -602,11 +666,13 @@ services:
         condition: service_healthy
 
   q5-stats-worker-2:
+    container_name: q5-stats-worker-2
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q5/stats_worker/Dockerfile
     environment:
+      HEALTH_NAME: q5-stats-worker-2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q5_stats_worker.input.2
@@ -620,11 +686,13 @@ services:
         condition: service_healthy
 
   q5-average-reducer-0:
+    container_name: q5-average-reducer-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q5/average_reducer/Dockerfile
     environment:
+      HEALTH_NAME: q5-average-reducer-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q5_average_reducer.input.0
@@ -637,11 +705,13 @@ services:
         condition: service_healthy
 
   q5-average-reducer-1:
+    container_name: q5-average-reducer-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q5/average_reducer/Dockerfile
     environment:
+      HEALTH_NAME: q5-average-reducer-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q5_average_reducer.input.1
@@ -654,11 +724,13 @@ services:
         condition: service_healthy
 
   q5-average-reducer-2:
+    container_name: q5-average-reducer-2
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q5/average_reducer/Dockerfile
     environment:
+      HEALTH_NAME: q5-average-reducer-2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q5_average_reducer.input.2
@@ -671,11 +743,13 @@ services:
         condition: service_healthy
 
   q5-comparator-0:
+    container_name: q5-comparator-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q5/comparator/Dockerfile
     environment:
+      HEALTH_NAME: q5-comparator-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q5_comparator.input.0
@@ -690,11 +764,13 @@ services:
         condition: service_healthy
 
   q5-comparator-1:
+    container_name: q5-comparator-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q5/comparator/Dockerfile
     environment:
+      HEALTH_NAME: q5-comparator-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q5_comparator.input.1
@@ -709,11 +785,13 @@ services:
         condition: service_healthy
 
   q5-comparator-2:
+    container_name: q5-comparator-2
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q5/comparator/Dockerfile
     environment:
+      HEALTH_NAME: q5-comparator-2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q5_comparator.input.2
@@ -728,11 +806,13 @@ services:
         condition: service_healthy
 
   until-2020-filter-0:
+    container_name: until-2020-filter-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/until_2020_filter/Dockerfile
     environment:
+      HEALTH_NAME: until-2020-filter-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: until_2020.input
@@ -746,11 +826,13 @@ services:
         condition: service_healthy
 
   until-2020-filter-1:
+    container_name: until-2020-filter-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/until_2020_filter/Dockerfile
     environment:
+      HEALTH_NAME: until-2020-filter-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: until_2020.input
@@ -764,11 +846,13 @@ services:
         condition: service_healthy
 
   until-2020-filter-2:
+    container_name: until-2020-filter-2
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/until_2020_filter/Dockerfile
     environment:
+      HEALTH_NAME: until-2020-filter-2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: until_2020.input
@@ -782,11 +866,13 @@ services:
         condition: service_healthy
 
   q1-0:
+    container_name: q1-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q1/Dockerfile
     environment:
+      HEALTH_NAME: q1-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q1_english_filter.input
@@ -799,11 +885,13 @@ services:
         condition: service_healthy
 
   q1-1:
+    container_name: q1-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q1/Dockerfile
     environment:
+      HEALTH_NAME: q1-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q1_english_filter.input
@@ -816,11 +904,13 @@ services:
         condition: service_healthy
 
   q1-2:
+    container_name: q1-2
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q1/Dockerfile
     environment:
+      HEALTH_NAME: q1-2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q1_english_filter.input
@@ -833,11 +923,13 @@ services:
         condition: service_healthy
 
   q2-biography-filter-0:
+    container_name: q2-biography-filter-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q2/biography_filter/Dockerfile
     environment:
+      HEALTH_NAME: q2-biography-filter-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q2_biography_filter.input
@@ -850,11 +942,13 @@ services:
         condition: service_healthy
 
   q2-biography-filter-1:
+    container_name: q2-biography-filter-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q2/biography_filter/Dockerfile
     environment:
+      HEALTH_NAME: q2-biography-filter-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q2_biography_filter.input
@@ -867,11 +961,13 @@ services:
         condition: service_healthy
 
   q2-biography-filter-2:
+    container_name: q2-biography-filter-2
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q2/biography_filter/Dockerfile
     environment:
+      HEALTH_NAME: q2-biography-filter-2
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: q2_biography_filter.input
@@ -884,11 +980,13 @@ services:
         condition: service_healthy
 
   image-fetcher-0:
+    container_name: image-fetcher-0
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q2/image_fetcher/Dockerfile
     environment:
+      HEALTH_NAME: image-fetcher-0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: image_fetcher.input
@@ -905,11 +1003,13 @@ services:
         condition: service_healthy
 
   image-fetcher-1:
+    container_name: image-fetcher-1
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/q2/image_fetcher/Dockerfile
     environment:
+      HEALTH_NAME: image-fetcher-1
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: image_fetcher.input
@@ -926,11 +1026,13 @@ services:
         condition: service_healthy
 
   result-sink:
+    container_name: result-sink
     stop_grace_period: ${STOP_GRACE_PERIOD:-2m}
     build:
       context: .
       dockerfile: src/result_sink/Dockerfile
     environment:
+      HEALTH_NAME: result-sink
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOM_HOST: rabbitmq
       INPUT_QUEUE: result_sink.input
@@ -939,6 +1041,99 @@ services:
       Q3_PARTITION_COUNT: "${Q3_PARTITION_COUNT:-3}"
       Q4_PARTITION_COUNT: "${Q4_PARTITION_COUNT:-1}"
       Q5_PARTITION_COUNT: "${Q5_PARTITION_COUNT:-3}"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  failure-manager-0:
+    container_name: failure-manager-0
+    stop_grace_period: ${FM_STOP_GRACE_PERIOD:-10s}
+    build:
+      context: .
+      dockerfile: src/failure_manager/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HEALTH_NAME: failure-manager-0
+      FM_ID: "0"
+      FM_PEERS: failure-manager-0:7000,failure-manager-1:7000,failure-manager-2:7000
+      FM_STATE_DIR: /state
+      FM_HEARTBEAT_INTERVAL: "${FM_HEARTBEAT_INTERVAL:-0.5}"
+      FM_COORDINATOR_TIMEOUT: "${FM_COORDINATOR_TIMEOUT:-2}"
+      FM_ELECTION_TIMEOUT: "${FM_ELECTION_TIMEOUT:-0.75}"
+      FM_ANNOUNCEMENT_TIMEOUT: "${FM_ANNOUNCEMENT_TIMEOUT:-2}"
+      FM_STARTUP_LISTEN: "${FM_STARTUP_LISTEN:-1}"
+      FM_PING_INTERVAL: "${FM_PING_INTERVAL:-1}"
+      FM_PING_TIMEOUT: "${FM_PING_TIMEOUT:-0.5}"
+      FM_PING_ATTEMPTS: "${FM_PING_ATTEMPTS:-2}"
+      FM_FAILURE_THRESHOLD: "${FM_FAILURE_THRESHOLD:-2}"
+      FM_RESTART_COOLDOWN: "${FM_RESTART_COOLDOWN:-10}"
+      FM_STARTUP_GRACE: "${FM_STARTUP_GRACE:-60}"
+      FM_INITIAL_GRACE: "${FM_INITIAL_GRACE:-30}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - fm_state_0:/state
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  failure-manager-1:
+    container_name: failure-manager-1
+    stop_grace_period: ${FM_STOP_GRACE_PERIOD:-10s}
+    build:
+      context: .
+      dockerfile: src/failure_manager/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HEALTH_NAME: failure-manager-1
+      FM_ID: "1"
+      FM_PEERS: failure-manager-0:7000,failure-manager-1:7000,failure-manager-2:7000
+      FM_STATE_DIR: /state
+      FM_HEARTBEAT_INTERVAL: "${FM_HEARTBEAT_INTERVAL:-0.5}"
+      FM_COORDINATOR_TIMEOUT: "${FM_COORDINATOR_TIMEOUT:-2}"
+      FM_ELECTION_TIMEOUT: "${FM_ELECTION_TIMEOUT:-0.75}"
+      FM_ANNOUNCEMENT_TIMEOUT: "${FM_ANNOUNCEMENT_TIMEOUT:-2}"
+      FM_STARTUP_LISTEN: "${FM_STARTUP_LISTEN:-1}"
+      FM_PING_INTERVAL: "${FM_PING_INTERVAL:-1}"
+      FM_PING_TIMEOUT: "${FM_PING_TIMEOUT:-0.5}"
+      FM_PING_ATTEMPTS: "${FM_PING_ATTEMPTS:-2}"
+      FM_FAILURE_THRESHOLD: "${FM_FAILURE_THRESHOLD:-2}"
+      FM_RESTART_COOLDOWN: "${FM_RESTART_COOLDOWN:-10}"
+      FM_STARTUP_GRACE: "${FM_STARTUP_GRACE:-60}"
+      FM_INITIAL_GRACE: "${FM_INITIAL_GRACE:-30}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - fm_state_1:/state
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  failure-manager-2:
+    container_name: failure-manager-2
+    stop_grace_period: ${FM_STOP_GRACE_PERIOD:-10s}
+    build:
+      context: .
+      dockerfile: src/failure_manager/Dockerfile
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HEALTH_NAME: failure-manager-2
+      FM_ID: "2"
+      FM_PEERS: failure-manager-0:7000,failure-manager-1:7000,failure-manager-2:7000
+      FM_STATE_DIR: /state
+      FM_HEARTBEAT_INTERVAL: "${FM_HEARTBEAT_INTERVAL:-0.5}"
+      FM_COORDINATOR_TIMEOUT: "${FM_COORDINATOR_TIMEOUT:-2}"
+      FM_ELECTION_TIMEOUT: "${FM_ELECTION_TIMEOUT:-0.75}"
+      FM_ANNOUNCEMENT_TIMEOUT: "${FM_ANNOUNCEMENT_TIMEOUT:-2}"
+      FM_STARTUP_LISTEN: "${FM_STARTUP_LISTEN:-1}"
+      FM_PING_INTERVAL: "${FM_PING_INTERVAL:-1}"
+      FM_PING_TIMEOUT: "${FM_PING_TIMEOUT:-0.5}"
+      FM_PING_ATTEMPTS: "${FM_PING_ATTEMPTS:-2}"
+      FM_FAILURE_THRESHOLD: "${FM_FAILURE_THRESHOLD:-2}"
+      FM_RESTART_COOLDOWN: "${FM_RESTART_COOLDOWN:-10}"
+      FM_STARTUP_GRACE: "${FM_STARTUP_GRACE:-60}"
+      FM_INITIAL_GRACE: "${FM_INITIAL_GRACE:-30}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - fm_state_2:/state
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -1016,3 +1211,6 @@ services:
 volumes:
   prometheus_data:
   grafana_data:
+  fm_state_0:
+  fm_state_1:
+  fm_state_2:
