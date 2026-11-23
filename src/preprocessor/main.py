@@ -1,6 +1,7 @@
 import logging
 from types import FrameType
 
+from common.health import HealthServer
 from common.middleware import (
     MessageMiddlewareExchangeRabbitMQ,
     MessageMiddlewareQueueRabbitMQ,
@@ -57,6 +58,8 @@ def handle_sigterm(
 
 def main() -> int:
     configure_logging()
+    health = HealthServer.from_env()
+    health.start()
     config = PreprocessorConfig()
 
     messaging = create_messaging(
@@ -79,10 +82,12 @@ def main() -> int:
 
     try:
         with shutdown_signals(controller.stop):
+            health.set_ready()
             controller.start()
     except KeyboardInterrupt:
         return 0
     finally:
+        health.close()
         messaging.close()
 
     return 0
