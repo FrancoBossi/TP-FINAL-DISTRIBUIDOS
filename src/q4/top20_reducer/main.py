@@ -2,6 +2,7 @@ import logging
 
 from common.health import HealthServer
 from common.middleware import MessageMiddlewareQueueRabbitMQ
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from q4.top20_reducer.config import Q4Top20ReducerConfig, configure_logging
 from q4.top20_reducer.controller import Q4Top20ReducerController
@@ -22,6 +23,10 @@ def main() -> int:
     controller = Q4Top20ReducerController(
         messaging,
         partition_count=config.partition_count,
+        persistence_layout=PersistenceLayout(
+            config.state_root, "q4_top20_reducer", config.partition_id
+        ),
+        output_destination=config.output_queue,
     )
     logger.info("Q4Top20Reducer consuming from %s", config.input_queue)
     try:

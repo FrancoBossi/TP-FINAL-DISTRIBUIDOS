@@ -1,17 +1,23 @@
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, call
 
+from common.message_identity import build_control_message_id
 from common.message_protocol.message import (
     ArticleBatchMessage,
     NormalizedArticleBatchMessage,
     PartitionEndMessage,
 )
+from common.persistence import PersistenceLayout
 from query_router.controller import QueryRouterController
 from query_router.router import route_batch
 
 
 class TestQueryRouterController(unittest.TestCase):
     def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary_directory.cleanup)
         self.messaging = Mock()
         self.ack = Mock()
         self.nack = Mock()
@@ -20,6 +26,13 @@ class TestQueryRouterController(unittest.TestCase):
             messaging=self.messaging,
             partition_id=1,
             preprocessor_partition_count=2,
+            persistence_layout=PersistenceLayout(
+                Path(self.temporary_directory.name),
+                "query_router",
+                1,
+            ),
+            q1_q2_destination="until_2020.input",
+            text_destination="word_extractor.input",
         )
 
         self.batch = NormalizedArticleBatchMessage(
@@ -36,6 +49,11 @@ class TestQueryRouterController(unittest.TestCase):
             ],
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id=build_control_message_id(
+                execution_id="execution-123",
+                stage="preprocessor",
+                partition_id=0,
+            ),
         )
 
         self.partition_end_0 = PartitionEndMessage(
@@ -43,6 +61,11 @@ class TestQueryRouterController(unittest.TestCase):
             partition_id=0,
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id=build_control_message_id(
+                execution_id="execution-123",
+                stage="preprocessor",
+                partition_id=1,
+            ),
         )
         self.partition_end_1 = PartitionEndMessage(
             stage="preprocessor",
@@ -116,12 +139,22 @@ class TestQueryRouterController(unittest.TestCase):
             partition_id=0,
             execution_id="execution-456",
             reply_queue="results.execution-456",
+            message_id=build_control_message_id(
+                execution_id="execution-456",
+                stage="preprocessor",
+                partition_id=0,
+            ),
         )
         other_partition_end_1 = PartitionEndMessage(
             stage="preprocessor",
             partition_id=1,
             execution_id="execution-456",
             reply_queue="results.execution-456",
+            message_id=build_control_message_id(
+                execution_id="execution-456",
+                stage="preprocessor",
+                partition_id=1,
+            ),
         )
 
         for message in (
@@ -187,6 +220,7 @@ class TestQueryRouterController(unittest.TestCase):
             articles=[],
             execution_id="execution-123",
             reply_queue="results.execution-123",
+            message_id="m1:batch",
         )
 
         with self.assertRaisesRegex(

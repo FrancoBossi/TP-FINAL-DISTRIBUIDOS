@@ -6,6 +6,7 @@ from common.middleware import (
     MessageMiddlewareExchangeRabbitMQ,
     MessageMiddlewareQueueRabbitMQ,
 )
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from q1.config import Q1Config, configure_logging
 from q1.controller import Q1Controller
@@ -19,6 +20,7 @@ def create_messaging(
     input_queue_name: str,
     output_queue_name: str,
     control_exchange_name: str,
+    partition_id: int,
 ) -> Q1Messaging:
     input_queue = MessageMiddlewareQueueRabbitMQ(
         host=mom_host,
@@ -32,6 +34,7 @@ def create_messaging(
         host=mom_host,
         exchange_name=control_exchange_name,
         routing_keys=[control_exchange_name],
+        queue_name=f"{control_exchange_name}.partition-{partition_id}",
     )
     control_exchange_output = MessageMiddlewareExchangeRabbitMQ(
         host=mom_host,
@@ -67,11 +70,16 @@ def main() -> int:
         input_queue_name=config.input_queue,
         output_queue_name=config.output_queue,
         control_exchange_name=config.control_exchange,
+        partition_id=config.partition_id,
     )
     controller = Q1Controller(
         messaging=messaging,
         partition_id=config.partition_id,
         until_2020_partition_count=config.until_2020_partition_count,
+        persistence_layout=PersistenceLayout(
+            config.state_root, "q1", config.partition_id
+        ),
+        output_destination=config.output_queue,
     )
 
     logger.info(

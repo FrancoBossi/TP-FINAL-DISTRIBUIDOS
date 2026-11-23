@@ -6,6 +6,7 @@ from functools import partial
 from threading import Event
 from uuid import uuid4
 
+from common.message_identity import build_message_id
 from common.message_protocol.external import (
     QUERY_IDS,
     recv_msg,
@@ -29,6 +30,29 @@ LOG_BATCH_SIZE = 1000
 logger = logging.getLogger(__name__)
 
 
+class UploadDisconnected(EOFError):
+    def __init__(self, published: int) -> None:
+        super().__init__("Client disconnected after the article was published")
+        self.published = published
+
+
+def routed_input_end(
+    execution_id: str,
+    reply_queue: str,
+    article_count: int,
+) -> RoutedInputEndMessage:
+    return RoutedInputEndMessage(
+        execution_id=execution_id,
+        reply_queue=reply_queue,
+        message_id=build_message_id(
+            execution_id=execution_id,
+            producer_id="gateway",
+            operation="input_end",
+            identity={"article_count": article_count},
+        ),
+    )
+
+
 def forward_message(
     client_socket: socket.socket,
     messaging: GatewayMessaging,
@@ -44,13 +68,20 @@ def forward_message(
                 article=article,
                 execution_id=execution_id,
                 reply_queue=messaging.result_queue_name,
+                message_id=build_message_id(
+                    execution_id=execution_id,
+                    producer_id="gateway",
+                    operation="article",
+                    identity={"sequence": published},
+                ),
             )
         case ArticleMessage():
             raise ValueError("ARTICLE requires an article object")
         case InputEndMessage():
-            routed = RoutedInputEndMessage(
-                execution_id=execution_id,
-                reply_queue=messaging.result_queue_name,
+            routed = routed_input_end(
+                execution_id,
+                messaging.result_queue_name,
+                published,
             )
             input_finished = True
         case _:
@@ -68,9 +99,9 @@ def forward_message(
     )
     try:
         send_msg(client_socket, AckMessage())
-    except OSError:
+    except OSError as error:
         if not input_finished:
-            raise
+            raise UploadDisconnected(published) from error
 
     if input_finished:
         logger.info(
@@ -224,13 +255,28 @@ def handle_client(
                     execution_id,
                     published,
                 )
+        except UploadDisconnected as error:
+            published = error.published
+            messaging.publish(
+                routed_input_end(
+                    execution_id,
+                    messaging.result_queue_name,
+                    published,
+                )
+            )
+            logger.info(
+                "Execution %s: client disconnected; finishing input",
+                execution_id,
+            )
+            return
         except (EOFError, OSError):
             if stop_event.is_set():
                 return
             messaging.publish(
-                RoutedInputEndMessage(
-                    execution_id=execution_id,
-                    reply_queue=messaging.result_queue_name,
+                routed_input_end(
+                    execution_id,
+                    messaging.result_queue_name,
+                    published,
                 )
             )
             logger.info(

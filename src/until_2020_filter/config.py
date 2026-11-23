@@ -1,6 +1,7 @@
 import logging
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 def configure_logging() -> None:
@@ -44,4 +45,7 @@ class Until2020FilterConfig:
     )
     query_router_partition_count: int = field(
         default_factory=lambda: int(os.environ.get("QUERY_ROUTER_PARTITION_COUNT", "1"))
+    )
+    state_root: Path = field(
+        default_factory=lambda: Path(os.environ.get("STATE_ROOT", "/state"))
     )

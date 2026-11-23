@@ -1,9 +1,12 @@
 from common.coordinated_consumer import Ack, Nack
+from common.durable_barrier import DurableBarrier
+from common.message_identity import build_control_message_id
 from common.message_protocol.message import (
     Message,
     PartitionEndMessage,
     Q2CandidateBatchMessage,
 )
+from common.persistence import PersistenceLayout
 from q2.biography_filter.filter import filter_biography_batch
 from q2.biography_filter.messaging import Q2BiographyFilterMessaging
 
@@ -14,6 +17,8 @@ class Q2BiographyFilterController:
         messaging: Q2BiographyFilterMessaging,
         partition_id: int,
         until_2020_partition_count: int,
+        persistence_layout: PersistenceLayout | None = None,
+        output_destination: str = "q2_image_fetcher.input",
     ) -> None:
         if until_2020_partition_count <= 0:
             raise ValueError("Until2020Filter partition count must be positive")
@@ -22,6 +27,28 @@ class Q2BiographyFilterController:
         self._partition_id = partition_id
         self._until_2020_partition_count = until_2020_partition_count
         self._finished_until_2020_partitions: dict[str, set[int]] = {}
+        self._durable_barrier = (
+            DurableBarrier(
+                persistence_layout,
+                until_2020_partition_count,
+                {output_destination: self._messaging.publish},
+                lambda message: {
+                    output_destination: PartitionEndMessage(
+                        stage="q2_biography_filter",
+                        partition_id=self._partition_id,
+                        execution_id=message.execution_id,
+                        reply_queue=message.reply_queue,
+                        message_id=build_control_message_id(
+                            execution_id=message.execution_id,
+                            stage="q2_biography_filter",
+                            partition_id=self._partition_id,
+                        ),
+                    )
+                },
+            )
+            if persistence_layout is not None
+            else None
+        )
 
     def _validate_until_2020_partition_end(
         self,
@@ -73,6 +100,9 @@ class Q2BiographyFilterController:
         match message:
             case PartitionEndMessage():
                 self._validate_until_2020_partition_end(message)
+                if self._durable_barrier is not None:
+                    self._durable_barrier.apply(message)
+                    return
 
                 finished_partitions = self._finished_until_2020_partitions.setdefault(
                     message.execution_id,
@@ -89,6 +119,11 @@ class Q2BiographyFilterController:
                         partition_id=self._partition_id,
                         execution_id=message.execution_id,
                         reply_queue=message.reply_queue,
+                        message_id=build_control_message_id(
+                            execution_id=message.execution_id,
+                            stage="q2_biography_filter",
+                            partition_id=self._partition_id,
+                        ),
                     )
                 )
                 self._finished_until_2020_partitions.pop(message.execution_id)
@@ -99,6 +134,8 @@ class Q2BiographyFilterController:
                 )
 
     def start(self) -> None:
+        if self._durable_barrier is not None:
+            self._durable_barrier.recover()
         self._messaging.start_consuming(
             self.process_message,
             self.process_control_message,

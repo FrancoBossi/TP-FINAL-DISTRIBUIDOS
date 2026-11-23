@@ -1,6 +1,7 @@
 import logging
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 def configure_logging() -> None:
@@ -35,4 +36,7 @@ class Q3WordProjectorConfig:
         default_factory=lambda: int(
             os.environ.get("WORD_EXTRACTOR_PARTITION_COUNT", "1")
         )
+    )
+    state_root: Path = field(
+        default_factory=lambda: Path(os.environ.get("STATE_ROOT", "/state"))
     )

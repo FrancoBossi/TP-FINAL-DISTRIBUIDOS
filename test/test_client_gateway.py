@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
 from client.client import Client
+from common.message_identity import build_message_id
 from common.message_protocol.message import (
     AckMessage,
     ArticleMessage,
@@ -39,11 +40,13 @@ class FakeMessaging:
                 query_id=3,
                 record={"word": "système"},
                 execution_id=execution_id,
+                result_id="query-3-result-0",
             ),
             *[
                 QueryEndMessage(
                     query_id=query_id,
                     execution_id=execution_id,
+                    result_id=f"query-{query_id}-end",
                 )
                 for query_id in (5, 1, 3, 2, 4)
             ],
@@ -156,6 +159,15 @@ class TestClientGateway(unittest.TestCase):
                     end.reply_queue,
                     messaging.result_queue_name,
                 )
+                self.assertEqual(
+                    end.message_id,
+                    build_message_id(
+                        execution_id=end.execution_id,
+                        producer_id="gateway",
+                        operation="input_end",
+                        identity={"article_count": len(articles)},
+                    ),
+                )
 
                 if articles:
                     sent = messaging.published[0]
@@ -169,6 +181,15 @@ class TestClientGateway(unittest.TestCase):
                         messaging.result_queue_name,
                     )
                     self.assertEqual(sent.article, article)
+                    self.assertEqual(
+                        sent.message_id,
+                        build_message_id(
+                            execution_id=sent.execution_id,
+                            producer_id="gateway",
+                            operation="article",
+                            identity={"sequence": 0},
+                        ),
+                    )
 
     def test_disconnect_during_upload_ends_input_without_waiting_for_results(self):
         messaging = FakeMessaging()
@@ -180,11 +201,46 @@ class TestClientGateway(unittest.TestCase):
 
         self.assertEqual(len(messaging.published), 1)
         self.assertIsInstance(messaging.published[0], RoutedInputEndMessage)
+        self.assertEqual(
+            messaging.published[0].message_id,
+            build_message_id(
+                execution_id=messaging.published[0].execution_id,
+                producer_id="gateway",
+                operation="input_end",
+                identity={"article_count": 0},
+            ),
+        )
         self.assertEqual(messaging.acks, [])
         self.assertEqual(messaging.nacks, [])
         self.assertFalse(messaging.consumption_stopped)
         self.assertTrue(messaging.closed)
         send.assert_not_called()
+
+    def test_lost_article_ack_preserves_published_count_in_input_end(self):
+        messaging = FakeMessaging()
+        article = {"name": "Published before disconnect"}
+        with (
+            patch(
+                "gateway.handler.recv_msg",
+                return_value=ArticleMessage(article=article),
+            ),
+            patch("gateway.handler.send_msg", side_effect=BrokenPipeError),
+        ):
+            handle_client(Mock(), lambda _: messaging, threading.Event())
+
+        self.assertEqual(len(messaging.published), 2)
+        published_article, input_end = messaging.published
+        self.assertIsInstance(published_article, RoutedArticleMessage)
+        self.assertIsInstance(input_end, RoutedInputEndMessage)
+        self.assertEqual(
+            input_end.message_id,
+            build_message_id(
+                execution_id=input_end.execution_id,
+                producer_id="gateway",
+                operation="input_end",
+                identity={"article_count": 1},
+            ),
+        )
 
     def test_disconnect_during_results_discards_remaining_results(self):
         messaging = FakeMessaging()

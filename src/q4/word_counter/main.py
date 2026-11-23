@@ -3,6 +3,7 @@ import logging
 from common.health import HealthServer
 from common.middleware import MessageMiddlewareQueueRabbitMQ
 from common.partition_router import PartitionRouter
+from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
 from q4.word_counter.config import Q4WordCounterConfig, configure_logging
 from q4.word_counter.controller import Q4WordCounterController
@@ -32,6 +33,10 @@ def main() -> int:
         messaging,
         config.partition_id,
         config.projector_partition_count,
+        persistence_layout=PersistenceLayout(
+            config.state_root, "q4_word_counter", config.partition_id
+        ),
+        output_destination=config.output_queue_prefix,
     )
     logger.info("Q4WordCounter consuming from %s", config.input_queue)
     try:

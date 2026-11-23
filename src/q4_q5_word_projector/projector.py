@@ -1,3 +1,4 @@
+from common.message_identity import derive_message_id
 from common.message_protocol.message import (
     Q4WordBatchMessage,
     Q5ArticleWordCountBatchMessage,
@@ -33,10 +34,22 @@ def project_batch(
             words=q4_words,
             execution_id=message.execution_id,
             reply_queue=message.reply_queue,
+            message_id=derive_message_id(
+                execution_id=message.execution_id,
+                input_message_id=message.message_id,
+                producer_id="q4_q5_word_projector",
+                operation="q4_word_batch",
+            ),
         ),
         Q5ArticleWordCountBatchMessage(
             articles=q5_articles,
             execution_id=message.execution_id,
             reply_queue=message.reply_queue,
+            message_id=derive_message_id(
+                execution_id=message.execution_id,
+                input_message_id=message.message_id,
+                producer_id="q4_q5_word_projector",
+                operation="q5_article_word_count_batch",
+            ),
         ),
     )

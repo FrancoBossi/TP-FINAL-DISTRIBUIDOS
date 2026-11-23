@@ -16,16 +16,28 @@ class Q5AverageReducerMessaging:
         self,
         input_queue: MessageMiddlewareQueue,
         output_queue: MessageMiddlewareQueue,
-        output_queues: list[MessageMiddlewareQueue] | None = None,
+        output_queues: list[MessageMiddlewareQueue]
+        | dict[str, MessageMiddlewareQueue]
+        | None = None,
     ) -> None:
         self._input_queue = input_queue
         self._output_queue = output_queue
-        self._output_queues = output_queues or [output_queue]
+        self._output_queues = (
+            list(output_queues.values())
+            if isinstance(output_queues, dict)
+            else (output_queues or [output_queue])
+        )
+        self._output_queues_by_destination = (
+            output_queues if isinstance(output_queues, dict) else {}
+        )
 
     def publish(self, message: Message) -> None:
         body = message.serialize()
         for queue in self._output_queues:
             queue.send(body)
+
+    def publish_to(self, destination: str, message: Message) -> None:
+        self._output_queues_by_destination[destination].send(message.serialize())
 
     def start_consuming(self, on_message: MessageCallback) -> None:
         def deserialize_message(

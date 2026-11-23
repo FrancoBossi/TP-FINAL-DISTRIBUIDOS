@@ -1,10 +1,13 @@
 from common.coordinated_consumer import Ack, Nack
+from common.durable_barrier import DurableBarrier
+from common.message_identity import build_control_message_id
 from common.message_protocol.message import (
     ImageCandidateBatchMessage,
     Message,
     PartitionEndMessage,
     QueryPartitionEndMessage,
 )
+from common.persistence import PersistenceLayout
 from q2.image_fetcher.messaging import ImageFetcherMessaging
 from q2.image_fetcher.processor import build_query2_results
 
@@ -15,6 +18,8 @@ class ImageFetcherController:
         messaging: ImageFetcherMessaging,
         partition_id: int,
         biography_filter_partition_count: int,
+        persistence_layout: PersistenceLayout | None = None,
+        output_destination: str = "result_sink.input",
     ) -> None:
         if biography_filter_partition_count <= 0:
             raise ValueError("Q2BiographyFilter partition count must be positive")
@@ -26,6 +31,28 @@ class ImageFetcherController:
             str,
             set[int],
         ] = {}
+        self._durable_barrier = (
+            DurableBarrier(
+                persistence_layout,
+                biography_filter_partition_count,
+                {output_destination: self._messaging.publish},
+                lambda message: {
+                    output_destination: QueryPartitionEndMessage(
+                        query_id=2,
+                        partition_id=self._partition_id,
+                        execution_id=message.execution_id,
+                        message_id=build_control_message_id(
+                            execution_id=message.execution_id,
+                            stage="q2_image_fetcher",
+                            partition_id=self._partition_id,
+                            operation="query_partition_end",
+                        ),
+                    )
+                },
+            )
+            if persistence_layout is not None
+            else None
+        )
 
     def _validate_biography_filter_partition_end(
         self,
@@ -77,6 +104,9 @@ class ImageFetcherController:
         match message:
             case PartitionEndMessage():
                 self._validate_biography_filter_partition_end(message)
+                if self._durable_barrier is not None:
+                    self._durable_barrier.apply(message)
+                    return
 
                 finished_partitions = (
                     self._finished_biography_filter_partitions.setdefault(
@@ -94,6 +124,12 @@ class ImageFetcherController:
                         query_id=2,
                         partition_id=self._partition_id,
                         execution_id=message.execution_id,
+                        message_id=build_control_message_id(
+                            execution_id=message.execution_id,
+                            stage="q2_image_fetcher",
+                            partition_id=self._partition_id,
+                            operation="query_partition_end",
+                        ),
                     )
                 )
                 self._finished_biography_filter_partitions.pop(message.execution_id)
@@ -104,6 +140,8 @@ class ImageFetcherController:
                 )
 
     def start(self) -> None:
+        if self._durable_barrier is not None:
+            self._durable_barrier.recover()
         self._messaging.start_consuming(
             self.process_message,
             self.process_control_message,

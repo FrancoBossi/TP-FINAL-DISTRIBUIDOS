@@ -1,3 +1,4 @@
+from common.message_identity import derive_message_id
 from common.message_protocol.message import (
     NormalizedArticleBatchMessage,
     Q1Q2ArticleBatchMessage,
@@ -38,11 +39,23 @@ def route_batch(
         articles=q1_q2_articles,
         execution_id=message.execution_id,
         reply_queue=message.reply_queue,
+        message_id=derive_message_id(
+            execution_id=message.execution_id,
+            input_message_id=message.message_id,
+            producer_id="query_router",
+            operation="q1_q2_article_batch",
+        ),
     )
     text_batch = TextArticleBatchMessage(
         articles=text_articles,
         execution_id=message.execution_id,
         reply_queue=message.reply_queue,
+        message_id=derive_message_id(
+            execution_id=message.execution_id,
+            input_message_id=message.message_id,
+            producer_id="query_router",
+            operation="text_article_batch",
+        ),
     )
 
     return (
