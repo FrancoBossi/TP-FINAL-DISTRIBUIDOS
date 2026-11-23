@@ -398,16 +398,16 @@ Evidencia de la línea base del 15 de noviembre de 2026:
 
 #### Bloque 5 - Supervisión, consenso y reinicio
 
-- [ ] Agregar endpoint de salud e `incarnation_id` a todos los procesos alcanzados.
-- [ ] Hacer que la salud agregue el estado del loop principal y threads críticos,
+- [x] Agregar endpoint de salud e `incarnation_id` a todos los procesos alcanzados.
+- [x] Hacer que la salud agregue el estado del loop principal y threads críticos,
   y probar una falla interna que deje vivo al proceso.
-- [ ] Implementar protocolo entre FailureManagers y transporte sin bibliotecas de consenso.
-- [ ] Implementar Bully con `ELECTION`, `OK`, `COORDINATOR`, prioridad estable,
+- [x] Implementar protocolo entre FailureManagers y transporte sin bibliotecas de consenso.
+- [x] Implementar Bully con `ELECTION`, `OK`, `COORDINATOR`, prioridad estable,
   epoch y reemplazo del coordinador caído.
-- [ ] Implementar detección directa `PING`/`PONG` desde el coordinador y política
+- [x] Implementar detección directa `PING`/`PONG` desde el coordinador y política
   configurable de timeout/reintentos, sin votación.
-- [ ] Implementar ejecutor Docker limitado a reinicios estáticos e idempotentes.
-- [ ] Probar caída de un supervisor, coordinador, varios workers simultáneos,
+- [x] Implementar ejecutor Docker limitado a reinicios estáticos e idempotentes.
+- [x] Probar caída de un supervisor, coordinador, varios workers simultáneos,
   sospecha falsa y mensajes viejos de otra elección.
 - [ ] Probar que Chaos Monkey nunca deja cero FailureManagers vivos.
 
