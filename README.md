@@ -704,6 +704,20 @@ una marca, la réplica persiste un límite de rechazo que también se aplica al
 recuperar outboxes. Los IDs anteriores, sin fecha en el identificador,
 conservan sus marcas hasta que se pueda verificar el drenaje.
 
+El escenario reproducible de aceptación se ejecuta con:
+
+```bash
+make cleanup-smoke
+```
+
+El runner levanta una topología Compose aislada, publica artículos y espera a
+que InputBatcher persista estado. Luego corta el socket sin enviar `INPUT_END`.
+La prueba sólo pasa si todas las réplicas alcanzadas eliminan el directorio de
+la ejecución y guardan su tombstone, desaparecen la cola exclusiva
+`results.<execution_id>` y el buffer de Q5, y RabbitMQ queda sin mensajes
+`ready` ni `unacked`. Finalmente elimina containers y volúmenes del escenario.
+La corrida del 24/11/2026 pasó sobre las 46 réplicas alcanzadas por el cleanup.
+
 #### Bloque 8 - Chaos Monkey, benchmark, informe y demo
 
 - [ ] Implementar Chaos Monkey reproducible y escenarios automatizados.
