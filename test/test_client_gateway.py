@@ -12,6 +12,9 @@ from common.message_protocol.message import (
     AckMessage,
     ArticleMessage,
     ErrorMessage,
+    ExecutionCompletedMessage,
+    ExecutionFailedMessage,
+    ExecutionStartedMessage,
     InputEndMessage,
     QueryEndMessage,
     ResultMessage,
@@ -24,6 +27,8 @@ from gateway.handler import handle_client
 class FakeMessaging:
     def __init__(self):
         self.published = []
+        self.terminal = []
+        self.started = []
         self.closed = False
         self.result_queue_name = "results.execution-123"
         self.acks = []
@@ -33,7 +38,13 @@ class FakeMessaging:
     def publish(self, message):
         self.published.append(message)
 
-    def start_consuming_results(self, on_result):
+    def publish_started(self, message):
+        self.started.append(message)
+
+    def publish_terminal(self, message):
+        self.terminal.append(message)
+
+    def start_consuming_results(self, on_result, on_idle=None):
         execution_id = self.published[-1].execution_id
         messages = [
             ResultMessage(
@@ -242,6 +253,86 @@ class TestClientGateway(unittest.TestCase):
             ),
         )
 
+    def test_gateway_registers_execution_before_handling_upload(self):
+        messaging = FakeMessaging()
+
+        def fail_upload(*args, **kwargs):
+            self.assertEqual(len(messaging.started), 1)
+            self.assertIsInstance(messaging.started[0], ExecutionStartedMessage)
+            raise TimeoutError("expired")
+
+        with (
+            patch("gateway.handler.recv_msg", side_effect=fail_upload),
+            patch("gateway.handler.send_msg"),
+            self.assertRaises(TimeoutError),
+        ):
+            handle_client(
+                Mock(), lambda _: messaging, threading.Event(), timeout_seconds=10
+            )
+
+        self.assertEqual(messaging.published, [])
+        self.assertEqual(
+            messaging.started[0].execution_id, messaging.terminal[0].execution_id
+        )
+
+    def test_deadline_expires_while_waiting_for_first_result(self):
+        messaging = FakeMessaging()
+        messaging.start_consuming_results = Mock(
+            side_effect=lambda _, on_idle: on_idle()
+        )
+        client_socket = Mock()
+        with (
+            patch("gateway.handler.monotonic", return_value=100),
+            patch("common.message_protocol.external.monotonic", return_value=111),
+            patch("gateway.handler.recv_msg", return_value=InputEndMessage()),
+            patch("gateway.handler.send_msg") as send,
+        ):
+            with self.assertRaisesRegex(TimeoutError, "deadline exceeded"):
+                handle_client(
+                    client_socket,
+                    lambda _: messaging,
+                    threading.Event(),
+                    timeout_seconds=10,
+                )
+
+        self.assertIsInstance(send.call_args.args[1], ErrorMessage)
+        self.assertEqual(messaging.terminal[0].cause, "timeout")
+        self.assertTrue(messaging.closed)
+
+    def test_gateway_detects_disconnect_before_first_result(self):
+        messaging = FakeMessaging()
+        messaging.start_consuming_results = Mock(
+            side_effect=lambda _, on_idle: on_idle()
+        )
+        client_socket = Mock()
+        client_socket.recv.return_value = b""
+        with (
+            patch("gateway.handler.recv_msg", return_value=InputEndMessage()),
+            patch("gateway.handler.send_msg"),
+            patch("gateway.handler.select", return_value=([client_socket], [], [])),
+        ):
+            handle_client(client_socket, lambda _: messaging, threading.Event())
+
+        self.assertTrue(messaging.consumption_stopped)
+        self.assertIsInstance(messaging.terminal[0], ExecutionFailedMessage)
+        self.assertEqual(messaging.terminal[0].cause, "client_disconnected")
+        self.assertTrue(messaging.closed)
+
+    def test_gateway_reports_completion_after_client_acks(self):
+        messaging = FakeMessaging()
+        with (
+            patch(
+                "gateway.handler.recv_msg",
+                side_effect=[InputEndMessage(), *[AckMessage() for _ in range(6)]],
+            ),
+            patch("gateway.handler.send_msg"),
+        ):
+            handle_client(Mock(), lambda _: messaging, threading.Event())
+
+        self.assertEqual(len(messaging.terminal), 1)
+        self.assertIsInstance(messaging.terminal[0], ExecutionCompletedMessage)
+        self.assertEqual(messaging.terminal[0].cause, "all_queries_acknowledged")
+
     def test_disconnect_during_results_discards_remaining_results(self):
         messaging = FakeMessaging()
         with (
@@ -255,6 +346,8 @@ class TestClientGateway(unittest.TestCase):
         self.assertEqual(len(messaging.acks), 6)
         self.assertEqual(messaging.nacks, [])
         self.assertEqual(send.call_count, 2)
+        self.assertIsInstance(messaging.terminal[0], ExecutionFailedMessage)
+        self.assertEqual(messaging.terminal[0].cause, "client_disconnected")
         self.assertTrue(messaging.closed)
 
     def test_disconnect_during_end_ack_does_not_duplicate_end(self):

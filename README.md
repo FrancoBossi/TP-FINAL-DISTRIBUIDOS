@@ -645,12 +645,78 @@ o commits agrupados sin debilitar el ACK durable.
 
 #### Bloque 7 - Fallo terminal y cleanup distribuido
 
-- [ ] Implementar protocolo de éxito, aborto, timeout y cleanup idempotente.
-- [ ] Limpiar estado en memoria, archivos, volúmenes por ejecución y colas temporales.
-- [ ] Evitar recreación por mensajes tardíos mediante tombstones acotados.
-- [ ] Probar limpieza tanto de consultas resueltas como fallidas.
-- [ ] Interrumpir un cliente en un escenario separado y verificar que se liberen
+- [x] Implementar protocolo de éxito, aborto, timeout y cleanup idempotente.
+- [x] Limpiar estado en memoria, archivos, volúmenes por ejecución y colas temporales.
+- [x] Evitar recreación por mensajes tardíos mediante tombstones acotados.
+- [x] Probar limpieza tanto de consultas resueltas como fallidas.
+- [x] Interrumpir un cliente en un escenario separado y verificar que se liberen
   todos sus recursos aunque no forme parte de la demo completa.
+
+##### Cierre y distribución
+
+1. Antes de publicar artículos, Gateway envía `EXECUTION_STARTED` con el
+   `execution_id` y el vencimiento. RabbitMQ confirma la publicación y
+   ResultSink guarda el registro activo en disco antes de confirmar el consumo.
+   Gateway publica `EXECUTION_COMPLETED` después de recibir el ACK del cliente
+   para cada uno de los cinco `QUERY_END`. Si detecta una desconexión, un error
+   o un vencimiento, publica `EXECUTION_FAILED` con el `execution_id` y la
+   causa. Al cerrar la sesión se libera la cola exclusiva
+   `results.<execution_id>`.
+2. ResultSink recibe el evento terminal en su cola de entrada. Antes de borrar
+   su propio estado, registra en disco los destinos pendientes de
+   `EXECUTION_CLEANUP`. Usa el mismo ID lógico de limpieza para todos los
+   destinos y quita cada publicación de la outbox después de que RabbitMQ la
+   confirma. Si ResultSink se reinicia, recupera y publica las órdenes
+   pendientes antes de volver a consumir. También recupera las ejecuciones
+   activas. Si pasan cinco segundos desde el vencimiento sin un cierre
+   procesado, encola un `EXECUTION_FAILED` de respaldo en su propia cola.
+   Así, un evento terminal que ya estaba en cola se procesa primero.
+   El registro activo se elimina después de guardar la orden de limpieza y
+   cerrar el estado local.
+3. La orden llega a la partición de InputBatcher que recibió la entrada, a las
+   colas de control de las etapas coordinadas y a las colas de entrada
+   dedicadas de los agregadores, reducers y comparadores. Compose configura
+   esos destinos en `CLEANUP_QUEUES`. Cada réplica confirma su orden después de
+   aplicarla. La confirmación de publicación de RabbitMQ acredita la entrega
+   a la cola, mientras que el ACK del consumidor acredita el borrado local.
+
+Gateway usa `EXECUTION_TIMEOUT_SECONDS` (3600 por defecto) como plazo total
+desde que empieza a atender la sesión. El plazo cubre la carga, la espera de
+resultados y los ACK del cliente. Durante la espera, Gateway también detecta
+el cierre del socket antes del primer resultado. Preprocessor no tiene estado
+durable por ejecución y puede terminar trabajo que ya estaba en tránsito. Las
+etapas posteriores descartan sus salidas una vez aplicada la orden de limpieza.
+
+##### Limpieza, recuperación y mensajes tardíos
+
+Cada réplica guarda primero un *tombstone* durable. Luego elimina el estado en
+memoria y el directorio de la ejecución dentro de su volumen, incluidos inbox,
+outbox y snapshot. Q5 también elimina el archivo de candidatos. Si la réplica
+cae a mitad del borrado, al arrancar termina la limpieza antes de recuperar
+estado activo o publicar desde sus outboxes. Una orden repetida es idempotente.
+Los mensajes tardíos de una ejecución cerrada se confirman y descartan.
+
+Las ejecuciones nuevas incluyen en su ID un límite para trabajo tardío,
+calculado como el plazo de Gateway más una hora. Una réplica puede retirar la
+marca cuando hayan pasado tanto ese límite como una hora desde el borrado
+local. La revisión corre al arrancar y durante el consumo. Antes de retirar
+una marca, la réplica persiste un límite de rechazo que también se aplica al
+recuperar outboxes. Los IDs anteriores, sin fecha en el identificador,
+conservan sus marcas hasta que se pueda verificar el drenaje.
+
+El escenario reproducible de aceptación se ejecuta con:
+
+```bash
+make cleanup-smoke
+```
+
+El runner levanta una topología Compose aislada, publica artículos y espera a
+que InputBatcher persista estado. Luego corta el socket sin enviar `INPUT_END`.
+La prueba sólo pasa si todas las réplicas alcanzadas eliminan el directorio de
+la ejecución y guardan su tombstone, desaparecen la cola exclusiva
+`results.<execution_id>` y el buffer de Q5, y RabbitMQ queda sin mensajes
+`ready` ni `unacked`. Finalmente elimina containers y volúmenes del escenario.
+La corrida del 24/11/2026 pasó sobre las 46 réplicas alcanzadas por el cleanup.
 
 #### Bloque 8 - Chaos Monkey, benchmark, informe y demo
 

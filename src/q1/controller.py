@@ -2,6 +2,7 @@ from common.coordinated_consumer import Ack, Nack
 from common.durable_barrier import DurableBarrier
 from common.message_identity import build_control_message_id
 from common.message_protocol.message import (
+    ExecutionCleanupMessage,
     Message,
     PartitionEndMessage,
     Q1CandidateBatchMessage,
@@ -72,6 +73,11 @@ class Q1Controller:
         nack: Nack,
     ) -> None:
         try:
+            if self._durable_barrier is not None and self._durable_barrier.is_closed(
+                message
+            ):
+                ack()
+                return
             match message:
                 case Q1CandidateBatchMessage():
                     results = build_query1_results(message)
@@ -95,6 +101,12 @@ class Q1Controller:
         self,
         message: Message,
     ) -> None:
+        if self._durable_barrier is not None:
+            if isinstance(message, ExecutionCleanupMessage):
+                self._durable_barrier.cleanup(message.execution_id)
+                return
+            if self._durable_barrier.is_closed(message):
+                return
         match message:
             case PartitionEndMessage():
                 self._validate_until_2020_partition_end(message)
@@ -135,6 +147,11 @@ class Q1Controller:
         self._messaging.start_consuming(
             self.process_message,
             self.process_control_message,
+            **(
+                {"on_idle": self._durable_barrier.sweep}
+                if self._durable_barrier is not None
+                else {}
+            ),
         )
 
     def stop(self) -> None:

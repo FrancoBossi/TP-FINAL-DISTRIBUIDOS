@@ -2,6 +2,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from common.execution_cleanup import ExecutionCleanup
 from common.message_identity import (
     build_control_message_id,
     build_result_message_ids,
@@ -51,6 +52,11 @@ class Q5ComparatorController:
         self._date_router_partition_count = date_router_partition_count
         self._executions: dict[str, ExecutionState] = {}
         self._persistence_layout = persistence_layout
+        self._cleanup = (
+            ExecutionCleanup(persistence_layout, retention_seconds=3600)
+            if persistence_layout is not None
+            else None
+        )
         self._output_destination = output_destination
         self._stores: dict[str, DurableExecutionStore] = {}
 
@@ -60,7 +66,15 @@ class Q5ComparatorController:
         ack: Ack,
         nack: Nack,
     ) -> None:
-        if self._persistence_layout is not None:
+        if self._cleanup is not None:
+            try:
+                handled = self._cleanup.handle_message(message, self._clear_execution)
+            except Exception:
+                nack()
+                raise
+            if handled:
+                ack()
+                return
             self._process_durable(message, ack, nack)
             return
         try:
@@ -242,8 +256,16 @@ class Q5ComparatorController:
             self._messaging.publish(message)
             store.confirm(output)
 
+    def _clear_execution(self, execution_id: str) -> None:
+        self._stores.pop(execution_id, None)
+        self._executions.pop(execution_id, None)
+        self._candidate_buffer.clear(execution_id)
+
     def _recover(self):
+        self._cleanup.recover(self._clear_execution)
         for execution_id in self._persistence_layout.execution_ids():
+            if self._cleanup.is_closed(execution_id):
+                continue
             store = self._store_for(execution_id)
             state = self._decode_state(store.state)
             if state["average_received"]:
@@ -364,7 +386,10 @@ class Q5ComparatorController:
     def start(self) -> None:
         if self._persistence_layout is not None:
             self._recover()
-        self._messaging.start_consuming(self.process_message)
+        self._messaging.start_consuming(
+            self.process_message,
+            **({"on_idle": self._cleanup.sweep} if self._cleanup is not None else {}),
+        )
 
     def stop(self) -> None:
         self._messaging.stop_consuming()

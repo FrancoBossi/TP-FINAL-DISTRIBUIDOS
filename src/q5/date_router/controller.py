@@ -4,6 +4,7 @@ from common.coordinated_consumer import Ack, Nack
 from common.durable_barrier import DurableBarrier
 from common.message_identity import build_control_message_id, derive_message_id
 from common.message_protocol.message import (
+    ExecutionCleanupMessage,
     Message,
     PartitionEndMessage,
     Q5ArticleWordCountBatchMessage,
@@ -88,6 +89,11 @@ class Q5DateRouterController:
         nack: Nack,
     ) -> None:
         try:
+            if self._durable_barrier is not None and self._durable_barrier.is_closed(
+                message
+            ):
+                ack()
+                return
             match message:
                 case Q5ArticleWordCountBatchMessage():
                     historical_batch, candidate_batch = route_batch(message)
@@ -120,6 +126,12 @@ class Q5DateRouterController:
             raise ValueError("Q4Q5 projector partition id is outside configured range")
 
     def process_control_message(self, message: Message) -> None:
+        if self._durable_barrier is not None:
+            if isinstance(message, ExecutionCleanupMessage):
+                self._durable_barrier.cleanup(message.execution_id)
+                return
+            if self._durable_barrier.is_closed(message):
+                return
         if not isinstance(message, PartitionEndMessage):
             raise ValueError(
                 "Q5DateRouter expected PARTITION_END from control exchange"
@@ -195,7 +207,13 @@ class Q5DateRouterController:
         if self._durable_barrier is not None:
             self._durable_barrier.recover()
         self._messaging.start_consuming(
-            self.process_message, self.process_control_message
+            self.process_message,
+            self.process_control_message,
+            **(
+                {"on_idle": self._durable_barrier.sweep}
+                if self._durable_barrier is not None
+                else {}
+            ),
         )
 
     def stop(self) -> None:

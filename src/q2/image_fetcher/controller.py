@@ -2,6 +2,7 @@ from common.coordinated_consumer import Ack, Nack
 from common.durable_barrier import DurableBarrier
 from common.message_identity import build_control_message_id
 from common.message_protocol.message import (
+    ExecutionCleanupMessage,
     ImageCandidateBatchMessage,
     Message,
     PartitionEndMessage,
@@ -76,6 +77,11 @@ class ImageFetcherController:
         nack: Nack,
     ) -> None:
         try:
+            if self._durable_barrier is not None and self._durable_barrier.is_closed(
+                message
+            ):
+                ack()
+                return
             match message:
                 case ImageCandidateBatchMessage():
                     results = build_query2_results(message)
@@ -101,6 +107,12 @@ class ImageFetcherController:
         self,
         message: Message,
     ) -> None:
+        if self._durable_barrier is not None:
+            if isinstance(message, ExecutionCleanupMessage):
+                self._durable_barrier.cleanup(message.execution_id)
+                return
+            if self._durable_barrier.is_closed(message):
+                return
         match message:
             case PartitionEndMessage():
                 self._validate_biography_filter_partition_end(message)
@@ -145,6 +157,11 @@ class ImageFetcherController:
         self._messaging.start_consuming(
             self.process_message,
             self.process_control_message,
+            **(
+                {"on_idle": self._durable_barrier.sweep}
+                if self._durable_barrier is not None
+                else {}
+            ),
         )
 
     def stop(self) -> None:
