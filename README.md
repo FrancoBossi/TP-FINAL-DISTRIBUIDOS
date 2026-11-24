@@ -339,7 +339,7 @@ válido; el receptor la descarta por `message_id`.
 | Después del `fsync` y antes de publicar | Entrada aplicada y outbox pendiente | Reinicio publica la outbox sin reaplicar el estado |
 | En medio de un fan-out | Algunas salidas pudieron publicarse | Reinicio publica todas con los mismos IDs; downstream deduplica |
 | Después de confirmar publicaciones y antes del ACK de entrada | Estado y salidas están completos | La entrada se reentrega, inbox evita reaplicarla y se vuelve a confirmar |
-| Después del ACK y antes de compactar | El journal aún contiene información redundante | Recuperación conserva el resultado; compactar nunca cambia semántica |
+| Después del checkpoint de InputBatcher y antes de retirar el journal anterior | El journal viejo contiene información redundante | La generación confirmada hace que recuperación lo ignore y elimine |
 | Al aplicar una salida duplicada | Inbox ya contiene su `message_id` | No modifica estado ni vuelve a producir efectos lógicos |
 | Después de escribir un resultado y antes del ACK del cliente | `result_id` está durable en Client | El reenvío no agrega otra línea y el cliente repite el ACK |
 
@@ -611,11 +611,15 @@ RabbitMQ quedó sin mensajes ready/unacked y todos los procesos volvieron a esta
 activos. Con esta evidencia queda cerrado el bloque 4; la detección y el reinicio
 automáticos pertenecen al bloque 5.
 
-Un intento previo con los 50.000 artículos mostró que el snapshot y `fsync` por
-entrada de InputBatcher drena demasiado lentamente para un smoke de fallos. No es
-un problema de corrección, pero sí un riesgo de performance que debe medirse y
-optimizarse antes del benchmark final, probablemente mediante journal incremental
-o commits agrupados sin debilitar el ACK durable.
+Un intento previo con los 50.000 artículos mostró que reescribir el snapshot
+completo y ejecutar `fsync` por cada entrada de InputBatcher drenaba demasiado
+lentamente para un smoke de fallos. InputBatcher ahora agrega cada artículo que no
+cierra un batch a `pending-<generation>.jsonl` y lo sincroniza antes del ACK. Sólo
+al cerrar un batch crea un checkpoint atómico con la nueva generación, el siguiente
+batch parcial y la outbox; luego elimina el journal anterior. Así el volumen escrito
+por artículo pasa de crecer con el batch parcial a ser proporcional al artículo.
+El benchmark final debe medir la mejora y el costo que todavía conserva el `fsync`
+por entrada.
 
 #### Bloque 5 - Supervisión, consenso y reinicio
 
@@ -1716,11 +1720,11 @@ El orden vigente es el del [plan de implementación de tolerancia a fallos](#pla
 
 ## Próximos pasos
 
-1. Completar pruebas de las ventanas de caída y de la compactación durable.
-2. Medir el costo de reescribir el snapshot parcial por artículo y cambiar a un
-   journal incremental si el I/O domina la ejecución.
-3. Hacer recuperables las colas de control antes de extender inbox/outbox a los
-   grupos coordinados.
+1. Implementar supervisión, Bully y reinicio automático mediante FailureManagers.
+2. Medir en el benchmark final el costo del journal incremental y del `fsync` por
+   artículo frente al baseline previo a tolerancia.
+3. Automatizar Chaos Monkey, la comparación Q1-Q5 y la verificación final de
+   recursos liberados.
 
 La topología base mantiene tres instancias en los grupos coordinados y tres
 particiones de InputBatcher. La comparación de performance del último hito debe
