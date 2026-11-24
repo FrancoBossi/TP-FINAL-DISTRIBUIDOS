@@ -345,14 +345,16 @@ por RabbitMQ. La implementación durable guarda conjuntamente los artículos, es
 IDs y los tamaños calculados, por lo que una partición reiniciada reconstruye el
 mismo batch y conserva exactamente su límite por bytes.
 
-Antes de confirmar una entrada, InputBatcher persiste en una transición su inbox,
-el batch parcial y toda salida pendiente. Los publisher confirms retiran las
-salidas de la outbox. Al iniciar, cada partición recupera sus ejecuciones y publica
-lo pendiente antes de volver a consumir. La inbox se compacta después del ACK,
-conservando los IDs del batch parcial y el último ID confirmado para cubrir una
-posible pérdida del ACK. Cada partición posee un volumen Docker separado montado
-en `/state`; un cierre ordenado ya no fuerza la publicación prematura de batches
-incompletos.
+Antes de confirmar un artículo que no completa un batch, InputBatcher agrega el
+mensaje completo a un journal incremental `pending-<generation>.jsonl` y ejecuta
+`fsync`. Cuando una entrada cierra el batch, persiste atómicamente el checkpoint de
+la generación siguiente junto con la inbox y la outbox; ese checkpoint contiene el
+nuevo batch parcial. Recién después puede eliminar el journal anterior. Los
+publisher confirms retiran las salidas de la outbox. Al iniciar, cada partición
+recupera el checkpoint, reproduce únicamente el journal de la generación vigente y
+publica lo pendiente antes de volver a consumir. Cada partición posee un volumen
+Docker separado montado en `/state`; un cierre ordenado ya no fuerza la publicación
+prematura de batches incompletos.
 
 ---
 
@@ -965,20 +967,37 @@ particiones. Un publisher confirm permite retirar solamente esa salida. Si el
 proceso reinicia antes, la salida se recupera y se publica nuevamente con la misma
 identidad.
 
-InputBatcher utiliza ya esta capa para su batch parcial, sus IDs ordenados y las
-salidas `ArticleBatchMessage` y `RoutedInputEndMessage`. Las tres particiones tienen
-volúmenes independientes. Las pruebas cubren entrada duplicada, reconstrucción del
-batch con la misma frontera de bytes, fallo de publicación, recuperación de outbox
-y reentrega de `INPUT_END` sin doble publicación. También se inyectaron fallos en
-cinco ventanas: antes del commit durable, después del commit y antes de publicar,
-entre las dos publicaciones del fan-out, después de confirmar las salidas pero antes
-del ACK de consumo, y durante la compactación posterior al ACK. En particular, una
-recuperación a mitad del fan-out conserva solamente la salida no confirmada, mientras
-que la pérdida del ACK no vuelve a publicar salidas ya confirmadas. Un fallo de
-compactación deja información redundante recuperable y no altera la corrección.
-Esta primera implementación reescribe el snapshot parcial por artículo; se medirá
-su costo y se migrará a un journal incremental si el volumen de escritura resulta
-dominante.
+InputBatcher combina la capa de snapshots con un journal incremental por ejecución.
+Los artículos que todavía pertenecen al batch abierto se agregan como registros
+JSONL completos a `pending-<generation>.jsonl`; cada append se sincroniza antes del
+ACK y su `message_id` se mantiene en memoria para descartar una redelivery. Cuando
+una entrada completa el batch, un único reemplazo atómico guarda su identidad, el
+nuevo batch parcial, el número de generación y las salidas
+`ArticleBatchMessage` o `RoutedInputEndMessage` en la outbox. El checkpoint queda
+confirmado antes de retirar el journal de la generación anterior.
+
+La generación hace segura esa rotación frente a caídas. Si queda un journal viejo
+después del checkpoint, la recuperación lo ignora y elimina; si el checkpoint no
+llegó a confirmarse, se conserva y reproduce el journal anterior. Una última línea
+incompleta se trunca porque corresponde a un append que no alcanzó su commit
+durable. La reproducción reconstruye el batch sin recalcular fronteras: la frontera
+ya quedó fijada por el checkpoint. También se soporta migración desde snapshots
+anteriores que no tenían `journal_generation`.
+
+Las tres particiones tienen volúmenes independientes. Las pruebas cubren entrada
+duplicada, pérdida del ACK después del append, tail incompleto, reconstrucción del
+batch, journal obsoleto después de un rollover, migración del snapshot previo,
+fallo de publicación, recuperación de outbox y reentrega de `INPUT_END` sin doble
+publicación. Una recuperación a mitad del fan-out conserva solamente la salida no
+confirmada, mientras que la pérdida del ACK no vuelve a publicar salidas ya
+confirmadas.
+
+El journal evita reescribir todo el batch parcial por artículo: los bytes escritos
+por entrada son proporcionales al artículo, no al tamaño acumulado del batch. El
+trade-off es mantener un `fsync` por artículo para no confirmar datos volátiles y
+reproducir el journal durante el reinicio. Agrupar esos commits reduciría I/O, pero
+debilitaría la semántica actual del ACK y no se adoptó. El benchmark de tolerancia
+debe medir el beneficio y el tiempo adicional de recuperación.
 
 Preprocessor permanece deliberadamente stateless. La normalización de un batch es
 determinista y puede repetirse ante una redelivery; escribir un snapshot por batch
@@ -1111,7 +1130,7 @@ salida comprometida antes de publicarse y un fan-out de Q5 confirmado solamente 
 uno de sus destinos. En todos los casos el reinicio drena la outbox sin volver a
 aplicar la entrada. El cliente prueba también la deduplicación por `result_id`.
 
-La suite completa pasa con 318 tests, y la configuración de Compose, lint, formato
+La suite completa pasa con 320 tests, y la configuración de Compose, lint, formato
 y `git diff --check` son válidos. La recuperación también se validó punta a punta:
 durante una ejecución de 300 artículos se enviaron `SIGKILL` simultáneos a todas las
 réplicas del pipeline y a ResultSink, dejando Gateway y RabbitMQ activos. Después
@@ -1212,7 +1231,7 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 
 ### 22.2 Evidencia disponible al corte
 
-- La suite local completa pasa con 305 tests.
+- La suite local completa pasa con 320 tests.
 - Las pruebas de tolerancia reconstruyen estado durable de InputBatcher, QueryRouter,
   Q3WordAggregator, Q5AverageReducer y ResultSink; incluyen caída antes de publicar,
   barrera incompleta, fan-out parcialmente confirmado y redelivery al cliente.
@@ -1226,9 +1245,10 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
   quedaron activos. El reinicio fue manual para validar exclusivamente este bloque;
   su automatización corresponde a FailureManager.
 - Un primer intento con los 50.000 artículos evidenció que el snapshot con `fsync`
-  por cada entrada de InputBatcher tiene un costo demasiado alto para el smoke de
-  fallos. La corrección se conserva, pero el journal o batching de commits deberá
-  evaluarse en el benchmark de tolerancia antes de la entrega.
+  por cada entrada de InputBatcher tenía un costo demasiado alto para el smoke de
+  fallos. Se reemplazó esa reescritura creciente por un append incremental con
+  `fsync` y checkpoints por batch. La corrección se conserva y el beneficio debe
+  cuantificarse en el benchmark de tolerancia antes de la entrega.
 - Se conectaron doce clientes mínimos al Gateway con los InputBatcher detenidos. Sus 24 mensajes —un artículo y un final por ejecución— quedaron distribuidos entre `input_batcher.input.0`, `.1` y `.2` sin dividir una ejecución. Al iniciar las tres particiones, cada cola tuvo un único consumidor, las tres quedaron vacías y `preprocessor.input` recibió los 24 mensajes esperados.
 - Se validaron con RabbitMQ real tres réplicas de Preprocessor y tres de QueryRouter, con tres bindings exclusivos en cada exchange de control. Nueve batches produjeron nueve mensajes y un único final en cada una de las cuatro salidas posteriores a Until2020Filter y WordExtractor. Una segunda ejecución confirmó que ambos grupos reanudan el consumo después de sus barreras.
 - Se validaron tres réplicas de Until2020Filter con tres bindings exclusivos. Seis batches y tres finales de QueryRouter produjeron tres resultados Q1, ningún resultado Q2 y un único `QUERY_END` por consulta. Una segunda ejecución vacía sin reiniciar containers confirmó la reanudación y limpieza de las barreras.
