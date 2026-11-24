@@ -1038,7 +1038,63 @@ Gateway está fuera del modelo acordado. La caída deliberada del cliente se pru
 en un escenario separado para verificar liberación de recursos, no para reanudar
 la ejecución completa.
 
-### 18.4 Estado de implementación y validación pendiente
+### 18.4 Cierre de ejecución y cleanup distribuido
+
+Gateway, que permanece excluido de caídas en el modelo acordado, conserva sólo
+el estado efímero necesario para conducir una sesión. Antes del primer artículo
+publica `EXECUTION_STARTED`, con el `execution_id` y su vencimiento. Una vez que
+el cliente confirmó los cinco `QUERY_END`, publica `EXECUTION_COMPLETED`. Si el
+socket se cierra, vence el plazo o ocurre un error, publica `EXECUTION_FAILED`
+con una causa. La cola exclusiva `results.<execution_id>` pertenece a esa
+conexión y RabbitMQ la elimina al cerrar la sesión. El plazo total se configura
+mediante `EXECUTION_TIMEOUT_SECONDS` y cubre carga, procesamiento, resultados y
+ACK del cliente.
+
+ResultSink es el coordinador del cierre, no Gateway. Persiste las ejecuciones
+activas y consume el primer evento terminal que llega; los terminales repetidos
+son idempotentes. Antes de borrar su estado registra una outbox de órdenes
+`EXECUTION_CLEANUP`. Cada orden usa la misma identidad lógica y se elimina de la
+outbox sólo después del publisher confirm. Si ResultSink cae durante el fan-out,
+al reiniciar publica exclusivamente los destinos todavía pendientes. Además,
+si una ejecución supera su vencimiento y el terminal no fue procesado, espera
+cinco segundos de gracia y encola localmente un fallo de respaldo. Así se da
+prioridad a un terminal ya presente en RabbitMQ sin dejar una ejecución activa
+indefinidamente.
+
+El fan-out alcanza la partición de InputBatcher elegida por el hash del
+`execution_id`, todas las colas de control de las etapas coordinadas y todas las
+particiones de agregadores, reducers y comparadores. Preprocessor queda fuera
+porque no posee estado durable por ejecución. Cada consumidor aplica la misma
+secuencia:
+
+1. persiste un tombstone antes de borrar;
+2. elimina estado en memoria y el directorio de ejecución con inbox, snapshot y
+   outbox;
+3. elimina recursos laterales, como el JSONL de candidatos de Q5;
+4. confirma la orden de cleanup.
+
+Si el proceso cae entre esos pasos, el arranque termina cualquier limpieza cuyo
+tombstone haya quedado incompleto antes de recuperar ejecuciones o drenar
+outboxes. Una orden duplicada no vuelve a producir efectos. Todo mensaje tardío
+consulta el tombstone antes de aplicar estado o republicar una salida: se
+confirma y descarta, impidiendo que una redelivery recree la ejecución cerrada.
+
+Los IDs nuevos codifican un límite temporal igual al deadline de Gateway más una
+hora. Un tombstone puede retirarse únicamente después de superar ese límite y
+su retención local. Antes de retirarlo se avanza un watermark durable; por eso
+los IDs anteriores al watermark siguen rechazándose incluso sin un archivo por
+ejecución. Los IDs históricos que no codifican vencimiento conservan la marca
+hasta que pueda verificarse el drenaje.
+
+Esta decisión agrega un fan-out de control proporcional a la cantidad de
+réplicas y una consulta local al cierre por cada mensaje. A cambio evita un
+coordinador distribuido adicional y permite limpieza idempotente aun con caídas
+durante el borrado. Los tombstones acotan el uso de disco para IDs nuevos; la
+ventana de retención debe ser mayor que el máximo tiempo en que RabbitMQ pueda
+mantener trabajo tardío. RabbitMQ y Gateway siguen fuera del conjunto de fallas,
+tal como se acordó para el hito.
+
+### 18.5 Estado de implementación y validación pendiente
 
 Al cierre del baseline, `execution_id` y `article_id` ya existían. El helper común
 que genera y deriva IDs canónicos `m1` y `r1` está implementado y probado. Gateway
@@ -1055,15 +1111,19 @@ salida comprometida antes de publicarse y un fan-out de Q5 confirmado solamente 
 uno de sus destinos. En todos los casos el reinicio drena la outbox sin volver a
 aplicar la entrada. El cliente prueba también la deduplicación por `result_id`.
 
-La suite completa pasa con 305 tests, y la configuración de Compose, lint, formato
+La suite completa pasa con 318 tests, y la configuración de Compose, lint, formato
 y `git diff --check` son válidos. La recuperación también se validó punta a punta:
 durante una ejecución de 300 artículos se enviaron `SIGKILL` simultáneos a todas las
 réplicas del pipeline y a ResultSink, dejando Gateway y RabbitMQ activos. Después
 del reinicio manual, los cinco archivos coincidieron con la referencia y no quedaron
-mensajes ready ni unacked. Esto cierra la propagación y recuperación de datos, pero
-no el hito completo. Restan el plano de control de fallos —salud, FailureManagers,
-Bully y reinicio automático—, Chaos Monkey, cleanup distribuido y la medición de
-overhead.
+mensajes ready ni unacked. El cleanup también se validó con una topología real:
+se publicaron artículos, se comprobó que InputBatcher hubiera persistido la
+ejecución y se cortó el socket del cliente sin enviar `INPUT_END`. Las 46 réplicas
+alcanzadas eliminaron el estado y persistieron su tombstone, desaparecieron la
+cola exclusiva de resultados y el buffer de Q5, y RabbitMQ quedó sin mensajes
+ready ni unacked. Esto cierra propagación, recuperación y cleanup. Restan el plano
+de control de fallos —salud, FailureManagers, Bully y reinicio automático—, Chaos
+Monkey y la medición de overhead.
 
 ---
 
@@ -1192,6 +1252,10 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 - Se verificó con RabbitMQ real la rama completa de Q5: dos históricos con conteos 0 y 2 produjeron promedio 1; un candidato que empataba fue omitido, otro con conteo 3 produjo el único resultado y después se publicó un único `QUERY_END`.
 - Se verificaron conjuntamente Q4 y Q5 bajo la topología de tres réplicas o particiones desde `word_extractor.input`: todas las colas intermedias quedaron vacías; Q4 produjo los conteos esperados y un único cierre; Q5 produjo el candidato superior al promedio y los finales de comparator `0`, `1` y `2` para la barrera de ResultSink.
 - Se comprobó que Q5Comparator eliminó el archivo JSONL de la ejecución después de drenar correctamente el CandidateBuffer.
+- Se ejecutó `make cleanup-smoke` con la topología completa: después de
+  persistir artículos se cortó el socket sin `INPUT_END`; las 46 réplicas
+  alcanzadas eliminaron el estado, conservaron sus tombstones, desaparecieron
+  la cola exclusiva y el buffer de Q5, y RabbitMQ quedó sin mensajes pendientes.
 - Se ejecutó el pipeline completo con 50.000 artículos. El cliente recibió los cinco `QUERY_END` y escribió 1.111 resultados de Q1, 9 de Q2, 6.902 de Q3, 20 de Q4 y 14.608 de Q5.
 - La comparación automática informó `Match` para `query1.jsonl` a `query5.jsonl`; no hubo registros faltantes, adicionales ni duplicados respecto de la referencia.
 - Después de deshabilitar los heartbeats de las conexiones bloqueantes no volvieron a registrarse cierres por `missed heartbeats` y todos los componentes funcionales permanecieron activos.
