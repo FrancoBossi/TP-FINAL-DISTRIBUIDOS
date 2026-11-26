@@ -1113,7 +1113,7 @@ ventana de retención debe ser mayor que el máximo tiempo en que RabbitMQ pueda
 mantener trabajo tardío. RabbitMQ y Gateway siguen fuera del conjunto de fallas,
 tal como se acordó para el hito.
 
-### 18.5 Estado de implementación y validación pendiente
+### 18.5 Estado de implementación y validación
 
 Al cierre del baseline, `execution_id` y `article_id` ya existían. El helper común
 que genera y deriva IDs canónicos `m1` y `r1` está implementado y probado. Gateway
@@ -1130,7 +1130,7 @@ salida comprometida antes de publicarse y un fan-out de Q5 confirmado solamente 
 uno de sus destinos. En todos los casos el reinicio drena la outbox sin volver a
 aplicar la entrada. El cliente prueba también la deduplicación por `result_id`.
 
-La suite completa pasa con 459 tests, y la configuración de Compose, lint, formato
+La suite completa pasa con 463 tests, y la configuración de Compose, lint, formato
 y `git diff --check` son válidos. Se validó la recuperación de datos punta a punta:
 durante una ejecución de 300 artículos se enviaron `SIGKILL` simultáneos a todas las
 réplicas del pipeline y a ResultSink, dejando Gateway y RabbitMQ activos. Después
@@ -1148,10 +1148,29 @@ Chaos Monkey ya puede inyectar `SIGKILL` según un schedule reproducible
 derivado de la seed. Registra el schedule, los servicios seleccionados, los
 saltos y la confirmación de Compose. Excluye Gateway, RabbitMQ y el cliente. El
 runner compara Q1–Q5 con la referencia serial, aísla los volúmenes de cada corrida
-y audita estado, tombstones, buffers y colas antes de bajar Compose. La matriz y el
-barrido de intervalos quedan preparados. La reposición automática del plano de
-control ya fue validada en un escenario Docker dirigido; todavía resta ejecutar
-con ella la matriz completa y el barrido end-to-end sobre el dataset de demo.
+y audita estado, tombstones, buffers y colas antes de bajar Compose.
+
+La validación end-to-end detectó además una diferencia entre container iniciado y
+aplicación lista. Compose sólo tenía healthcheck propio para RabbitMQ, de modo que
+`up --wait` podía retornar mientras los workers todavía construían conexiones y
+bindings. En esa ventana los mensajes de datos quedaban en sus colas, pero un final
+publicado sobre un exchange antes de crear el binding de una réplica podía perderse.
+El runner ahora consulta en paralelo el health TCP de cada proceso supervisado y
+exige `OK` antes de iniciar cliente y fallas. Este estado se anuncia después de
+construir todos los endpoints RabbitMQ. En la reproducción que verificó la
+corrección, los 54 componentes alcanzaron readiness en 3,67 segundos.
+
+Con esa precondición se ejecutó la matriz representativa sobre nueve escenarios:
+seis clases de worker, ResultSink, la caída simultánea de Preprocessor y
+QueryRouter, y un FailureManager. Cada escenario tuvo tres corridas independientes.
+Las 27 ejecuciones produjeron exactamente 7, 0, 86, 20 y 62 registros para Q1–Q5,
+coincidieron con la referencia y pasaron la auditoría de cleanup. Cada una confirmó
+al menos un `SIGKILL`; ResultSink y FailureManager soportaron dos por corrida, y el
+caso simultáneo derribó ambos workers en el mismo ciclo. La matriz usa una caída
+confirmada como criterio de cobertura. El barrido de intervalos mantiene dos ciclos
+como mínimo porque su objetivo distinto es medir la frecuencia tolerada. Resta
+ejecutar ese barrido desde cinco segundos y repetir el benchmark de performance sin
+fallas sobre el dataset comparable al baseline.
 
 ### 18.6 Supervisión, consenso y reposición automática
 
@@ -1293,7 +1312,7 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 
 ### 22.2 Evidencia disponible al corte
 
-- La suite local completa pasa con 343 tests.
+- La suite local completa pasa con 463 tests.
 - Las pruebas de tolerancia reconstruyen estado durable de InputBatcher, QueryRouter,
   Q3WordAggregator, Q5AverageReducer y ResultSink; incluyen caída antes de publicar,
   barrera incompleta, fan-out parcialmente confirmado y redelivery al cliente.

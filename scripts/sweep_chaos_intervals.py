@@ -47,6 +47,7 @@ def assess_interval(
     exit_code: int,
     expected_runs: int,
     required_targets: set[str] | None = None,
+    minimum_confirmed_cycles: int = 2,
 ) -> dict[str, Any]:
     summary_path = next(directory.glob("*/summary.json"), None)
     runs = []
@@ -77,7 +78,7 @@ def assess_interval(
             run["status"] == "success"
             and run["matches_expected"] is True
             and run["cleanup_passed"] is True
-            and run["confirmed_cycles"] >= 2
+            and run["confirmed_cycles"] >= minimum_confirmed_cycles
             for run in runs
         ),
     }

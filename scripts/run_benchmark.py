@@ -216,6 +216,104 @@ def run_command(
     )
 
 
+def _health_name(container: dict[str, Any]) -> str | None:
+    environment = container.get("Config", {}).get("Env", [])
+    for entry in environment:
+        if entry.startswith("HEALTH_NAME="):
+            return entry.partition("=")[2] or None
+    return None
+
+
+def _probe_health(container_id: str) -> tuple[str | None, str]:
+    """Return the component status reported by its in-process health server."""
+    probe = (
+        "import json; "
+        "from common.health import ping; "
+        "print(json.dumps(ping('127.0.0.1', 7000, 1.0)))"
+    )
+    try:
+        result = subprocess.run(
+            ["docker", "exec", container_id, "python", "-c", probe],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if result.returncode:
+            return None, result.stderr.strip() or f"exit {result.returncode}"
+        answer = json.loads(result.stdout)
+        status = answer.get("status")
+        detail = answer.get("detail", "")
+        return status if isinstance(status, str) else None, str(detail)
+    except (json.JSONDecodeError, OSError, subprocess.SubprocessError) as error:
+        return None, str(error)
+
+
+def wait_for_stack_ready(
+    compose_command: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    timeout_seconds: float = 120,
+) -> dict[str, str]:
+    """Wait until every supervised component has completed RabbitMQ setup.
+
+    Compose considers containers without a Docker healthcheck ready as soon as
+    they are running. Pipeline control messages use exchanges, so starting a
+    client before every consumer has declared and bound its control queue can
+    lose an end-of-stream marker. The application health server reports OK only
+    after the component has constructed all of its middleware endpoints.
+    """
+    ids = run_command(
+        [*compose_command, "ps", "--all", "-q"],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        announce=False,
+    ).stdout.split()
+    if not ids:
+        raise RuntimeError("Docker Compose returned no containers after startup")
+
+    inspected = run_command(
+        ["docker", "inspect", *ids],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        announce=False,
+    )
+    containers = json.loads(inspected.stdout)
+    supervised = {
+        name: container["Id"]
+        for container in containers
+        if (name := _health_name(container)) is not None
+    }
+    if not supervised:
+        raise RuntimeError("No supervised components expose HEALTH_NAME")
+
+    deadline = time.monotonic() + timeout_seconds
+    pending: dict[str, str] = {name: "not probed" for name in supervised}
+    while pending and time.monotonic() < deadline:
+        names = list(pending)
+        with ThreadPoolExecutor(max_workers=min(32, len(names))) as executor:
+            results = executor.map(
+                _probe_health,
+                (supervised[name] for name in names),
+            )
+            probes = dict(zip(names, results))
+        pending = {
+            name: detail or status or "unavailable"
+            for name, (status, detail) in probes.items()
+            if status != "OK"
+        }
+        if pending:
+            time.sleep(0.25)
+
+    if pending:
+        details = ", ".join(
+            f"{name}={detail}" for name, detail in sorted(pending.items())
+        )
+        raise RuntimeError(f"Stack readiness timed out: {details}")
+    return {name: "OK" for name in supervised}
+
+
 class MetricsSampler:
     def __init__(
         self,
@@ -846,6 +944,30 @@ def main() -> int:
                 )
                 print(startup.stderr.rstrip(), file=sys.stderr)
                 return 1
+
+            readiness_started = time.monotonic()
+            try:
+                ready_components = wait_for_stack_ready(
+                    compose_command, repo_root, run_env
+                )
+            except (
+                RuntimeError,
+                subprocess.SubprocessError,
+                json.JSONDecodeError,
+            ) as error:
+                with startup_log.open("a", encoding="utf-8") as output:
+                    output.write(f"\nReadiness failed: {error}\n")
+                capture_compose_logs(
+                    compose_command, repo_root, run_env, run_dir / "compose.log"
+                )
+                print(f"Stack readiness failed: {error}", file=sys.stderr)
+                return 1
+            readiness_seconds = time.monotonic() - readiness_started
+            with startup_log.open("a", encoding="utf-8") as output:
+                output.write(
+                    f"\nApplication readiness: {len(ready_components)} components "
+                    f"OK after {readiness_seconds:.3f} seconds\n"
+                )
 
             metrics_path = run_dir / "metrics.jsonl"
             sampler = MetricsSampler(

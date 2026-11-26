@@ -48,12 +48,12 @@ El sistema debe resolver las siguientes consultas:
 | Estrategia de tolerancia a fallos y persistencia | Persistencia, inbox/outbox y recuperación propagadas y validadas con una caída simultánea real de todo el pipeline |
 | Detección de procesos caídos mediante comunicación | Pendiente |
 | Consenso implementado por el grupo | Pendiente |
-| Reinicio automático de procesos caídos | Pendiente |
-| Recuperación e idempotencia después de reinicios | Implementada y validada punta a punta con reinicios reales; falta automatizar detección y reinicio |
-| Entrega exactly-once hacia el cliente | Implementada para redelivery durante la sesión; pendiente validación integral con ACK perdido |
-| Chaos Monkey y escenarios de fallos automatizados | Pendiente |
+| Reinicio automático de procesos caídos | Implementado mediante FailureManagers y validado en la matriz representativa |
+| Recuperación e idempotencia después de reinicios | Implementada y validada punta a punta con detección y reinicio automáticos |
+| Entrega exactly-once hacia el cliente | Implementada y validada con reinicios reales de ResultSink; ACK perdido y redelivery cubiertos unitariamente |
+| Chaos Monkey y escenarios de fallos automatizados | Implementados; matriz representativa ejecutada con reinicio automático, comparación Q1-Q5 y auditoría de cleanup |
 | Comparación de performance contra el hito de escalabilidad | Pendiente |
-| Limpieza de recursos de ejecuciones resueltas o fallidas | Parcial; debe generalizarse y probarse |
+| Limpieza de recursos de ejecuciones resueltas o fallidas | Implementada y auditada en desconexión de cliente y en las 27 corridas de la matriz |
 | Gateway dentro del modelo de fallos | Excluido por indicación de la cátedra; se asume disponible y debe mantenerse mínimo |
 
 ## Hito 3: tolerancia a fallos
@@ -718,9 +718,9 @@ La prueba terminó con los 56 servicios activos y sin errores de supervisión.
 - [x] Persistir en el cliente los `result_id` aplicados y escribir cada resultado
   de forma recuperable antes de enviar ACK.
 - [x] Mantener Gateway como relay sin RecoveryStore ni estado de negocio nuevo.
-- [ ] Probar con procesos reales la caída de cliente y ResultSink. La pérdida del
-  ACK después de escribir y la redelivery duplicada ya están cubiertas unitariamente.
-  No inyectar caídas del Gateway.
+- [x] Probar con procesos reales la caída de cliente y ResultSink. La pérdida del
+  ACK después de escribir y la redelivery duplicada también están cubiertas
+  unitariamente. No se inyectan caídas del Gateway.
 
 #### Bloque 7 - Fallo terminal y cleanup distribuido
 
@@ -807,6 +807,8 @@ La corrida del 24/11/2026 pasó sobre las 46 réplicas alcanzadas por el cleanup
 - [x] Automatizar la comparación de Q1–Q5 y la auditoría de cleanup antes de
   bajar Compose. Verificar ambas con caídas reales de InputBatcher y
   ResultSink y reinicio manual.
+- [x] Ejecutar la matriz representativa con reinicio automático: nueve casos,
+  tres corridas por caso, resultados iguales a la referencia y cleanup completo.
 - [ ] Repetir benchmark sin fallas con tolerancia habilitada y calcular overhead contra el bloque 0.
 - [ ] Medir por separado el costo y tiempo de recuperación bajo fallas.
 - [ ] Actualizar `INFORME.md` y diagramas de robustez, despliegue, actividades, paquetes, secuencia y DAG.
@@ -814,15 +816,41 @@ La corrida del 24/11/2026 pasó sobre las 46 réplicas alcanzadas por el cleanup
 
 **Pendiente**
 
-- [ ] Ejecutar la matriz de caídas con reinicio automático, primero sobre
-  casos representativos y luego sobre todos los tipos. Completar los casos
-  dirigidos de la matriz que requieran una falla en un punto exacto.
+- [ ] Extender la matriz ya validada sobre casos representativos a todos los
+  tipos y completar los casos dirigidos que requieran una falla en un punto exacto.
 - [ ] Ejecutar el barrido desde cinco segundos y registrar el menor intervalo
   probado que completa varias corridas correctas.
 - [ ] Medir el overhead a escala con al menos tres corridas válidas por
   versión, sin fallas y con la misma configuración. Recuperar el Parquet
   original de 612.475 artículos o volver a medir ambas versiones sobre la
   reconstrucción, cuyo SHA-256 difiere del histórico.
+
+##### Validación representativa del 26/11/2026
+
+La primera ejecución de la matriz descubrió una carrera del entorno de prueba.
+`docker compose up --wait` sólo esperaba el healthcheck de RabbitMQ; los demás
+containers se consideraban disponibles apenas estaban `running`. El cliente podía
+publicar los finales antes de que todas las réplicas hubieran declarado y enlazado
+sus colas de control. Los datos quedaban en las colas normales, pero un control
+publicado a un exchange sin su binding todavía creado podía perderse y dejar Q4 o
+Q5 esperando indefinidamente.
+
+El runner ahora consulta el endpoint de salud interno de cada proceso supervisado
+y exige `OK` antes de iniciar cliente y Chaos Monkey. Ese estado se alcanza después
+de construir las conexiones y bindings de RabbitMQ; en la prueba aislada fueron 54
+componentes listos en 3,67 segundos. Con esta espera, ResultSink soportó dos
+`SIGKILL`, fue repuesto automáticamente y entregó Q1=7, Q2=0, Q3=86, Q4=20 y
+Q5=62, iguales a la referencia y sin recursos pendientes.
+
+La matriz representativa cubrió `preprocessor`, `input-batcher`, `query-router`,
+`q3-word-aggregator`, `q4-top20-reducer`, `q5-comparator`, `result-sink`, una caída
+simultánea de Preprocessor y QueryRouter, y un FailureManager. Fueron 27 corridas:
+todas terminaron, coincidieron con la referencia y pasaron la auditoría de cleanup.
+Cada corrida confirmó al menos una caída real; 23 confirmaron dos, mientras que los
+tres casos simultáneos confirmaron un ciclo con ambos workers y una corrida corta
+de Q3 finalizó después del primer ciclo. Por eso la matriz exige una caída por
+corrida, mientras el barrido de frecuencia conserva el requisito más estricto de
+al menos dos ciclos.
 
 ### Matriz mínima de pruebas de fallos
 
@@ -1878,11 +1906,13 @@ El orden vigente es el del [plan de implementación de tolerancia a fallos](#pla
 
 ## Próximos pasos
 
-1. Implementar supervisión, Bully y reinicio automático mediante FailureManagers.
-2. Medir en el benchmark final el costo del journal incremental y del `fsync` por
+1. Ejecutar la matriz sobre todos los tipos de proceso, ahora que la cobertura
+   representativa pasó con reinicio automático.
+2. Ejecutar el barrido de frecuencia desde cinco segundos con un dataset cuya
+   duración permita confirmar al menos dos caídas por corrida.
+3. Medir en el benchmark final el costo del journal incremental y del `fsync` por
    artículo frente al baseline previo a tolerancia.
-3. Automatizar Chaos Monkey, la comparación Q1-Q5 y la verificación final de
-   recursos liberados.
+4. Actualizar los diagramas y ensayar el guion completo de la demo.
 
 La topología base mantiene tres instancias en los grupos coordinados y tres
 particiones de InputBatcher. La comparación de performance del último hito debe
