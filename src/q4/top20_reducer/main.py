@@ -1,5 +1,6 @@
 import logging
 
+from common.health import HealthServer
 from common.middleware import MessageMiddlewareQueueRabbitMQ
 from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
@@ -12,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 def main() -> int:
     configure_logging()
+    health = HealthServer.from_env()
+    health.start()
     config = Q4Top20ReducerConfig()
     messaging = Q4Top20ReducerMessaging(
         MessageMiddlewareQueueRabbitMQ(config.mom_host, config.input_queue),
@@ -28,10 +31,12 @@ def main() -> int:
     logger.info("Q4Top20Reducer consuming from %s", config.input_queue)
     try:
         with shutdown_signals(controller.stop):
+            health.set_ready()
             controller.start()
     except KeyboardInterrupt:
         return 0
     finally:
+        health.close()
         messaging.close()
     return 0
 

@@ -1,5 +1,6 @@
 import logging
 
+from common.health import HealthServer
 from common.middleware import MessageMiddlewareQueueRabbitMQ
 from common.persistence import PersistenceLayout
 from common.shutdown import shutdown_signals
@@ -13,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 def main() -> int:
     configure_logging()
+    health = HealthServer.from_env()
+    health.start()
     config = Q5ComparatorConfig()
 
     messaging = Q5ComparatorMessaging(
@@ -45,10 +48,12 @@ def main() -> int:
 
     try:
         with shutdown_signals(controller.stop):
+            health.set_ready()
             controller.start()
     except KeyboardInterrupt:
         return 0
     finally:
+        health.close()
         messaging.close()
 
     return 0

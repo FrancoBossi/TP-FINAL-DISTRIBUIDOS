@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from queue import Empty, Queue
 from threading import Event, Thread
 
+from common.health import LIVENESS
 from common.message_protocol.message import Message
 from common.middleware.middleware import (
     MessageMiddlewareExchange,
@@ -91,6 +92,11 @@ class CoordinatedConsumer:
             name="control-consumer",
         )
         control_thread.start()
+        # A dead control thread leaves barriers unresolved even if DATA flows.
+        LIVENESS.add_check(
+            "control-consumer",
+            lambda: control_thread.is_alive() and self._control_error is None,
+        )
 
         def process_pending_control() -> None:
             if self._control_error is not None:
@@ -124,7 +130,7 @@ class CoordinatedConsumer:
                 deserialize_message, on_idle=process_pending_control
             )
         finally:
-            self._control_shutdown.set()
+            LIVENESS.remove_check("control-consumer")
             self._control_exchange_input.stop_consuming()
             control_thread.join()
 

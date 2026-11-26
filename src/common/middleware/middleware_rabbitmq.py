@@ -1,9 +1,10 @@
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from functools import partial
 from threading import Event
 
 import pika
 
+from common.health import LIVENESS, TICK_INTERVAL_SECONDS
 from common.middleware.middleware import (
     MessageMiddlewareCloseError,
     MessageMiddlewareDisconnectedError,
@@ -36,8 +37,13 @@ def _pika_error_to_middleware_error(
 
 
 class _MessageMiddlewareRabbitMQBase:
+    # Only the data consumer reports progress to the health endpoint. The control
+    # thread of a CoordinatedConsumer must not mask a blocked data loop.
+    _reports_liveness = False
+
     def __init__(self, host: str) -> None:
         self._stop_requested = Event()
+        self._health_check_name = f"rabbitmq-{id(self)}"
         with _pika_error_to_middleware_error(
             "initialization",
             MessageMiddlewareMessageError,
@@ -58,6 +64,9 @@ class _MessageMiddlewareRabbitMQBase:
             try:
                 self._channel = self._connection.channel()
                 self._channel.confirm_delivery()
+                LIVENESS.add_check(
+                    self._health_check_name, self._rabbitmq_connection_is_open
+                )
             except Exception:
                 self.close()
                 raise
@@ -68,6 +77,12 @@ class _MessageMiddlewareRabbitMQBase:
 
         if self._channel.is_closed:
             raise MessageMiddlewareMessageError("Channel to RabbitMQ is closed")
+
+    def _rabbitmq_connection_is_open(self) -> bool:
+        return self._connection.is_open and self._channel.is_open
+
+    def _handler_scope(self):
+        return LIVENESS.busy() if self._reports_liveness else nullcontext()
 
     def start_consuming(self, on_message_callback, on_idle=None) -> None:
         self._check_connection()
@@ -87,7 +102,8 @@ class _MessageMiddlewareRabbitMQBase:
             if self._stop_requested.is_set():
                 nack(requeue=True)
                 return
-            on_message_callback(body, ack, nack)
+            with self._handler_scope():
+                on_message_callback(body, ack, nack)
 
         with _pika_error_to_middleware_error(
             "consuming messages",
@@ -99,17 +115,17 @@ class _MessageMiddlewareRabbitMQBase:
                 on_message_callback=callback,
                 auto_ack=False,
             )
-            try:
-                if on_idle is None:
-                    self._channel.start_consuming()
-                else:
-                    while not self._stop_requested.is_set():
-                        self._connection.process_data_events(time_limit=0.1)
-                        if self._stop_requested.is_set():
-                            break
-                        if not self._stop_requested.is_set():
-                            on_idle()
-            finally:
+            while not self._stop_requested.is_set():
+                self._connection.process_data_events(time_limit=TICK_INTERVAL_SECONDS)
+                if self._reports_liveness:
+                    LIVENESS.tick()
+                if self._stop_requested.is_set():
+                    break
+                if on_idle is not None:
+                    with self._handler_scope():
+                        on_idle()
+
+            if self._stop_requested.is_set():
                 self._stop_requested.clear()
 
     def drain_pending(self) -> None:
@@ -129,6 +145,7 @@ class _MessageMiddlewareRabbitMQBase:
             self._connection.add_callback_threadsafe(self._channel.stop_consuming)
 
     def close(self) -> None:
+        LIVENESS.remove_check(self._health_check_name)
         if self._connection.is_closed:
             return
 
@@ -226,6 +243,8 @@ class MessageMiddlewareQueueRabbitMQ(
     _MessageMiddlewareRabbitMQBase,
     MessageMiddlewareQueue,
 ):
+    _reports_liveness = True
+
     def __init__(
         self,
         host: str,

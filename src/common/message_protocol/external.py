@@ -171,6 +171,22 @@ def _decode_value(stream: BytesIO) -> Any:
     raise ValueError(f"Unknown binary value type: {value_type}")
 
 
+def encode_value(value: Any) -> bytes:
+    """Encode one value with the project's own binary codec."""
+    return _encode_value(value)
+
+
+def decode_value(body: bytes) -> Any:
+    """Decode exactly one value, rejecting truncated or trailing bytes."""
+    stream = BytesIO(body)
+    value = _decode_value(stream)
+
+    if stream.read(1):
+        raise ValueError("Binary value contains unexpected trailing bytes")
+
+    return value
+
+
 def _encode_message(message: Message) -> bytes:
     if type(message) is ArticleMessage:
         return bytes([_MESSAGE_ARTICLE]) + _encode_value(message.article)

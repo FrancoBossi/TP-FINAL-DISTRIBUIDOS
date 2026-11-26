@@ -107,6 +107,9 @@ class TestMessageMiddlewareQueueRabbitMQ(unittest.TestCase):
 
         on_message = Mock()
 
+        connection.process_data_events.side_effect = lambda **_kwargs: (
+            queue.stop_consuming()
+        )
         queue.start_consuming(on_message)
 
         channel.basic_qos.assert_called_once_with(prefetch_count=1)
@@ -115,7 +118,7 @@ class TestMessageMiddlewareQueueRabbitMQ(unittest.TestCase):
             on_message_callback=unittest.mock.ANY,
             auto_ack=False,
         )
-        channel.start_consuming.assert_called_once()
+        connection.process_data_events.assert_called_once_with(time_limit=0.1)
 
         rabbitmq_callback = channel.basic_consume.call_args.kwargs[
             "on_message_callback"
@@ -270,6 +273,9 @@ class TestRabbitMQShutdown(unittest.TestCase):
 
     def test_delivery_after_stop_is_requeued_without_processing(self):
         callback = Mock()
+        self.connection.process_data_events.side_effect = lambda **_kwargs: (
+            self.queue.stop_consuming()
+        )
         self.queue.start_consuming(callback)
         delivery = self.channel.basic_consume.call_args.kwargs["on_message_callback"]
         self.queue.stop_consuming()
