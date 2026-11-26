@@ -1169,8 +1169,25 @@ al menos un `SIGKILL`; ResultSink y FailureManager soportaron dos por corrida, y
 caso simultáneo derribó ambos workers en el mismo ciclo. La matriz usa una caída
 confirmada como criterio de cobertura. El barrido de intervalos mantiene dos ciclos
 como mínimo porque su objetivo distinto es medir la frecuencia tolerada. Resta
-ejecutar ese barrido desde cinco segundos y repetir el benchmark de performance sin
-fallas sobre el dataset comparable al baseline.
+repetir el benchmark de performance sin fallas sobre el dataset comparable al
+baseline.
+
+El barrido de frecuencia se ejecutó después sobre 50.000 artículos, con seed 42 y
+targets mixtos `input-batcher-0`, `query-router-0`, `result-sink` y
+`failure-manager-2`. Cada intervalo tuvo tres entornos limpios y exigió al menos dos
+ciclos de caída confirmados, igualdad exacta con la referencia y cleanup completo.
+Los intervalos de 5, 2,5 y 1 segundos pasaron 3/3. Sus medianas fueron 696,60 s,
+730,49 s y 732,81 s; los desvíos muestrales, 63,43 s, 15,60 s y 22,05 s. El tiempo
+mediano al primer resultado fue 18,40 s, 23,08 s y 20,62 s respectivamente. Las
+caídas confirmadas fueron 6/6/7, 5/5/5 y 3/3/3 por corrida.
+
+Un intento programado no cuenta como caída si el target continúa detenido o en
+reposición por el intento anterior. Esto explica que el intervalo de un segundo
+tenga menos inyecciones efectivas, aunque todas sus corridas superaron el mínimo de
+dos. Por lo tanto, un segundo es el menor intervalo probado que pasó, no un límite
+inferior demostrado. La variación de duración tampoco es estrictamente monótona;
+se reporta junto con su dispersión y no se confunde con el overhead normal, que se
+medirá sin Chaos sobre el dataset del baseline.
 
 ### 18.6 Supervisión, consenso y reposición automática
 

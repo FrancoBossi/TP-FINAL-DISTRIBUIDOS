@@ -818,8 +818,9 @@ La corrida del 24/11/2026 pasó sobre las 46 réplicas alcanzadas por el cleanup
 
 - [ ] Extender la matriz ya validada sobre casos representativos a todos los
   tipos y completar los casos dirigidos que requieran una falla en un punto exacto.
-- [ ] Ejecutar el barrido desde cinco segundos y registrar el menor intervalo
-  probado que completa varias corridas correctas.
+- [x] Ejecutar el barrido desde cinco segundos y registrar el menor intervalo
+  probado que completa varias corridas correctas: 1 segundo en el barrido mixto
+  sobre 50.000 artículos.
 - [ ] Medir el overhead a escala con al menos tres corridas válidas por
   versión, sin fallas y con la misma configuración. Recuperar el Parquet
   original de 612.475 artículos o volver a medir ambas versiones sobre la
@@ -851,6 +852,32 @@ tres casos simultáneos confirmaron un ciclo con ambos workers y una corrida cor
 de Q3 finalizó después del primer ciclo. Por eso la matriz exige una caída por
 corrida, mientras el barrido de frecuencia conserva el requisito más estricto de
 al menos dos ciclos.
+
+##### Barrido de frecuencia del 26/11/2026
+
+El barrido usó `wikipedia_sample.parquet` (50.000 artículos, SHA-256
+`6e403dcd4e26b8551518cd9422dc661220505dbefb809f433fa033eda46552fb`) y la
+referencia de 22.650 resultados ya validada. El calendario mezcló
+`input-batcher-0`, `query-router-0`, `result-sink` y `failure-manager-2`, con una
+caída por ciclo y seed 42. Así se ejercitaron estado parcial, barreras, entrega
+externa y elecciones Bully sin usar el dataset de performance de 612.475 artículos
+para nueve corridas largas.
+
+| Intervalo | Corridas | Caídas confirmadas | Mediana | Desvío muestral | Primer resultado mediano |
+|---:|---:|---:|---:|---:|---:|
+| 5 s | 3/3 | 6, 6, 7 | 696,60 s | 63,43 s | 18,40 s |
+| 2,5 s | 3/3 | 5, 5, 5 | 730,49 s | 15,60 s | 23,08 s |
+| 1 s | 3/3 | 3, 3, 3 | 732,81 s | 22,05 s | 20,62 s |
+
+Las nueve ejecuciones coincidieron con Q1–Q5 de referencia y pasaron la auditoría
+de cleanup. El menor intervalo **probado** y aprobado fue un segundo; no se afirma
+que sea el límite absoluto porque no se ensayaron intervalos menores. A menor
+intervalo hubo menos caídas efectivamente confirmadas: varios intentos encontraron
+el target todavía detenido o reiniciándose y fueron omitidos. Cada corrida conservó
+al menos tres ciclos confirmados, por encima del mínimo de dos exigido por el
+barrido. La diferencia de medianas no es estrictamente monótona y debe leerse con
+su dispersión; este experimento caracteriza recuperación, no reemplaza el benchmark
+de overhead sin fallas.
 
 ### Matriz mínima de pruebas de fallos
 
@@ -1908,11 +1935,9 @@ El orden vigente es el del [plan de implementación de tolerancia a fallos](#pla
 
 1. Ejecutar la matriz sobre todos los tipos de proceso, ahora que la cobertura
    representativa pasó con reinicio automático.
-2. Ejecutar el barrido de frecuencia desde cinco segundos con un dataset cuya
-   duración permita confirmar al menos dos caídas por corrida.
-3. Medir en el benchmark final el costo del journal incremental y del `fsync` por
+2. Medir en el benchmark final el costo del journal incremental y del `fsync` por
    artículo frente al baseline previo a tolerancia.
-4. Actualizar los diagramas y ensayar el guion completo de la demo.
+3. Actualizar los diagramas y ensayar el guion completo de la demo.
 
 La topología base mantiene tres instancias en los grupos coordinados y tres
 particiones de InputBatcher. La comparación de performance del último hito debe
