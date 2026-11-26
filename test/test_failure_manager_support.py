@@ -5,10 +5,12 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from common.control_wire import recv_frame
 from failure_manager.config import FailureManagerConfig, parse_peers
+from failure_manager.detector import Suspect
+from failure_manager.manager import FailureManager
 from failure_manager.topology import (
     PIPELINE_GROUPS,
     Target,
@@ -100,6 +102,19 @@ class TestTopology(unittest.TestCase):
             {failure_manager_name(i) for i in (0, 1, 2)},
         )
 
+    def test_failure_manager_membership_in_compose_is_parseable(self):
+        text = COMPOSE.read_text()
+        expected = {
+            0: ("failure-manager-0", 7000),
+            1: ("failure-manager-1", 7000),
+            2: ("failure-manager-2", 7000),
+        }
+        memberships = re.findall(r"^\s+FM_PEERS:\s*(.+)$", text, re.MULTILINE)
+
+        self.assertEqual(len(memberships), 3)
+        for membership in memberships:
+            self.assertEqual(parse_peers(membership.strip()), expected)
+
 
 class TestConfig(unittest.TestCase):
     ENV = {
@@ -142,6 +157,38 @@ class TestConfig(unittest.TestCase):
                 with patch.dict(os.environ, {**self.ENV, name: "0"}, clear=True):
                     with self.assertRaises(ValueError):
                         FailureManagerConfig()
+
+
+class TestManagerShutdown(unittest.TestCase):
+    def test_stop_revokes_authority_before_an_in_flight_restart(self):
+        entered_confirmation = threading.Event()
+        release_confirmation = threading.Event()
+        detector = Mock()
+
+        def confirm(_suspect):
+            entered_confirmation.set()
+            release_confirmation.wait(timeout=2)
+            return True
+
+        detector.confirm.side_effect = confirm
+        restarter = Mock()
+        manager = FailureManager(Mock(), detector, restarter, ping_interval=1)
+        manager.on_role_change(True, 7)
+        suspect = Suspect(
+            target=Target.named("worker-0"),
+            incarnation_id="old-incarnation",
+            failures=2,
+            first_failure_at=0,
+            reason="no answer to PING",
+        )
+
+        manager._dispatch(suspect, 7)
+        self.assertTrue(entered_confirmation.wait(timeout=2))
+        manager.stop()
+        release_confirmation.set()
+        manager._restarts.shutdown(wait=True)
+
+        restarter.restart.assert_not_called()
 
 
 class TestPeerTransport(unittest.TestCase):

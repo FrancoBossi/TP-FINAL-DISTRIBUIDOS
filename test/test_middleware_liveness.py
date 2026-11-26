@@ -116,13 +116,15 @@ class TestExchangeDoesNotReportLiveness(unittest.TestCase):
     def test_control_consumer_cannot_mask_a_blocked_data_loop(self):
         connection = open_connection()
         with patch(f"{MODULE}.pika.BlockingConnection", return_value=connection):
-            exchange = MessageMiddlewareExchangeRabbitMQ("rabbitmq", "ctl", ["ctl"])
+            exchange = MessageMiddlewareExchangeRabbitMQ(
+                "rabbitmq", "ctl", ["ctl"], queue_name="ctl.test"
+            )
 
         channel = connection.channel.return_value
         liveness = MagicMock()
         handler = Mock()
-        connection.process_data_events.side_effect = (
-            lambda **_kwargs: exchange.stop_consuming()
+        connection.process_data_events.side_effect = lambda **_kwargs: (
+            exchange.stop_consuming()
         )
 
         with patch(f"{MODULE}.LIVENESS", liveness):

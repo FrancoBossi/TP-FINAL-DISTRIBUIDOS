@@ -107,8 +107,8 @@ class TestMessageMiddlewareQueueRabbitMQ(unittest.TestCase):
 
         on_message = Mock()
 
-        connection.process_data_events.side_effect = (
-            lambda **_kwargs: queue.stop_consuming()
+        connection.process_data_events.side_effect = lambda **_kwargs: (
+            queue.stop_consuming()
         )
         queue.start_consuming(on_message)
 
@@ -273,8 +273,8 @@ class TestRabbitMQShutdown(unittest.TestCase):
 
     def test_delivery_after_stop_is_requeued_without_processing(self):
         callback = Mock()
-        self.connection.process_data_events.side_effect = (
-            lambda **_kwargs: self.queue.stop_consuming()
+        self.connection.process_data_events.side_effect = lambda **_kwargs: (
+            self.queue.stop_consuming()
         )
         self.queue.start_consuming(callback)
         delivery = self.channel.basic_consume.call_args.kwargs["on_message_callback"]

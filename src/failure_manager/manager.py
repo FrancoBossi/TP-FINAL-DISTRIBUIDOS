@@ -73,6 +73,11 @@ class FailureManager:
             logger.warning("Dropping a Bully message: inbox is full")
 
     def stop(self) -> None:
+        # Revoke local authority before waking or shutting down worker threads.
+        # Otherwise an in-flight confirmation could still issue a restart while
+        # this manager is already leaving the group.
+        with self._lock:
+            self._leading_epoch = None
         self._stopped.set()
         self._leadership_changed.set()
 

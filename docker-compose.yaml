@@ -1250,7 +1250,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       HEALTH_NAME: failure-manager-0
       FM_ID: "0"
-      FM_PEERS: failure-manager-0:7000,failure-manager-1:7000,failure-manager-2:7000
+      FM_PEERS: 0=failure-manager-0:7000,1=failure-manager-1:7000,2=failure-manager-2:7000
       FM_STATE_DIR: /state
       FM_HEARTBEAT_INTERVAL: "${FM_HEARTBEAT_INTERVAL:-0.5}"
       FM_COORDINATOR_TIMEOUT: "${FM_COORDINATOR_TIMEOUT:-2}"
@@ -1281,7 +1281,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       HEALTH_NAME: failure-manager-1
       FM_ID: "1"
-      FM_PEERS: failure-manager-0:7000,failure-manager-1:7000,failure-manager-2:7000
+      FM_PEERS: 0=failure-manager-0:7000,1=failure-manager-1:7000,2=failure-manager-2:7000
       FM_STATE_DIR: /state
       FM_HEARTBEAT_INTERVAL: "${FM_HEARTBEAT_INTERVAL:-0.5}"
       FM_COORDINATOR_TIMEOUT: "${FM_COORDINATOR_TIMEOUT:-2}"
@@ -1312,7 +1312,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       HEALTH_NAME: failure-manager-2
       FM_ID: "2"
-      FM_PEERS: failure-manager-0:7000,failure-manager-1:7000,failure-manager-2:7000
+      FM_PEERS: 0=failure-manager-0:7000,1=failure-manager-1:7000,2=failure-manager-2:7000
       FM_STATE_DIR: /state
       FM_HEARTBEAT_INTERVAL: "${FM_HEARTBEAT_INTERVAL:-0.5}"
       FM_COORDINATOR_TIMEOUT: "${FM_COORDINATOR_TIMEOUT:-2}"

@@ -1130,7 +1130,7 @@ salida comprometida antes de publicarse y un fan-out de Q5 confirmado solamente 
 uno de sus destinos. En todos los casos el reinicio drena la outbox sin volver a
 aplicar la entrada. El cliente prueba también la deduplicación por `result_id`.
 
-La suite completa pasa con 343 tests, y la configuración de Compose, lint, formato
+La suite completa pasa con 459 tests, y la configuración de Compose, lint, formato
 y `git diff --check` son válidos. Se validó la recuperación de datos punta a punta:
 durante una ejecución de 300 artículos se enviaron `SIGKILL` simultáneos a todas las
 réplicas del pipeline y a ResultSink, dejando Gateway y RabbitMQ activos. Después
@@ -1149,8 +1149,62 @@ derivado de la seed. Registra el schedule, los servicios seleccionados, los
 saltos y la confirmación de Compose. Excluye Gateway, RabbitMQ y el cliente. El
 runner compara Q1–Q5 con la referencia serial, aísla los volúmenes de cada corrida
 y audita estado, tombstones, buffers y colas antes de bajar Compose. La matriz y el
-barrido de intervalos quedan preparados, pero su validación con reposición
-automática depende todavía del plano de control del bloque 5.
+barrido de intervalos quedan preparados. La reposición automática del plano de
+control ya fue validada en un escenario Docker dirigido; todavía resta ejecutar
+con ella la matriz completa y el barrido end-to-end sobre el dataset de demo.
+
+### 18.6 Supervisión, consenso y reposición automática
+
+El plano de control está formado por tres `FailureManager` con identificadores
+estáticos 0, 1 y 2. Cada proceso alcanzado expone un servidor TCP de salud que
+responde `PING` con un `PONG` que contiene nombre, estado e `incarnation_id`.
+El estado no equivale solamente a que el proceso conserve un socket abierto: el
+loop de consumo actualiza su progreso, los handlers largos se registran como
+trabajo en curso y los threads críticos, como el consumidor de control, agregan
+checks propios. De este modo también se detecta un proceso vivo cuyo trabajo quedó
+bloqueado.
+
+Los FailureManagers ejecutan Bully sin bibliotecas de consenso. Intercambian
+`ELECTION`, `OK`, `COORDINATOR` y `HEARTBEAT` por conexiones TCP independientes.
+Cada nodo tiene una cola y un thread emisor por peer para que un destino caído no
+bloquee los mensajes hacia los demás. El nodo de ID más alto disponible coordina;
+si desaparece, los sobrevivientes eligen otro. Un `coordinator_epoch` persistido
+en un volumen ordena las autoridades sucesivas y permite rechazar anuncios o
+acciones anteriores. Al detenerse, un supervisor revoca localmente su epoch antes
+de cerrar sus threads, por lo que una confirmación en vuelo no puede emitir un
+reinicio con autoridad que ya perdió.
+
+Sólo el coordinador supervisa los targets. Los obtiene de una topología estática,
+no de Docker, y los consulta en paralelo mediante `PING/PONG`. Un target se vuelve
+sospechoso después de rondas fallidas consecutivas y se prueba una vez más justo
+antes de actuar. Una respuesta saludable o un `incarnation_id` nuevo cancela la
+acción. Los estados `STARTING`, el grace period inicial y el cooldown posterior a
+un reinicio reducen falsos positivos y bucles de reposición.
+
+Docker se utiliza exclusivamente como actuador. El coordinador puede emitir
+`POST /containers/<nombre>/restart` únicamente para nombres incluidos en la
+topología estática. No lista containers, no consulta healthchecks, no inspecciona
+estado y no consume eventos para decidir una caída. La operación es idempotente y
+también inicia un container detenido. Gateway, RabbitMQ y Client están excluidos;
+los otros FailureManagers sí forman parte de los targets, excepto el supervisor
+que se está ejecutando a sí mismo.
+
+La decisión tiene dos trade-offs deliberados. Tres supervisores toleran hasta dos
+caídas, pero no la desaparición de los tres: Chaos Monkey preserva siempre al
+último FailureManager vivo. Además, no se contemplan particiones de red, tal como
+se acordó con el corrector; sin ese supuesto, un timeout no alcanzaría para evitar
+dos coordinadores que actúen sobre grupos aislados. A cambio, el diseño mantiene
+Gateway mínimo y evita incorporar un segundo mecanismo de votación que no aporta
+información adicional sobre la salud directa de un proceso.
+
+El 26/11/2026 se validó la topología completa con Docker. Bully eligió inicialmente
+al nodo 2 para el epoch 1. Se mataron simultáneamente los nodos 2 y 1 y el worker
+`q1-0`. El nodo 0 fue el único supervisor restante, ganó el epoch 2 y reinició los
+tres containers. Cuando el nodo 2 regresó, ganó el epoch 3 y el nodo 0 dejó de
+coordinar. Los 56 servicios de Compose terminaron activos. La suite reproduce el
+mismo escenario con sockets reales y además cubre procesos degradados, mensajes
+viejos, múltiples workers caídos, sospechas falsas y revocación de autoridad
+durante el apagado.
 
 ---
 

@@ -701,7 +701,15 @@ por entrada.
 - [x] Implementar ejecutor Docker limitado a reinicios estáticos e idempotentes.
 - [x] Probar caída de un supervisor, coordinador, varios workers simultáneos,
   sospecha falsa y mensajes viejos de otra elección.
-- [ ] Probar que Chaos Monkey nunca deja cero FailureManagers vivos.
+- [x] Probar que Chaos Monkey nunca deja cero FailureManagers vivos.
+
+La validación Docker del 26/11/2026 levantó las 56 unidades de Compose y dejó
+que Bully eligiera a `failure-manager-2` como coordinador del epoch 1. Luego se
+enviaron `SIGKILL` simultáneos a `failure-manager-2`, `failure-manager-1` y
+`q1-0`. El único supervisor restante, `failure-manager-0`, detectó la pérdida,
+ganó el epoch 2 y reinició los tres containers mediante la operación estática de
+Docker. Al regresar, el nodo 2 ganó el epoch 3 y el nodo 0 abandonó el liderazgo.
+La prueba terminó con los 56 servicios activos y sin errores de supervisión.
 
 #### Bloque 6 - Exactly-once en la frontera externa
 
@@ -806,8 +814,6 @@ La corrida del 24/11/2026 pasó sobre las 46 réplicas alcanzadas por el cleanup
 
 **Pendiente**
 
-- [ ] Completar el bloque 5 y verificar en una ejecución real la detección,
-  elección Bully y reposición automática de servicios.
 - [ ] Ejecutar la matriz de caídas con reinicio automático, primero sobre
   casos representativos y luego sobre todos los tipos. Completar los casos
   dirigidos de la matriz que requieran una falla en un punto exacto.
