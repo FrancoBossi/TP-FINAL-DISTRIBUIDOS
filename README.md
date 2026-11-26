@@ -385,6 +385,21 @@ aunque su transformación de DATA sea pura.
 
 ### Herramienta Chaos Monkey
 
+Desde la raíz del repositorio, usar `uv run python -m scripts.chaos --help`
+para ver los subcomandos. También se puede ejecutar con `.venv/bin/python -m
+scripts.chaos`. Los subcomandos `sweep` y `matrix` usan el benchmark y
+requieren las dependencias de `make setup`.
+
+| Subcomando | Uso |
+|---|---|
+| `inject` | Inyectar caídas en un proyecto Compose activo. |
+| `monitor` | Mostrar el historial de inyecciones o seguirlo en vivo. |
+| `sweep` | Comparar intervalos de inyección y reportar el menor que superó las verificaciones. |
+| `matrix` | Listar o ejecutar escenarios por tipo de servicio. |
+
+Cada subcomando tiene su propio `--help`. Los comandos anteriores siguen
+disponibles para los scripts existentes.
+
 La herramienta será propia y separada de los supervisores:
 
 - Recibe seed, intervalo, cantidad máxima de fallas y allowlist de targets.
@@ -407,6 +422,37 @@ La herramienta será propia y separada de los supervisores:
 - Docker puede utilizarse aquí para **introducir** la falla; esta información no se
   comparte como detector de disponibilidad con los supervisores.
 
+Con el proyecto de Compose ya levantado y el cliente en ejecución, el inyector
+puede ejecutarse desde otra terminal:
+
+```sh
+uv run python -m scripts.chaos inject \
+  --target preprocessor-0 --target q3-word-aggregator-0 \
+  --seed 42 --interval 5 --max-failures 8 --log chaos.jsonl
+```
+
+Si Compose se levantó con `-p`, pasar ese mismo nombre con `--project-name`.
+Si se omite, Docker Compose resuelve el nombre del proyecto con su configuración
+habitual. El log debe ser un archivo nuevo. El primer ciclo se programa después del intervalo indicado.
+`--batch-size` permite incluir varios servicios distintos en un ciclo.
+`--max-failures` limita los intentos programados: si un servicio ya está caído,
+se registra el salto sin cambiar el calendario. Las réplicas supervisoras deben
+usar nombres de servicio `failure-manager-*` para que el inyector preserve al
+menos una según el estado observado antes de cada ciclo. Usar un solo inyector
+por proyecto. El inyector registra las caídas y la supervisión se ocupa de
+reiniciar los procesos.
+
+Para observar Chaos Monkey en otra terminal:
+
+```sh
+uv run python -m scripts.chaos monitor --follow chaos.jsonl
+```
+
+Pasar el `chaos.jsonl` de la ejecución para monitorear un benchmark. Sin
+`--follow`, el comando muestra el historial y sale. El monitor muestra el SCHEDULE, los intentos, las
+confirmaciones de Compose y el motivo de cada skip. Una confirmación indica
+que Compose ejecutó el stop.
+
 El escenario automatizado mínimo deberá:
 
 1. Generar o verificar la referencia serial.
@@ -419,6 +465,27 @@ El escenario automatizado mínimo deberá:
    procesos caídos mediante comunicación.
 8. Verificar que no quedaron recursos de la ejecución.
 9. Guardar logs y resumen del escenario como evidencia.
+
+Para incorporar estas caídas a una corrida de benchmark:
+
+```sh
+.venv/bin/python scripts/run_benchmark.py \
+  --dataset datasets/wikipedia_sample.parquet --expected-output output/reference \
+  --project-name wikipedia-chaos --timeout-seconds 1800 \
+  --chaos-target preprocessor-0 --chaos-target q3-word-aggregator-0 \
+  --chaos-seed 42 --chaos-interval 5 --chaos-max-failures 8
+```
+
+Si Compose falla al levantar el entorno, consultar `startup.log` y `compose.log`
+en el directorio de la corrida. Cada corrida con fallas
+guarda `chaos.jsonl`, `chaos.log`, `client.log` y `compose.log`. Para pasar
+debe confirmar al menos una inyección y coincidir con la referencia para
+Q1–Q5. Además, exige que desaparezca la cola temporal, que todas las colas
+queden sin mensajes `ready` ni `unacked`, que no subsistan estado o buffers de
+la ejecución y que cada réplica alcanzada conserve su tombstone. El runner
+detiene el inyector al terminar el cliente o vencer el plazo. Después de guardar
+la evidencia elimina containers y volúmenes; la siguiente repetición empieza sin
+estado durable heredado de una ejecución anterior.
 
 ### Plan de implementación
 
@@ -724,15 +791,32 @@ La corrida del 24/11/2026 pasó sobre las 46 réplicas alcanzadas por el cleanup
 
 #### Bloque 8 - Chaos Monkey, benchmark, informe y demo
 
-- [ ] Implementar Chaos Monkey reproducible y escenarios automatizados.
-- [ ] Comenzar con una falla cada cinco segundos y reducir el intervalo hasta
-  encontrar el límite reproducible del sistema.
-- [ ] Ejecutar matriz de caídas sobre componentes representativos y luego sobre todos los tipos.
-- [ ] Comparar automáticamente resultados y recursos al terminar cada escenario.
+**Implementado y verificado**
+
+- [x] Implementar Chaos Monkey reproducible y el monitor del log de inyecciones.
+- [x] Automatizar la matriz por tipo de servicio y el barrido de intervalos,
+  conservando la evidencia de cada intento.
+- [x] Automatizar la comparación de Q1–Q5 y la auditoría de cleanup antes de
+  bajar Compose. Verificar ambas con caídas reales de InputBatcher y
+  ResultSink y reinicio manual.
 - [ ] Repetir benchmark sin fallas con tolerancia habilitada y calcular overhead contra el bloque 0.
 - [ ] Medir por separado el costo y tiempo de recuperación bajo fallas.
 - [ ] Actualizar `INFORME.md` y diagramas de robustez, despliegue, actividades, paquetes, secuencia y DAG.
 - [ ] Ensayar la demo completa con fallas periódicas y conservar logs de evidencia.
+
+**Pendiente**
+
+- [ ] Completar el bloque 5 y verificar en una ejecución real la detección,
+  elección Bully y reposición automática de servicios.
+- [ ] Ejecutar la matriz de caídas con reinicio automático, primero sobre
+  casos representativos y luego sobre todos los tipos. Completar los casos
+  dirigidos de la matriz que requieran una falla en un punto exacto.
+- [ ] Ejecutar el barrido desde cinco segundos y registrar el menor intervalo
+  probado que completa varias corridas correctas.
+- [ ] Medir el overhead a escala con al menos tres corridas válidas por
+  versión, sin fallas y con la misma configuración. Recuperar el Parquet
+  original de 612.475 artículos o volver a medir ambas versiones sobre la
+  reconstrucción, cuyo SHA-256 difiere del histórico.
 
 ### Matriz mínima de pruebas de fallos
 
@@ -754,7 +838,36 @@ La corrida del 24/11/2026 pasó sobre las 46 réplicas alcanzadas por el cleanup
 | Ejecución fallida | Cliente informado y recursos eliminados |
 | Chaos Monkey cada cinco segundos | Cinco salidas iguales a referencia, sin duplicados ni recursos huérfanos |
 
+Para listar los escenarios de caída de procesos sin levantar Compose:
+
+```sh
+uv run python -m scripts.chaos matrix --scope representative --list
+uv run python -m scripts.chaos matrix --scope all --list
+```
+
+Para ejecutarlos, reemplazar `--list` por `--dataset`, `--expected-output`,
+`--output` y `--timeout-seconds` con sus valores. La matriz ejecuta tres
+ejecuciones por caso a intervalos de cinco segundos por defecto y guarda
+`matrix.json`, los logs y los resultados, incluidos los casos fallidos o
+pendientes. `--scope all` elige una réplica por tipo de servicio. Los casos
+en puntos específicos de persistencia, barrera o ACK requieren pruebas
+dirigidas adicionales.
+
 ### Comparación de performance
+
+Con tres o más ejecuciones válidas por caso, calcular la variación de las medianas:
+
+```sh
+.venv/bin/python -m scripts.compare_benchmarks \
+  ruta/baseline/summary.json ruta/sin-fallas/summary.json \
+  --faults ruta/con-fallas/summary.json
+```
+
+`--faults` es opcional. La ejecución sin fallas debe incluir verificación contra la
+referencia serial mediante `--expected-output`. El comparador exige el mismo
+SHA-256 del dataset y contrasta Q1–Q5 de cada ejecución exitosa. El JSON de salida
+incluye ejecuciones fallidas y separa la variación con tolerancia habilitada de la
+variación bajo fallas.
 
 La comparación debe separar el overhead normal de la recuperación:
 
@@ -764,6 +877,28 @@ La comparación debe separar el overhead normal de la recuperación:
   documentados; comenzar con intervalos de cinco segundos.
 - Ejecutar al menos tres corridas por caso y reportar mediana y dispersión, no una
   única medición.
+- El runner registra `first_result_seconds` desde el inicio del cliente hasta
+  que persiste el primer resultado, incluido su ID. Queda vacío si no hay
+  resultados o si la imagen del cliente no emite esa medición. `summary.json`
+  agrega mediana, desvío estándar muestral y cantidad de mediciones de las
+  ejecuciones válidas para duración, throughput, tiempo al primer resultado y
+  bytes de red recibidos y transmitidos. El total suma los contadores de los
+  contenedores e incluye tráfico interno. Cuando una muestra detecta que un
+  contador caído, el runner acumula el tramo nuevo. Un reinicio entre muestras
+  puede subestimar el total. Para ejecuciones sin fallas, los resúmenes anteriores
+  aportan sus contadores finales.
+- El runner suma CPU y memoria de los contenedores en cada muestra completa
+  de Docker. `stack_metrics` guarda CPU media y máxima, memoria máxima y el
+  número de muestras usadas. El comparador contrasta las medianas de estas
+  métricas entre ejecuciones. CPU puede superar el 100 % al usar más de un
+  núcleo. Para resúmenes anteriores, el comparador calcula estas métricas si
+  los archivos originales `run-*/metrics.jsonl` siguen disponibles.
+- `input_batcher_journal_bytes` suma el tamaño observado de cada journal
+  incremental de InputBatcher al retirarlo durante un checkpoint, recuperación
+  o cleanup. Usa el mayor tamaño por ejecución, partición y generación para
+  deduplicar reintentos. Requiere logs de InputBatcher a nivel INFO. Mide bytes
+  lógicos del journal y puede omitir un archivo si la ejecución termina antes de
+  que se registre su tamaño. El campo queda vacío cuando no hay muestras.
 - Medir tiempo total, artículos por segundo, tiempo hasta primer resultado, CPU,
   memoria, red, bytes escritos en journals y tiempo de recuperación.
 - Reducir progresivamente el intervalo entre fallas y documentar el menor valor
@@ -771,6 +906,23 @@ La comparación debe separar el overhead normal de la recuperación:
   ocultar una ejecución fallida.
 - Verificar Q1-Q5 en todas las corridas; una ejecución rápida pero incorrecta no
   forma parte de la comparación.
+
+Para barrer intervalos cuando esté disponible el reinicio automático:
+
+```sh
+uv run python -m scripts.chaos sweep \
+  --dataset datasets/wikipedia_benchmark_12.parquet \
+  --expected-output output/reference-benchmark \
+  --output benchmarks/results/interval-sweep \
+  --timeout-seconds 1800 --target preprocessor-0 \
+  --interval 5 --interval 2.5 --interval 1
+```
+
+Cada intervalo conserva los logs y los
+artefactos del benchmark. `sweep.json` registra todos los intentos y el menor
+intervalo probado que pasó. Para pasar, las tres ejecuciones deben coincidir
+con la referencia, verificar el cleanup y confirmar inyecciones en al menos
+dos ciclos distintos.
 
 ### Decisiones confirmadas con el corrector
 

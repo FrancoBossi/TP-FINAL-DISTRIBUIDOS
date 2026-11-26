@@ -121,7 +121,13 @@ class Client:
             logger.info("Query %d: %d results written", message.query_id, count)
         return count
 
-    def receive_results(self, sock: socket.socket, output_dir: str | Path) -> None:
+    def receive_results(
+        self,
+        sock: socket.socket,
+        output_dir: str | Path,
+        *,
+        started_at: float | None = None,
+    ) -> None:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         completed: set[int] = set()
@@ -164,6 +170,12 @@ class Client:
                 result_id_ledger.write(message.result_id + "\n")
                 result_id_ledger.flush()
                 os.fsync(result_id_ledger.fileno())
+                if started_at is not None and isinstance(message, ResultMessage):
+                    logger.info(
+                        "First result persisted after %.6f seconds",
+                        time.monotonic() - started_at,
+                    )
+                    started_at = None
                 send_msg(sock, AckMessage())
         logger.info(
             "All queries complete: %d results written to %s",
@@ -174,8 +186,9 @@ class Client:
     def run(
         self, input_file: str | Path, output_dir: str | Path = "output/distributed"
     ) -> None:
+        started_at = time.monotonic()
         logger.info("Connecting to gateway at %s:%d", self.host, self.port)
         with self._connect() as sock:
             logger.info("Connected; reading articles from %s", input_file)
             self.send_articles(sock, iter_article_records(input_file))
-            self.receive_results(sock, output_dir)
+            self.receive_results(sock, output_dir, started_at=started_at)

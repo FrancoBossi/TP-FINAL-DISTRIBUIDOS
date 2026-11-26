@@ -10,3 +10,5 @@ output/
 /q5_candidate_buffer/
 
 /benchmarks/results/
+
+*.jsonl

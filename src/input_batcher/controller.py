@@ -63,7 +63,7 @@ class InputBatcherController:
 
         try:
             if isinstance(message, ExecutionCleanupMessage):
-                self._cleanup.cleanup(message.execution_id, self._clear_execution)
+                self._cleanup.cleanup(message.execution_id, self._cleanup_execution)
                 ack()
                 return
             if self._cleanup.is_closed(message.execution_id):
@@ -141,8 +141,24 @@ class InputBatcherController:
         self._executions[execution_id] = execution
         return execution
 
-    @staticmethod
-    def _remove_obsolete_journal(path: Path) -> None:
+    def _log_journal_size(self, path: Path) -> None:
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError:
+            return
+        except OSError:
+            logger.warning("Could not measure journal %s", path, exc_info=True)
+            return
+        logger.info(
+            "Journal bytes execution=%s partition=%d file=%s bytes=%d",
+            path.parent.name,
+            self._persistence_layout.partition_id,
+            path.name,
+            size,
+        )
+
+    def _remove_obsolete_journal(self, path: Path) -> None:
+        self._log_journal_size(path)
         try:
             path.unlink(missing_ok=True)
         except OSError:
@@ -162,12 +178,18 @@ class InputBatcherController:
             self._messaging.publish(message)
             store.confirm(output)
 
+    def _cleanup_execution(self, execution_id: str) -> None:
+        directory = self._persistence_layout.state_path(execution_id).parent
+        for journal in directory.glob("pending-*.jsonl"):
+            self._log_journal_size(journal)
+        self._clear_execution(execution_id)
+
     def _clear_execution(self, execution_id: str) -> None:
         self._executions.pop(execution_id, None)
         self._batcher.restore_state(execution_id, {})
 
     def _recover(self) -> None:
-        self._cleanup.recover(self._clear_execution)
+        self._cleanup.recover(self._cleanup_execution)
         executions = set(self._persistence_layout.execution_ids())
         executions.update(
             path.parent.name

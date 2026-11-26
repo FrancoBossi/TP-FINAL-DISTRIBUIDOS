@@ -1130,19 +1130,27 @@ salida comprometida antes de publicarse y un fan-out de Q5 confirmado solamente 
 uno de sus destinos. En todos los casos el reinicio drena la outbox sin volver a
 aplicar la entrada. El cliente prueba también la deduplicación por `result_id`.
 
-La suite completa pasa con 320 tests, y la configuración de Compose, lint, formato
-y `git diff --check` son válidos. La recuperación también se validó punta a punta:
+La suite completa pasa con 343 tests, y la configuración de Compose, lint, formato
+y `git diff --check` son válidos. Se validó la recuperación de datos punta a punta:
 durante una ejecución de 300 artículos se enviaron `SIGKILL` simultáneos a todas las
 réplicas del pipeline y a ResultSink, dejando Gateway y RabbitMQ activos. Después
 del reinicio manual, los cinco archivos coincidieron con la referencia y no quedaron
-mensajes ready ni unacked. El cleanup también se validó con una topología real:
-se publicaron artículos, se comprobó que InputBatcher hubiera persistido la
-ejecución y se cortó el socket del cliente sin enviar `INPUT_END`. Las 46 réplicas
-alcanzadas eliminaron el estado y persistieron su tombstone, desaparecieron la
-cola exclusiva de resultados y el buffer de Q5, y RabbitMQ quedó sin mensajes
-ready ni unacked. Esto cierra propagación, recuperación y cleanup. Restan el plano
-de control de fallos —salud, FailureManagers, Bully y reinicio automático—, Chaos
-Monkey y la medición de overhead.
+mensajes ready ni unacked. Esta prueba midió recuperación de datos con reinicio
+manual.
+
+El cleanup se validó también con una topología real: se publicaron artículos, se
+comprobó que InputBatcher hubiera persistido la ejecución y se cortó el socket del
+cliente sin enviar `INPUT_END`. Las 46 réplicas alcanzadas eliminaron el estado y
+persistieron su tombstone, desaparecieron la cola exclusiva de resultados y el
+buffer de Q5, y RabbitMQ quedó sin mensajes ready ni unacked.
+
+Chaos Monkey ya puede inyectar `SIGKILL` según un schedule reproducible
+derivado de la seed. Registra el schedule, los servicios seleccionados, los
+saltos y la confirmación de Compose. Excluye Gateway, RabbitMQ y el cliente. El
+runner compara Q1–Q5 con la referencia serial, aísla los volúmenes de cada corrida
+y audita estado, tombstones, buffers y colas antes de bajar Compose. La matriz y el
+barrido de intervalos quedan preparados, pero su validación con reposición
+automática depende todavía del plano de control del bloque 5.
 
 ---
 
@@ -1231,7 +1239,7 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 
 ### 22.2 Evidencia disponible al corte
 
-- La suite local completa pasa con 320 tests.
+- La suite local completa pasa con 343 tests.
 - Las pruebas de tolerancia reconstruyen estado durable de InputBatcher, QueryRouter,
   Q3WordAggregator, Q5AverageReducer y ResultSink; incluyen caída antes de publicar,
   barrera incompleta, fan-out parcialmente confirmado y redelivery al cliente.
@@ -1381,7 +1389,31 @@ tamaño; el informe conserva los valores necesarios para la entrega. Al finaliza
 la implementación se repetirá el mismo procedimiento con tolerancia habilitada y
 sin fallas. El overhead temporal se calculará como
 `(tiempo_tolerante - tiempo_base) / tiempo_base * 100`; las corridas con Chaos se
-reportarán por separado porque miden recuperación, no costo estacionario.
+reportarán por separado para medir el costo de recuperación.
+
+### 22.4 Smoke de la instrumentación del benchmark
+
+Se ejecutaron tres corridas sin fallas sobre los primeros 1.200 artículos de
+`wikipedia_small_sample.parquet`, con un límite de batch de 1 MiB. El Parquet
+del smoke tiene SHA-256
+`22cb6e1b4d9760da7d0c704a5edcf6fc483dd6ec33e1c3d992acf2ab562d2e32`.
+El runner registró el commit `a47cfbf` con cambios locales de instrumentación.
+Las tres corridas coincidieron con la referencia serial. Q1–Q5 produjeron
+respectivamente 52, 0, 0, 20 y 590 registros.
+
+| Métrica | Corrida 1 | Corrida 2 | Corrida 3 | Mediana |
+|---|---:|---:|---:|---:|
+| Duración (s) | 11,00 | 9,28 | 7,00 | 9,28 |
+| Artículos por segundo | 109,07 | 129,33 | 171,39 | 129,33 |
+| Primer resultado persistido (s) | 0,741 | 0,855 | 0,745 | 0,745 |
+| Bytes lógicos de journals de InputBatcher | 7.759.806 | 7.759.806 | 7.759.806 | 7.759.806 |
+
+Se reconstruyó el tamaño de cada una de las nueve generaciones del journal a
+partir de los mensajes serializados. De los 1.200 artículos, 1.192 se
+escribieron en el journal y ocho dispararon un checkpoint de batch. La comparación de overhead
+requiere repetir las tres corridas con el dataset y la configuración del
+baseline de la sección 22.3. La matriz y el barrido de intervalos requieren
+evidencia de elección, reinicio y recuperación automática.
 
 ---
 
@@ -1400,6 +1432,22 @@ La demo final deberá ensayarse y ser reproducible. El recorrido previsto es:
 9. Demostrar igualdad de los cinco archivos.
 10. Enviar SIGTERM y mostrar el cierre ordenado.
 11. Explicar con los diagramas dónde se encuentra el estado y cómo se completan las barreras.
+
+Para ensayar tolerancia a fallos cuando esté integrado el bloque 5:
+
+1. Generar la referencia serial para el mismo Parquet y ejecutar el benchmark
+   con intervalos de cinco segundos, una seed fija y un proyecto Compose
+   dedicado. Ejecutar primero la matriz representativa.
+2. En otra terminal, seguir `run-01/chaos.jsonl` con
+   `uv run python -m scripts.chaos monitor --follow <ruta-al-log>`. Identificar el
+   servicio afectado y el instante de la inyección.
+3. En los logs de FailureManager, seguir la detección, la elección Bully cuando
+   corresponde, la decisión de reinicio y el retorno del servicio.
+4. Revisar en `run.json` la comparación Q1–Q5 y el resultado de cleanup.
+   Conservar `chaos.jsonl`, `client.log`, `compose.log`, `metrics.jsonl` y
+   `summary.json` junto a la configuración de la corrida.
+5. Ejecutar aparte la desconexión de un cliente y verificar el cierre de sus
+   recursos. Completar el barrido de intervalos y la comparación con el baseline.
 
 ---
 
