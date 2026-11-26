@@ -7,10 +7,9 @@
 
 import argparse
 import json
-import os
 import signal
-import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from contextlib import closing
 from datetime import datetime
@@ -24,24 +23,14 @@ SKIP_REASONS = {
 
 
 def follow_log(path: Path) -> Iterator[str]:
-    command = [
-        "tail",
-        "-n",
-        "+1",
-        "-F",
-        f"--pid={os.getpid()}",
-        "--",
-        str(path.absolute()),
-    ]
-    with subprocess.Popen(command, stdout=subprocess.PIPE, encoding="utf-8") as tail:
-        try:
-            assert tail.stdout is not None
-            yield from tail.stdout
-            if tail.wait() != 0:
-                raise OSError(f"tail exited with status {tail.returncode}")
-        finally:
-            if tail.poll() is None:
-                tail.terminate()
+    """Yield existing and appended lines without depending on GNU tail."""
+    with path.open(encoding="utf-8") as log:
+        while True:
+            line = log.readline()
+            if line:
+                yield line
+            else:
+                time.sleep(0.2)
 
 
 def read_lines(path: Path, follow: bool) -> Iterator[str]:

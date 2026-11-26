@@ -382,6 +382,39 @@ def execution_ids_from_logs(log: Path) -> list[str]:
         return sorted({match[1] for line in lines if (match := pattern.search(line))})
 
 
+def queue_cleanup_findings(output: str, execution_id: str) -> list[str]:
+    """Describe result queues or pending deliveries that cleanup left behind."""
+    start = output.find("[")
+    end = output.rfind("]")
+    if start < 0 or end < start:
+        raise ValueError("rabbitmqctl did not return a JSON array")
+    queues = json.loads(output[start : end + 1])
+    if not isinstance(queues, list):
+        raise ValueError("rabbitmqctl queue output is not a list")
+
+    findings = []
+    result_queue = f"results.{execution_id}"
+    for queue in queues:
+        if not isinstance(queue, dict):
+            raise ValueError("rabbitmqctl returned an invalid queue entry")
+        name = queue.get("name")
+        ready = queue.get("messages_ready")
+        unacked = queue.get("messages_unacknowledged")
+        if (
+            not isinstance(name, str)
+            or type(ready) is not int
+            or type(unacked) is not int
+            or ready < 0
+            or unacked < 0
+        ):
+            raise ValueError("rabbitmqctl returned invalid queue counters")
+        if name == result_queue:
+            findings.append(f"temporary queue still exists: {name}")
+        if ready or unacked:
+            findings.append(f"{name}: ready={ready}, unacked={unacked}")
+    return findings
+
+
 def verify_cleanup(
     compose: list[str], cwd: Path, env: dict[str, str], log: Path, timeout: float
 ) -> dict[str, Any]:
@@ -420,19 +453,55 @@ def verify_cleanup(
         }
         if "result-sink" not in state_services:
             raise ValueError("Compose configuration has no persistent ResultSink")
+        input_batchers = {
+            name: int(environment["INPUT_BATCHER_PARTITION_ID"])
+            for name, environment in state_services.items()
+            if "INPUT_BATCHER_PARTITION_ID" in environment
+        }
+        selected_input_batcher = None
+        if input_batchers:
+            partition_count = max(input_batchers.values()) + 1
+            partition = (
+                int.from_bytes(hashlib.sha256(execution_id.encode()).digest(), "big")
+                % partition_count
+            )
+            selected_input_batcher = next(
+                (
+                    name
+                    for name, partition_id in input_batchers.items()
+                    if partition_id == partition
+                ),
+                None,
+            )
+            if selected_input_batcher is None:
+                raise ValueError(
+                    f"Compose has no InputBatcher for selected partition {partition}"
+                )
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         return {"passed": False, "execution_id": execution_id, "error": str(error)}
 
     def inspect(service: str) -> tuple[str, list[str]]:
         try:
             if service == "rabbitmq":
-                queue = f"results.{execution_id}"
                 queues = query(
-                    "exec", "-T", service, "rabbitmqctl", "-q", "list_queues", "name"
+                    "exec",
+                    "-T",
+                    service,
+                    "rabbitmqctl",
+                    "-q",
+                    "list_queues",
+                    "name",
+                    "messages_ready",
+                    "messages_unacknowledged",
+                    "--formatter",
+                    "json",
                 )
-                return service, [queue] if queue in queues.splitlines() else []
+                return service, queue_cleanup_findings(queues, execution_id)
 
             service_env = state_services[service]
+            expects_tombstone = (
+                service not in input_batchers or service == selected_input_batcher
+            )
             paths = query(
                 "exec",
                 "-T",
@@ -445,10 +514,10 @@ def verify_cleanup(
                 if [ -n "$3" ] && [ -e "$3/$4" ]; then
                     printf '%s\n' "$3/$4"
                 fi
-                if [ "$5" = result-sink ]; then
-                    marker="$1/result_sink/partition-0/tombstones/$2.json"
+                if [ "$5" = yes ]; then
+                    marker=$(find "$1" -type f -path "*/tombstones/$2.json" -print -quit)
                     if [ ! -s "$marker" ] || ! grep -Eq '"expires_at"[[:space:]]*:[[:space:]]*[0-9]' "$marker"; then
-                        echo "ResultSink cleanup marker is missing or incomplete"
+                        echo "Cleanup marker is missing or incomplete"
                     fi
                 fi
                 """,
@@ -457,7 +526,7 @@ def verify_cleanup(
                 execution_id,
                 service_env.get("Q5_BUFFER_DIRECTORY", ""),
                 candidate,
-                service,
+                "yes" if expects_tombstone else "no",
             )
             return service, paths.splitlines()
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
@@ -744,7 +813,7 @@ def main() -> int:
             output_dir.mkdir(parents=True)
             run_env = base_env | {"DISTRIBUTED_OUTPUT_DIR": str(output_dir)}
             run_command(
-                [*compose_command, "down", "--remove-orphans"],
+                [*compose_command, "down", "--volumes", "--remove-orphans"],
                 cwd=repo_root,
                 env=run_env,
                 check=False,
@@ -926,14 +995,14 @@ def main() -> int:
             )
             runs.append(run_result)
             run_command(
-                [*compose_command, "down", "--remove-orphans"],
+                [*compose_command, "down", "--volumes", "--remove-orphans"],
                 cwd=repo_root,
                 env=run_env,
                 check=False,
             )
     finally:
         run_command(
-            [*compose_command, "down", "--remove-orphans"],
+            [*compose_command, "down", "--volumes", "--remove-orphans"],
             cwd=repo_root,
             env=base_env,
             check=False,

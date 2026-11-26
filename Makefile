@@ -7,6 +7,7 @@ RUNS ?= 3
 BENCHMARK_RESULTS ?= benchmarks/results
 BENCHMARK_PROJECT ?= wikipedia-benchmark
 BENCHMARK_SAMPLE_SECONDS ?= 5
+CLEANUP_SMOKE_PROJECT ?= wikipedia-cleanup-smoke
 SMOKE_DATASET ?= datasets/wikipedia_sample.parquet
 BASELINE_DATASET ?= datasets/wikipedia_benchmark_12.parquet
 BASELINE_SHARDS ?= 12
@@ -14,7 +15,7 @@ BASELINE_SHARDS ?= 12
 
 .PHONY: setup test reference compare client gateway lint lint-fix check \
 	benchmark-smoke-dataset benchmark-smoke benchmark-baseline-dataset \
-	benchmark-baseline
+	benchmark-baseline cleanup-smoke
 
 
 setup:
@@ -27,12 +28,12 @@ test:
 	PYTHONPATH=src $(PYTHON) -m unittest discover -s test -v
 
 lint:
-	$(PYTHON) -m ruff check src test scripts/run_benchmark.py scripts/chaos_monkey.py scripts/monitor_chaos.py scripts/compare_benchmarks.py scripts/sweep_chaos_intervals.py scripts/run_chaos_matrix.py scripts/chaos.py scripts/chaos_benchmark.py
-	$(PYTHON) -m ruff format --check src test scripts/run_benchmark.py scripts/chaos_monkey.py scripts/monitor_chaos.py scripts/compare_benchmarks.py scripts/sweep_chaos_intervals.py scripts/run_chaos_matrix.py scripts/chaos.py scripts/chaos_benchmark.py
+	$(PYTHON) -m ruff check src test scripts
+	$(PYTHON) -m ruff format --check src test scripts
 
 lint-fix:
-	$(PYTHON) -m ruff check --fix src test scripts/run_benchmark.py scripts/chaos_monkey.py scripts/monitor_chaos.py scripts/compare_benchmarks.py scripts/sweep_chaos_intervals.py scripts/run_chaos_matrix.py scripts/chaos.py scripts/chaos_benchmark.py
-	$(PYTHON) -m ruff format src test scripts/run_benchmark.py scripts/chaos_monkey.py scripts/monitor_chaos.py scripts/compare_benchmarks.py scripts/sweep_chaos_intervals.py scripts/run_chaos_matrix.py scripts/chaos.py scripts/chaos_benchmark.py
+	$(PYTHON) -m ruff check --fix src test scripts
+	$(PYTHON) -m ruff format src test scripts
 
 check: lint
 
@@ -72,6 +73,10 @@ benchmark-baseline: benchmark-baseline-dataset
 		--results-root $(BENCHMARK_RESULTS) \
 		--project-name $(BENCHMARK_PROJECT) \
 		--sample-seconds $(BENCHMARK_SAMPLE_SECONDS)
+
+cleanup-smoke:
+	PYTHONPATH=src $(PYTHON) scripts/run_cleanup_smoke.py \
+		--project-name $(CLEANUP_SMOKE_PROJECT)
 
 up:
 	COMPOSE_HTTP_TIMEOUT=300 docker compose -f docker-compose.yaml up --build --remove-orphans --detach

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -10,6 +11,7 @@ from scripts.run_benchmark import (
     multiset_fingerprint,
     parse_io_bytes,
     parse_memory_bytes,
+    queue_cleanup_findings,
     read_first_result_seconds,
     read_journal_bytes,
     resolve_dataset,
@@ -188,7 +190,20 @@ class BenchmarkHelpersTest(unittest.TestCase):
             if "config" in command:
                 output = json.dumps(config)
             elif "rabbitmqctl" in command:
-                output = f"results.{execution_id}\n"
+                output = json.dumps(
+                    [
+                        {
+                            "name": f"results.{execution_id}",
+                            "messages_ready": 0,
+                            "messages_unacknowledged": 0,
+                        },
+                        {
+                            "name": "pipeline.input",
+                            "messages_ready": 2,
+                            "messages_unacknowledged": 1,
+                        },
+                    ]
+                )
             else:
                 output = f"/state/result_sink/partition-0/active/{execution_id}.json\n"
             return subprocess.CompletedProcess(command, 0, output, "")
@@ -204,8 +219,101 @@ class BenchmarkHelpersTest(unittest.TestCase):
 
         self.assertFalse(verdict["passed"])
         self.assertEqual(verdict["execution_id"], execution_id)
-        self.assertEqual(verdict["remaining"]["rabbitmq"], [f"results.{execution_id}"])
+        self.assertEqual(
+            verdict["remaining"]["rabbitmq"],
+            [
+                f"temporary queue still exists: results.{execution_id}",
+                "pipeline.input: ready=2, unacked=1",
+            ],
+        )
         self.assertIn("result-sink", verdict["remaining"])
+
+    def test_queue_cleanup_requires_every_queue_to_be_drained(self):
+        execution_id = "e1-123-" + "b" * 32
+        drained = json.dumps(
+            [
+                {
+                    "name": "pipeline.input",
+                    "messages_ready": 0,
+                    "messages_unacknowledged": 0,
+                }
+            ]
+        )
+        pending = json.dumps(
+            [
+                {
+                    "name": "pipeline.input",
+                    "messages_ready": 1,
+                    "messages_unacknowledged": 0,
+                }
+            ]
+        )
+
+        self.assertEqual(queue_cleanup_findings(drained, execution_id), [])
+        self.assertEqual(
+            queue_cleanup_findings(pending, execution_id),
+            ["pipeline.input: ready=1, unacked=0"],
+        )
+
+    @patch("scripts.run_benchmark.subprocess.run")
+    def test_cleanup_requires_only_the_selected_input_batcher_tombstone(self, run):
+        execution_id = "e1-123-" + "c" * 32
+        config = {
+            "services": {
+                "input-batcher-0": {
+                    "environment": {
+                        "STATE_ROOT": "/state",
+                        "INPUT_BATCHER_PARTITION_ID": "0",
+                    }
+                },
+                "input-batcher-1": {
+                    "environment": {
+                        "STATE_ROOT": "/state",
+                        "INPUT_BATCHER_PARTITION_ID": "1",
+                    }
+                },
+                "result-sink": {"environment": {"STATE_ROOT": "/state"}},
+            }
+        }
+        inspections = []
+
+        def compose_query(command, **kwargs):
+            if "config" in command:
+                output = json.dumps(config)
+            elif "rabbitmqctl" in command:
+                output = json.dumps(
+                    [
+                        {
+                            "name": "pipeline.input",
+                            "messages_ready": 0,
+                            "messages_unacknowledged": 0,
+                        }
+                    ]
+                )
+            else:
+                inspections.append((command[4], command[-1]))
+                output = ""
+            return subprocess.CompletedProcess(command, 0, output, "")
+
+        run.side_effect = compose_query
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "compose.log"
+            log.write_text(
+                f"gateway-1 | Execution {execution_id}: starting upload\n",
+                encoding="utf-8",
+            )
+            verdict = verify_cleanup(["docker", "compose"], Path(directory), {}, log, 0)
+
+        selected_partition = (
+            int.from_bytes(hashlib.sha256(execution_id.encode()).digest(), "big") % 2
+        )
+        expected = {
+            "input-batcher-0": "yes" if selected_partition == 0 else "no",
+            "input-batcher-1": "yes" if selected_partition == 1 else "no",
+            "result-sink": "yes",
+        }
+        self.assertTrue(verdict["passed"])
+        self.assertEqual(dict(inspections), expected)
 
     def test_only_confirmed_injections_count(self):
         with tempfile.TemporaryDirectory() as directory:
