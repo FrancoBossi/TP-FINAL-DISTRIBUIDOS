@@ -34,3 +34,14 @@ class ResultSinkConfig:
     state_root: Path = field(
         default_factory=lambda: Path(os.environ.get("STATE_ROOT", "/state"))
     )
+    input_batcher_queue_prefix: str = field(
+        default_factory=lambda: os.environ.get(
+            "INPUT_BATCHER_QUEUE_PREFIX", "input_batcher.input"
+        )
+    )
+    input_batcher_partitions: int = field(
+        default_factory=lambda: int(os.environ.get("INPUT_BATCHER_PARTITIONS", "1"))
+    )
+    cleanup_queues: tuple[str, ...] = field(
+        default_factory=lambda: tuple(os.environ.get("CLEANUP_QUEUES", "").split())
+    )

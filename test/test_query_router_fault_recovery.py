@@ -4,7 +4,11 @@ from pathlib import Path
 from unittest.mock import Mock, call
 
 from common.message_identity import build_control_message_id
-from common.message_protocol.message import PartitionEndMessage
+from common.message_protocol.message import (
+    ExecutionCleanupMessage,
+    NormalizedArticleBatchMessage,
+    PartitionEndMessage,
+)
 from common.persistence import PersistenceLayout
 from query_router.controller import QueryRouterController
 
@@ -42,6 +46,31 @@ class TestQueryRouterFaultRecovery(unittest.TestCase):
                 partition_id=partition_id,
             ),
         )
+
+    def test_cleanup_discards_late_data_and_controls_after_restart(self):
+        controller = self._controller(Mock())
+        end = self._end(0)
+        controller.process_control_message(end)
+        controller.process_control_message(
+            ExecutionCleanupMessage(end.execution_id, "cleanup", "client_disconnected")
+        )
+
+        messaging = Mock()
+        restarted = self._controller(messaging)
+        restarted.start()
+        restarted.process_control_message(self._end(1))
+        ack, nack = Mock(), Mock()
+        restarted.process_message(
+            NormalizedArticleBatchMessage([], end.execution_id, end.reply_queue),
+            ack,
+            nack,
+        )
+
+        self.assertFalse(self.layout.state_path(end.execution_id).parent.exists())
+        ack.assert_called_once()
+        nack.assert_not_called()
+        messaging.publish_q1_q2.assert_not_called()
+        messaging.publish_text.assert_not_called()
 
     def test_restart_restores_incomplete_barrier(self):
         first_messaging = Mock()

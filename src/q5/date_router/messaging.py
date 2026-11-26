@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from common.coordinated_consumer import (
     ControlMessageCallback,
     CoordinatedConsumer,
@@ -51,8 +53,13 @@ class Q5DateRouterMessaging:
         self,
         on_message: MessageCallback,
         on_control_message: ControlMessageCallback,
+        on_idle: Callable[[], None] | None = None,
     ) -> None:
-        self._consumer.start_consuming(on_message, on_control_message)
+        self._consumer.start_consuming(
+            on_message,
+            on_control_message,
+            **({"on_idle": on_idle} if on_idle is not None else {}),
+        )
 
     def stop_consuming(self) -> None:
         self._consumer.stop_consuming()

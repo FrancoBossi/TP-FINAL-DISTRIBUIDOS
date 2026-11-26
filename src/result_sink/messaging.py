@@ -1,6 +1,12 @@
 from collections.abc import Callable
 
-from common.message_protocol.message import Message, QueryEndMessage, ResultMessage
+from common.message_protocol.message import (
+    ExecutionCleanupMessage,
+    ExecutionFailedMessage,
+    Message,
+    QueryEndMessage,
+    ResultMessage,
+)
 from common.middleware.middleware import (
     MessageMiddlewarePublisher,
     MessageMiddlewareQueue,
@@ -23,7 +29,17 @@ class ResultSinkMessaging:
     def publish(self, message: ResultMessage | QueryEndMessage) -> None:
         self._publisher.send_to(f"results.{message.execution_id}", message.serialize())
 
-    def start_consuming(self, on_message: MessageCallback) -> None:
+    def enqueue_timeout(self, message: ExecutionFailedMessage) -> None:
+        self._input_queue.send(message.serialize())
+
+    def publish_cleanup(
+        self, destination: str, message: ExecutionCleanupMessage
+    ) -> None:
+        self._publisher.send_to(destination, message.serialize())
+
+    def start_consuming(
+        self, on_message: MessageCallback, on_idle: Callable[[], None] | None = None
+    ) -> None:
         def deserialize_message(body: bytes, ack: Ack, nack: Nack) -> None:
             try:
                 message = Message.deserialize(body)
@@ -32,7 +48,9 @@ class ResultSinkMessaging:
                 raise
             on_message(message, ack, nack)
 
-        self._input_queue.start_consuming(deserialize_message)
+        self._input_queue.start_consuming(
+            deserialize_message, **({"on_idle": on_idle} if on_idle is not None else {})
+        )
 
     def stop_consuming(self) -> None:
         self._input_queue.stop_consuming()

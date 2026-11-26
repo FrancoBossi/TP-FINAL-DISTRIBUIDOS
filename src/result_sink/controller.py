@@ -1,9 +1,14 @@
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 
-from common.message_identity import build_result_message_ids
+from common.cleanup_outbox import CleanupOutbox
+from common.execution_cleanup import ExecutionCleanup
+from common.message_identity import build_message_id, build_result_message_ids
 from common.message_protocol.external import QUERY_IDS, validate_result
 from common.message_protocol.message import (
+    ExecutionFailedMessage,
+    ExecutionLifecycleMessage,
+    ExecutionStartedMessage,
     Message,
     QueryEndMessage,
     QueryPartitionEndMessage,
@@ -17,6 +22,7 @@ from common.persistence import (
     PersistenceCorruptionError,
     PersistenceLayout,
 )
+from result_sink.active_executions import ActiveExecutions
 from result_sink.messaging import Ack, Nack, ResultSinkMessaging
 
 logger = logging.getLogger(__name__)
@@ -28,6 +34,7 @@ class ResultSinkController:
         messaging: ResultSinkMessaging,
         partition_counts: Mapping[int, int],
         persistence_layout: PersistenceLayout | None = None,
+        cleanup_destinations: Callable[[str], Iterable[str]] | None = None,
     ) -> None:
         if set(partition_counts) != QUERY_IDS:
             raise ValueError("partition_counts must configure queries 1 through 5")
@@ -39,6 +46,29 @@ class ResultSinkController:
         self._partition_counts = dict(partition_counts)
         self._ended_partitions: dict[tuple[str, int], set[int]] = {}
         self._persistence_layout = persistence_layout
+        self._cleanup = (
+            ExecutionCleanup(persistence_layout, retention_seconds=3600)
+            if persistence_layout is not None
+            else None
+        )
+        self._active = (
+            ActiveExecutions(persistence_layout)
+            if persistence_layout is not None
+            else None
+        )
+        self._cleanup_outbox = None
+        if cleanup_destinations is not None:
+            if persistence_layout is None:
+                raise ValueError("cleanup fan-out requires a persistence layout")
+            self._cleanup_outbox = CleanupOutbox(
+                PersistenceLayout(
+                    persistence_layout.root,
+                    f"{persistence_layout.component}_lifecycle",
+                    persistence_layout.partition_id,
+                ),
+                cleanup_destinations,
+                messaging.publish_cleanup,
+            )
         self._stores: dict[str, DurableExecutionStore] = {}
 
     def process_message(self, message: Message, ack: Ack, nack: Nack) -> None:
@@ -62,7 +92,14 @@ class ResultSinkController:
 
     def _process_durable(self, message: Message, ack: Ack, nack: Nack) -> None:
         if not isinstance(
-            message, (ResultMessage, QueryEndMessage, QueryPartitionEndMessage)
+            message,
+            (
+                ResultMessage,
+                QueryEndMessage,
+                QueryPartitionEndMessage,
+                ExecutionLifecycleMessage,
+                ExecutionStartedMessage,
+            ),
         ):
             nack()
             raise ValueError(
@@ -70,6 +107,18 @@ class ResultSinkController:
             )
         try:
             self._validate_execution_id(message.execution_id)
+            if isinstance(message, ExecutionStartedMessage):
+                if not self._cleanup.is_closed(message.execution_id):
+                    self._active.register(message.execution_id, message.expires_at)
+                ack()
+                return
+            if isinstance(message, ExecutionLifecycleMessage):
+                self._apply_terminal(message)
+                ack()
+                return
+            if self._cleanup.is_closed(message.execution_id):
+                ack()
+                return
             if isinstance(message, (ResultMessage, QueryEndMessage)):
                 validate_result(message, set())
             store = self._store_for(message.execution_id)
@@ -186,8 +235,50 @@ class ResultSinkController:
                 )
             store.confirm(output)
 
+    def _apply_terminal(self, message: ExecutionLifecycleMessage) -> None:
+        execution_id = message.execution_id
+        outbox = self._cleanup_outbox
+        if outbox is not None and not self._cleanup.has_marker(execution_id):
+            outbox.prepare(message)
+        self._cleanup.cleanup(execution_id, self._clear_execution)
+        self._active.remove(execution_id)
+        if outbox is not None:
+            outbox.drain(execution_id)
+
+    def _clear_execution(self, execution_id: str) -> None:
+        self._stores.pop(execution_id, None)
+        for query_id in QUERY_IDS:
+            self._ended_partitions.pop((execution_id, query_id), None)
+
+    def _sweep(self) -> None:
+        for execution_id in self._active.expired():
+            # Queue the timeout behind terminal events already accepted by RabbitMQ.
+            self._messaging.enqueue_timeout(
+                ExecutionFailedMessage(
+                    execution_id=execution_id,
+                    message_id=build_message_id(
+                        execution_id=execution_id,
+                        producer_id="result_sink",
+                        operation=ExecutionFailedMessage.type,
+                        identity={"cause": "timeout"},
+                    ),
+                    cause="timeout",
+                )
+            )
+            self._active.mark_scheduled(execution_id)
+        self._cleanup.sweep()
+
     def _recover(self):
+        self._active.recover()
+        self._cleanup.recover(self._clear_execution)
+        if self._cleanup_outbox is not None:
+            for execution_id in self._cleanup_outbox.execution_ids():
+                self._cleanup.cleanup(execution_id, self._clear_execution)
+                self._active.remove(execution_id)
+                self._cleanup_outbox.drain(execution_id)
         for execution_id in self._persistence_layout.execution_ids():
+            if self._cleanup.is_closed(execution_id):
+                continue
             store = self._store_for(execution_id)
             self._decode_state(store.state)
             self._publish_pending(store)
@@ -260,7 +351,10 @@ class ResultSinkController:
     def start(self) -> None:
         if self._persistence_layout is not None:
             self._recover()
-        self._messaging.start_consuming(self.process_message)
+        self._messaging.start_consuming(
+            self.process_message,
+            **({"on_idle": self._sweep} if self._cleanup is not None else {}),
+        )
 
     def stop(self) -> None:
         self._messaging.stop_consuming()

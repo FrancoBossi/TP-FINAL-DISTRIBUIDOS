@@ -339,7 +339,7 @@ válido; el receptor la descarta por `message_id`.
 | Después del `fsync` y antes de publicar | Entrada aplicada y outbox pendiente | Reinicio publica la outbox sin reaplicar el estado |
 | En medio de un fan-out | Algunas salidas pudieron publicarse | Reinicio publica todas con los mismos IDs; downstream deduplica |
 | Después de confirmar publicaciones y antes del ACK de entrada | Estado y salidas están completos | La entrada se reentrega, inbox evita reaplicarla y se vuelve a confirmar |
-| Después del ACK y antes de compactar | El journal aún contiene información redundante | Recuperación conserva el resultado; compactar nunca cambia semántica |
+| Después del checkpoint de InputBatcher y antes de retirar el journal anterior | El journal viejo contiene información redundante | La generación confirmada hace que recuperación lo ignore y elimine |
 | Al aplicar una salida duplicada | Inbox ya contiene su `message_id` | No modifica estado ni vuelve a producir efectos lógicos |
 | Después de escribir un resultado y antes del ACK del cliente | `result_id` está durable en Client | El reenvío no agrega otra línea y el cliente repite el ACK |
 
@@ -385,6 +385,21 @@ aunque su transformación de DATA sea pura.
 
 ### Herramienta Chaos Monkey
 
+Desde la raíz del repositorio, usar `uv run python -m scripts.chaos --help`
+para ver los subcomandos. También se puede ejecutar con `.venv/bin/python -m
+scripts.chaos`. Los subcomandos `sweep` y `matrix` usan el benchmark y
+requieren las dependencias de `make setup`.
+
+| Subcomando | Uso |
+|---|---|
+| `inject` | Inyectar caídas en un proyecto Compose activo. |
+| `monitor` | Mostrar el historial de inyecciones o seguirlo en vivo. |
+| `sweep` | Comparar intervalos de inyección y reportar el menor que superó las verificaciones. |
+| `matrix` | Listar o ejecutar escenarios por tipo de servicio. |
+
+Cada subcomando tiene su propio `--help`. Los comandos anteriores siguen
+disponibles para los scripts existentes.
+
 La herramienta será propia y separada de los supervisores:
 
 - Recibe seed, intervalo, cantidad máxima de fallas y allowlist de targets.
@@ -407,6 +422,37 @@ La herramienta será propia y separada de los supervisores:
 - Docker puede utilizarse aquí para **introducir** la falla; esta información no se
   comparte como detector de disponibilidad con los supervisores.
 
+Con el proyecto de Compose ya levantado y el cliente en ejecución, el inyector
+puede ejecutarse desde otra terminal:
+
+```sh
+uv run python -m scripts.chaos inject \
+  --target preprocessor-0 --target q3-word-aggregator-0 \
+  --seed 42 --interval 5 --max-failures 8 --log chaos.jsonl
+```
+
+Si Compose se levantó con `-p`, pasar ese mismo nombre con `--project-name`.
+Si se omite, Docker Compose resuelve el nombre del proyecto con su configuración
+habitual. El log debe ser un archivo nuevo. El primer ciclo se programa después del intervalo indicado.
+`--batch-size` permite incluir varios servicios distintos en un ciclo.
+`--max-failures` limita los intentos programados: si un servicio ya está caído,
+se registra el salto sin cambiar el calendario. Las réplicas supervisoras deben
+usar nombres de servicio `failure-manager-*` para que el inyector preserve al
+menos una según el estado observado antes de cada ciclo. Usar un solo inyector
+por proyecto. El inyector registra las caídas y la supervisión se ocupa de
+reiniciar los procesos.
+
+Para observar Chaos Monkey en otra terminal:
+
+```sh
+uv run python -m scripts.chaos monitor --follow chaos.jsonl
+```
+
+Pasar el `chaos.jsonl` de la ejecución para monitorear un benchmark. Sin
+`--follow`, el comando muestra el historial y sale. El monitor muestra el SCHEDULE, los intentos, las
+confirmaciones de Compose y el motivo de cada skip. Una confirmación indica
+que Compose ejecutó el stop.
+
 El escenario automatizado mínimo deberá:
 
 1. Generar o verificar la referencia serial.
@@ -419,6 +465,27 @@ El escenario automatizado mínimo deberá:
    procesos caídos mediante comunicación.
 8. Verificar que no quedaron recursos de la ejecución.
 9. Guardar logs y resumen del escenario como evidencia.
+
+Para incorporar estas caídas a una corrida de benchmark:
+
+```sh
+.venv/bin/python scripts/run_benchmark.py \
+  --dataset datasets/wikipedia_sample.parquet --expected-output output/reference \
+  --project-name wikipedia-chaos --timeout-seconds 1800 \
+  --chaos-target preprocessor-0 --chaos-target q3-word-aggregator-0 \
+  --chaos-seed 42 --chaos-interval 5 --chaos-max-failures 8
+```
+
+Si Compose falla al levantar el entorno, consultar `startup.log` y `compose.log`
+en el directorio de la corrida. Cada corrida con fallas
+guarda `chaos.jsonl`, `chaos.log`, `client.log` y `compose.log`. Para pasar
+debe confirmar al menos una inyección y coincidir con la referencia para
+Q1–Q5. Además, exige que desaparezca la cola temporal, que todas las colas
+queden sin mensajes `ready` ni `unacked`, que no subsistan estado o buffers de
+la ejecución y que cada réplica alcanzada conserve su tombstone. El runner
+detiene el inyector al terminar el cliente o vencer el plazo. Después de guardar
+la evidencia elimina containers y volúmenes; la siguiente repetición empieza sin
+estado durable heredado de una ejecución anterior.
 
 ### Plan de implementación
 
@@ -611,11 +678,15 @@ RabbitMQ quedó sin mensajes ready/unacked y todos los procesos volvieron a esta
 activos. Con esta evidencia queda cerrado el bloque 4; la detección y el reinicio
 automáticos pertenecen al bloque 5.
 
-Un intento previo con los 50.000 artículos mostró que el snapshot y `fsync` por
-entrada de InputBatcher drena demasiado lentamente para un smoke de fallos. No es
-un problema de corrección, pero sí un riesgo de performance que debe medirse y
-optimizarse antes del benchmark final, probablemente mediante journal incremental
-o commits agrupados sin debilitar el ACK durable.
+Un intento previo con los 50.000 artículos mostró que reescribir el snapshot
+completo y ejecutar `fsync` por cada entrada de InputBatcher drenaba demasiado
+lentamente para un smoke de fallos. InputBatcher ahora agrega cada artículo que no
+cierra un batch a `pending-<generation>.jsonl` y lo sincroniza antes del ACK. Sólo
+al cerrar un batch crea un checkpoint atómico con la nueva generación, el siguiente
+batch parcial y la outbox; luego elimina el journal anterior. Así el volumen escrito
+por artículo pasa de crecer con el batch parcial a ser proporcional al artículo.
+El benchmark final debe medir la mejora y el costo que todavía conserva el `fsync`
+por entrada.
 
 #### Bloque 5 - Supervisión, consenso y reinicio
 
@@ -645,24 +716,107 @@ o commits agrupados sin debilitar el ACK durable.
 
 #### Bloque 7 - Fallo terminal y cleanup distribuido
 
-- [ ] Implementar protocolo de éxito, aborto, timeout y cleanup idempotente.
-- [ ] Limpiar estado en memoria, archivos, volúmenes por ejecución y colas temporales.
-- [ ] Evitar recreación por mensajes tardíos mediante tombstones acotados.
-- [ ] Probar limpieza tanto de consultas resueltas como fallidas.
-- [ ] Interrumpir un cliente en un escenario separado y verificar que se liberen
+- [x] Implementar protocolo de éxito, aborto, timeout y cleanup idempotente.
+- [x] Limpiar estado en memoria, archivos, volúmenes por ejecución y colas temporales.
+- [x] Evitar recreación por mensajes tardíos mediante tombstones acotados.
+- [x] Probar limpieza tanto de consultas resueltas como fallidas.
+- [x] Interrumpir un cliente en un escenario separado y verificar que se liberen
   todos sus recursos aunque no forme parte de la demo completa.
+
+##### Cierre y distribución
+
+1. Antes de publicar artículos, Gateway envía `EXECUTION_STARTED` con el
+   `execution_id` y el vencimiento. RabbitMQ confirma la publicación y
+   ResultSink guarda el registro activo en disco antes de confirmar el consumo.
+   Gateway publica `EXECUTION_COMPLETED` después de recibir el ACK del cliente
+   para cada uno de los cinco `QUERY_END`. Si detecta una desconexión, un error
+   o un vencimiento, publica `EXECUTION_FAILED` con el `execution_id` y la
+   causa. Al cerrar la sesión se libera la cola exclusiva
+   `results.<execution_id>`.
+2. ResultSink recibe el evento terminal en su cola de entrada. Antes de borrar
+   su propio estado, registra en disco los destinos pendientes de
+   `EXECUTION_CLEANUP`. Usa el mismo ID lógico de limpieza para todos los
+   destinos y quita cada publicación de la outbox después de que RabbitMQ la
+   confirma. Si ResultSink se reinicia, recupera y publica las órdenes
+   pendientes antes de volver a consumir. También recupera las ejecuciones
+   activas. Si pasan cinco segundos desde el vencimiento sin un cierre
+   procesado, encola un `EXECUTION_FAILED` de respaldo en su propia cola.
+   Así, un evento terminal que ya estaba en cola se procesa primero.
+   El registro activo se elimina después de guardar la orden de limpieza y
+   cerrar el estado local.
+3. La orden llega a la partición de InputBatcher que recibió la entrada, a las
+   colas de control de las etapas coordinadas y a las colas de entrada
+   dedicadas de los agregadores, reducers y comparadores. Compose configura
+   esos destinos en `CLEANUP_QUEUES`. Cada réplica confirma su orden después de
+   aplicarla. La confirmación de publicación de RabbitMQ acredita la entrega
+   a la cola, mientras que el ACK del consumidor acredita el borrado local.
+
+Gateway usa `EXECUTION_TIMEOUT_SECONDS` (3600 por defecto) como plazo total
+desde que empieza a atender la sesión. El plazo cubre la carga, la espera de
+resultados y los ACK del cliente. Durante la espera, Gateway también detecta
+el cierre del socket antes del primer resultado. Preprocessor no tiene estado
+durable por ejecución y puede terminar trabajo que ya estaba en tránsito. Las
+etapas posteriores descartan sus salidas una vez aplicada la orden de limpieza.
+
+##### Limpieza, recuperación y mensajes tardíos
+
+Cada réplica guarda primero un *tombstone* durable. Luego elimina el estado en
+memoria y el directorio de la ejecución dentro de su volumen, incluidos inbox,
+outbox y snapshot. Q5 también elimina el archivo de candidatos. Si la réplica
+cae a mitad del borrado, al arrancar termina la limpieza antes de recuperar
+estado activo o publicar desde sus outboxes. Una orden repetida es idempotente.
+Los mensajes tardíos de una ejecución cerrada se confirman y descartan.
+
+Las ejecuciones nuevas incluyen en su ID un límite para trabajo tardío,
+calculado como el plazo de Gateway más una hora. Una réplica puede retirar la
+marca cuando hayan pasado tanto ese límite como una hora desde el borrado
+local. La revisión corre al arrancar y durante el consumo. Antes de retirar
+una marca, la réplica persiste un límite de rechazo que también se aplica al
+recuperar outboxes. Los IDs anteriores, sin fecha en el identificador,
+conservan sus marcas hasta que se pueda verificar el drenaje.
+
+El escenario reproducible de aceptación se ejecuta con:
+
+```bash
+make cleanup-smoke
+```
+
+El runner levanta una topología Compose aislada, publica artículos y espera a
+que InputBatcher persista estado. Luego corta el socket sin enviar `INPUT_END`.
+La prueba sólo pasa si todas las réplicas alcanzadas eliminan el directorio de
+la ejecución y guardan su tombstone, desaparecen la cola exclusiva
+`results.<execution_id>` y el buffer de Q5, y RabbitMQ queda sin mensajes
+`ready` ni `unacked`. Finalmente elimina containers y volúmenes del escenario.
+La corrida del 24/11/2026 pasó sobre las 46 réplicas alcanzadas por el cleanup.
 
 #### Bloque 8 - Chaos Monkey, benchmark, informe y demo
 
-- [ ] Implementar Chaos Monkey reproducible y escenarios automatizados.
-- [ ] Comenzar con una falla cada cinco segundos y reducir el intervalo hasta
-  encontrar el límite reproducible del sistema.
-- [ ] Ejecutar matriz de caídas sobre componentes representativos y luego sobre todos los tipos.
-- [ ] Comparar automáticamente resultados y recursos al terminar cada escenario.
+**Implementado y verificado**
+
+- [x] Implementar Chaos Monkey reproducible y el monitor del log de inyecciones.
+- [x] Automatizar la matriz por tipo de servicio y el barrido de intervalos,
+  conservando la evidencia de cada intento.
+- [x] Automatizar la comparación de Q1–Q5 y la auditoría de cleanup antes de
+  bajar Compose. Verificar ambas con caídas reales de InputBatcher y
+  ResultSink y reinicio manual.
 - [ ] Repetir benchmark sin fallas con tolerancia habilitada y calcular overhead contra el bloque 0.
 - [ ] Medir por separado el costo y tiempo de recuperación bajo fallas.
 - [ ] Actualizar `INFORME.md` y diagramas de robustez, despliegue, actividades, paquetes, secuencia y DAG.
 - [ ] Ensayar la demo completa con fallas periódicas y conservar logs de evidencia.
+
+**Pendiente**
+
+- [ ] Completar el bloque 5 y verificar en una ejecución real la detección,
+  elección Bully y reposición automática de servicios.
+- [ ] Ejecutar la matriz de caídas con reinicio automático, primero sobre
+  casos representativos y luego sobre todos los tipos. Completar los casos
+  dirigidos de la matriz que requieran una falla en un punto exacto.
+- [ ] Ejecutar el barrido desde cinco segundos y registrar el menor intervalo
+  probado que completa varias corridas correctas.
+- [ ] Medir el overhead a escala con al menos tres corridas válidas por
+  versión, sin fallas y con la misma configuración. Recuperar el Parquet
+  original de 612.475 artículos o volver a medir ambas versiones sobre la
+  reconstrucción, cuyo SHA-256 difiere del histórico.
 
 ### Matriz mínima de pruebas de fallos
 
@@ -684,7 +838,36 @@ o commits agrupados sin debilitar el ACK durable.
 | Ejecución fallida | Cliente informado y recursos eliminados |
 | Chaos Monkey cada cinco segundos | Cinco salidas iguales a referencia, sin duplicados ni recursos huérfanos |
 
+Para listar los escenarios de caída de procesos sin levantar Compose:
+
+```sh
+uv run python -m scripts.chaos matrix --scope representative --list
+uv run python -m scripts.chaos matrix --scope all --list
+```
+
+Para ejecutarlos, reemplazar `--list` por `--dataset`, `--expected-output`,
+`--output` y `--timeout-seconds` con sus valores. La matriz ejecuta tres
+ejecuciones por caso a intervalos de cinco segundos por defecto y guarda
+`matrix.json`, los logs y los resultados, incluidos los casos fallidos o
+pendientes. `--scope all` elige una réplica por tipo de servicio. Los casos
+en puntos específicos de persistencia, barrera o ACK requieren pruebas
+dirigidas adicionales.
+
 ### Comparación de performance
+
+Con tres o más ejecuciones válidas por caso, calcular la variación de las medianas:
+
+```sh
+.venv/bin/python -m scripts.compare_benchmarks \
+  ruta/baseline/summary.json ruta/sin-fallas/summary.json \
+  --faults ruta/con-fallas/summary.json
+```
+
+`--faults` es opcional. La ejecución sin fallas debe incluir verificación contra la
+referencia serial mediante `--expected-output`. El comparador exige el mismo
+SHA-256 del dataset y contrasta Q1–Q5 de cada ejecución exitosa. El JSON de salida
+incluye ejecuciones fallidas y separa la variación con tolerancia habilitada de la
+variación bajo fallas.
 
 La comparación debe separar el overhead normal de la recuperación:
 
@@ -694,6 +877,28 @@ La comparación debe separar el overhead normal de la recuperación:
   documentados; comenzar con intervalos de cinco segundos.
 - Ejecutar al menos tres corridas por caso y reportar mediana y dispersión, no una
   única medición.
+- El runner registra `first_result_seconds` desde el inicio del cliente hasta
+  que persiste el primer resultado, incluido su ID. Queda vacío si no hay
+  resultados o si la imagen del cliente no emite esa medición. `summary.json`
+  agrega mediana, desvío estándar muestral y cantidad de mediciones de las
+  ejecuciones válidas para duración, throughput, tiempo al primer resultado y
+  bytes de red recibidos y transmitidos. El total suma los contadores de los
+  contenedores e incluye tráfico interno. Cuando una muestra detecta que un
+  contador caído, el runner acumula el tramo nuevo. Un reinicio entre muestras
+  puede subestimar el total. Para ejecuciones sin fallas, los resúmenes anteriores
+  aportan sus contadores finales.
+- El runner suma CPU y memoria de los contenedores en cada muestra completa
+  de Docker. `stack_metrics` guarda CPU media y máxima, memoria máxima y el
+  número de muestras usadas. El comparador contrasta las medianas de estas
+  métricas entre ejecuciones. CPU puede superar el 100 % al usar más de un
+  núcleo. Para resúmenes anteriores, el comparador calcula estas métricas si
+  los archivos originales `run-*/metrics.jsonl` siguen disponibles.
+- `input_batcher_journal_bytes` suma el tamaño observado de cada journal
+  incremental de InputBatcher al retirarlo durante un checkpoint, recuperación
+  o cleanup. Usa el mayor tamaño por ejecución, partición y generación para
+  deduplicar reintentos. Requiere logs de InputBatcher a nivel INFO. Mide bytes
+  lógicos del journal y puede omitir un archivo si la ejecución termina antes de
+  que se registre su tamaño. El campo queda vacío cuando no hay muestras.
 - Medir tiempo total, artículos por segundo, tiempo hasta primer resultado, CPU,
   memoria, red, bytes escritos en journals y tiempo de recuperación.
 - Reducir progresivamente el intervalo entre fallas y documentar el menor valor
@@ -701,6 +906,23 @@ La comparación debe separar el overhead normal de la recuperación:
   ocultar una ejecución fallida.
 - Verificar Q1-Q5 en todas las corridas; una ejecución rápida pero incorrecta no
   forma parte de la comparación.
+
+Para barrer intervalos cuando esté disponible el reinicio automático:
+
+```sh
+uv run python -m scripts.chaos sweep \
+  --dataset datasets/wikipedia_benchmark_12.parquet \
+  --expected-output output/reference-benchmark \
+  --output benchmarks/results/interval-sweep \
+  --timeout-seconds 1800 --target preprocessor-0 \
+  --interval 5 --interval 2.5 --interval 1
+```
+
+Cada intervalo conserva los logs y los
+artefactos del benchmark. `sweep.json` registra todos los intentos y el menor
+intervalo probado que pasó. Para pasar, las tres ejecuciones deben coincidir
+con la referencia, verificar el cleanup y confirmar inyecciones en al menos
+dos ciclos distintos.
 
 ### Decisiones confirmadas con el corrector
 
@@ -1650,11 +1872,11 @@ El orden vigente es el del [plan de implementación de tolerancia a fallos](#pla
 
 ## Próximos pasos
 
-1. Completar pruebas de las ventanas de caída y de la compactación durable.
-2. Medir el costo de reescribir el snapshot parcial por artículo y cambiar a un
-   journal incremental si el I/O domina la ejecución.
-3. Hacer recuperables las colas de control antes de extender inbox/outbox a los
-   grupos coordinados.
+1. Implementar supervisión, Bully y reinicio automático mediante FailureManagers.
+2. Medir en el benchmark final el costo del journal incremental y del `fsync` por
+   artículo frente al baseline previo a tolerancia.
+3. Automatizar Chaos Monkey, la comparación Q1-Q5 y la verificación final de
+   recursos liberados.
 
 La topología base mantiene tres instancias en los grupos coordinados y tres
 particiones de InputBatcher. La comparación de performance del último hito debe

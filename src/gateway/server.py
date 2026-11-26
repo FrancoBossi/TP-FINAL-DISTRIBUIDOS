@@ -16,11 +16,13 @@ class ClientSession:
         address,
         messaging_factory: Callable[[str], GatewayMessaging],
         stop_event: threading.Event,
+        timeout_seconds: float | None = None,
     ) -> None:
         self._socket = client_socket
         self._address = address
         self._messaging_factory = messaging_factory
         self._stop_event = stop_event
+        self._timeout_seconds = timeout_seconds
         self._messaging: GatewayMessaging | None = None
         self._lock = threading.Lock()
         self._stopped = False
@@ -47,6 +49,7 @@ class ClientSession:
                 self._address,
                 self._create_messaging,
                 self._stop_event,
+                self._timeout_seconds,
             )
         finally:
             with self._lock:
@@ -82,6 +85,7 @@ def serve(
     port: int,
     messaging_factory: Callable[[str], GatewayMessaging],
     stop_event: threading.Event,
+    timeout_seconds: float | None = None,
 ) -> None:
     sessions: list[ClientSession] = []
 
@@ -100,7 +104,11 @@ def serve(
                 except socket.timeout:
                     continue
                 session = ClientSession(
-                    client_socket, address, messaging_factory, stop_event
+                    client_socket,
+                    address,
+                    messaging_factory,
+                    stop_event,
+                    timeout_seconds,
                 )
                 active_sessions = []
                 for previous in sessions:
@@ -129,11 +137,20 @@ def serve(
 
 
 def serve_client(
-    client_socket, address, messaging_factory, stop_event: threading.Event
+    client_socket,
+    address,
+    messaging_factory,
+    stop_event: threading.Event,
+    timeout_seconds: float | None = None,
 ) -> None:
     with client_socket:
         logging.info("Client connected: %s", address)
         try:
-            handle_client(client_socket, messaging_factory, stop_event=stop_event)
+            handle_client(
+                client_socket,
+                messaging_factory,
+                stop_event=stop_event,
+                timeout_seconds=timeout_seconds,
+            )
         except Exception:
             logging.exception("Closing failed client connection: %s", address)

@@ -72,6 +72,7 @@ class CoordinatedConsumer:
         self,
         on_message: MessageCallback,
         on_control_message: ControlMessageCallback,
+        on_idle: Callable[[], None] | None = None,
     ) -> None:
         def deserialize_message(
             body: bytes,
@@ -100,6 +101,8 @@ class CoordinatedConsumer:
         def process_pending_control() -> None:
             if self._control_error is not None:
                 raise self._control_error
+            if on_idle is not None:
+                on_idle()
             pending = []
             while not self._stopped:
                 try:

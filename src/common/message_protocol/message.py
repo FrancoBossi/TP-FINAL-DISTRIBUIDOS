@@ -315,7 +315,41 @@ class QueryEndMessage(Message):
     type: ClassVar[MessageType] = MessageType.QUERY_END
 
 
+@dataclass(frozen=True)
+class ExecutionStartedMessage(Message):
+    execution_id: str
+    message_id: str
+    expires_at: int
+    type: ClassVar[MessageType] = MessageType.EXECUTION_STARTED
+
+
+@dataclass(frozen=True)
+class ExecutionLifecycleMessage(Message):
+    execution_id: str
+    message_id: str
+    cause: str
+
+
+@dataclass(frozen=True)
+class ExecutionCompletedMessage(ExecutionLifecycleMessage):
+    type: ClassVar[MessageType] = MessageType.EXECUTION_COMPLETED
+
+
+@dataclass(frozen=True)
+class ExecutionFailedMessage(ExecutionLifecycleMessage):
+    type: ClassVar[MessageType] = MessageType.EXECUTION_FAILED
+
+
+@dataclass(frozen=True)
+class ExecutionCleanupMessage(ExecutionLifecycleMessage):
+    type: ClassVar[MessageType] = MessageType.EXECUTION_CLEANUP
+
+
 MESSAGE_CLASSES: dict[MessageType, type[Message]] = {
+    MessageType.EXECUTION_STARTED: ExecutionStartedMessage,
+    MessageType.EXECUTION_COMPLETED: ExecutionCompletedMessage,
+    MessageType.EXECUTION_FAILED: ExecutionFailedMessage,
+    MessageType.EXECUTION_CLEANUP: ExecutionCleanupMessage,
     MessageType.ARTICLE: ArticleMessage,
     MessageType.ARTICLE_BATCH: ArticleBatchMessage,
     MessageType.NORMALIZED_ARTICLE_BATCH: NormalizedArticleBatchMessage,

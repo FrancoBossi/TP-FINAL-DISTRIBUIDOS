@@ -17,7 +17,7 @@ class TestResults(unittest.TestCase):
         ack = Mock()
         nack = Mock()
 
-        def consume(on_result):
+        def consume(on_result, on_idle=None):
             on_result(
                 QueryEndMessage(
                     query_id=1,
@@ -45,7 +45,7 @@ class TestResults(unittest.TestCase):
         ack = Mock()
         nack = Mock()
 
-        def consume(on_result):
+        def consume(on_result, on_idle=None):
             on_result(
                 ResultMessage(
                     query_id=3,
@@ -62,8 +62,7 @@ class TestResults(unittest.TestCase):
             patch("gateway.handler.send_msg"),
             patch("gateway.handler.recv_msg", side_effect=EOFError),
         ):
-            with self.assertRaises(EOFError):
-                forward_results(Mock(), messaging, execution_id)
+            self.assertFalse(forward_results(Mock(), messaging, execution_id))
 
         ack.assert_called_once()
         nack.assert_not_called()
@@ -78,7 +77,7 @@ class TestResults(unittest.TestCase):
         ack = Mock()
         nack = Mock()
 
-        def consume(on_result):
+        def consume(on_result, on_idle=None):
             for query_id in range(1, 5):
                 on_result(
                     QueryEndMessage(

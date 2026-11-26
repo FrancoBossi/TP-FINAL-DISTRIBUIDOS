@@ -345,14 +345,16 @@ por RabbitMQ. La implementación durable guarda conjuntamente los artículos, es
 IDs y los tamaños calculados, por lo que una partición reiniciada reconstruye el
 mismo batch y conserva exactamente su límite por bytes.
 
-Antes de confirmar una entrada, InputBatcher persiste en una transición su inbox,
-el batch parcial y toda salida pendiente. Los publisher confirms retiran las
-salidas de la outbox. Al iniciar, cada partición recupera sus ejecuciones y publica
-lo pendiente antes de volver a consumir. La inbox se compacta después del ACK,
-conservando los IDs del batch parcial y el último ID confirmado para cubrir una
-posible pérdida del ACK. Cada partición posee un volumen Docker separado montado
-en `/state`; un cierre ordenado ya no fuerza la publicación prematura de batches
-incompletos.
+Antes de confirmar un artículo que no completa un batch, InputBatcher agrega el
+mensaje completo a un journal incremental `pending-<generation>.jsonl` y ejecuta
+`fsync`. Cuando una entrada cierra el batch, persiste atómicamente el checkpoint de
+la generación siguiente junto con la inbox y la outbox; ese checkpoint contiene el
+nuevo batch parcial. Recién después puede eliminar el journal anterior. Los
+publisher confirms retiran las salidas de la outbox. Al iniciar, cada partición
+recupera el checkpoint, reproduce únicamente el journal de la generación vigente y
+publica lo pendiente antes de volver a consumir. Cada partición posee un volumen
+Docker separado montado en `/state`; un cierre ordenado ya no fuerza la publicación
+prematura de batches incompletos.
 
 ---
 
@@ -965,20 +967,37 @@ particiones. Un publisher confirm permite retirar solamente esa salida. Si el
 proceso reinicia antes, la salida se recupera y se publica nuevamente con la misma
 identidad.
 
-InputBatcher utiliza ya esta capa para su batch parcial, sus IDs ordenados y las
-salidas `ArticleBatchMessage` y `RoutedInputEndMessage`. Las tres particiones tienen
-volúmenes independientes. Las pruebas cubren entrada duplicada, reconstrucción del
-batch con la misma frontera de bytes, fallo de publicación, recuperación de outbox
-y reentrega de `INPUT_END` sin doble publicación. También se inyectaron fallos en
-cinco ventanas: antes del commit durable, después del commit y antes de publicar,
-entre las dos publicaciones del fan-out, después de confirmar las salidas pero antes
-del ACK de consumo, y durante la compactación posterior al ACK. En particular, una
-recuperación a mitad del fan-out conserva solamente la salida no confirmada, mientras
-que la pérdida del ACK no vuelve a publicar salidas ya confirmadas. Un fallo de
-compactación deja información redundante recuperable y no altera la corrección.
-Esta primera implementación reescribe el snapshot parcial por artículo; se medirá
-su costo y se migrará a un journal incremental si el volumen de escritura resulta
-dominante.
+InputBatcher combina la capa de snapshots con un journal incremental por ejecución.
+Los artículos que todavía pertenecen al batch abierto se agregan como registros
+JSONL completos a `pending-<generation>.jsonl`; cada append se sincroniza antes del
+ACK y su `message_id` se mantiene en memoria para descartar una redelivery. Cuando
+una entrada completa el batch, un único reemplazo atómico guarda su identidad, el
+nuevo batch parcial, el número de generación y las salidas
+`ArticleBatchMessage` o `RoutedInputEndMessage` en la outbox. El checkpoint queda
+confirmado antes de retirar el journal de la generación anterior.
+
+La generación hace segura esa rotación frente a caídas. Si queda un journal viejo
+después del checkpoint, la recuperación lo ignora y elimina; si el checkpoint no
+llegó a confirmarse, se conserva y reproduce el journal anterior. Una última línea
+incompleta se trunca porque corresponde a un append que no alcanzó su commit
+durable. La reproducción reconstruye el batch sin recalcular fronteras: la frontera
+ya quedó fijada por el checkpoint. También se soporta migración desde snapshots
+anteriores que no tenían `journal_generation`.
+
+Las tres particiones tienen volúmenes independientes. Las pruebas cubren entrada
+duplicada, pérdida del ACK después del append, tail incompleto, reconstrucción del
+batch, journal obsoleto después de un rollover, migración del snapshot previo,
+fallo de publicación, recuperación de outbox y reentrega de `INPUT_END` sin doble
+publicación. Una recuperación a mitad del fan-out conserva solamente la salida no
+confirmada, mientras que la pérdida del ACK no vuelve a publicar salidas ya
+confirmadas.
+
+El journal evita reescribir todo el batch parcial por artículo: los bytes escritos
+por entrada son proporcionales al artículo, no al tamaño acumulado del batch. El
+trade-off es mantener un `fsync` por artículo para no confirmar datos volátiles y
+reproducir el journal durante el reinicio. Agrupar esos commits reduciría I/O, pero
+debilitaría la semántica actual del ACK y no se adoptó. El benchmark de tolerancia
+debe medir el beneficio y el tiempo adicional de recuperación.
 
 Preprocessor permanece deliberadamente stateless. La normalización de un batch es
 determinista y puede repetirse ante una redelivery; escribir un snapshot por batch
@@ -1038,7 +1057,63 @@ Gateway está fuera del modelo acordado. La caída deliberada del cliente se pru
 en un escenario separado para verificar liberación de recursos, no para reanudar
 la ejecución completa.
 
-### 18.4 Estado de implementación y validación pendiente
+### 18.4 Cierre de ejecución y cleanup distribuido
+
+Gateway, que permanece excluido de caídas en el modelo acordado, conserva sólo
+el estado efímero necesario para conducir una sesión. Antes del primer artículo
+publica `EXECUTION_STARTED`, con el `execution_id` y su vencimiento. Una vez que
+el cliente confirmó los cinco `QUERY_END`, publica `EXECUTION_COMPLETED`. Si el
+socket se cierra, vence el plazo o ocurre un error, publica `EXECUTION_FAILED`
+con una causa. La cola exclusiva `results.<execution_id>` pertenece a esa
+conexión y RabbitMQ la elimina al cerrar la sesión. El plazo total se configura
+mediante `EXECUTION_TIMEOUT_SECONDS` y cubre carga, procesamiento, resultados y
+ACK del cliente.
+
+ResultSink es el coordinador del cierre, no Gateway. Persiste las ejecuciones
+activas y consume el primer evento terminal que llega; los terminales repetidos
+son idempotentes. Antes de borrar su estado registra una outbox de órdenes
+`EXECUTION_CLEANUP`. Cada orden usa la misma identidad lógica y se elimina de la
+outbox sólo después del publisher confirm. Si ResultSink cae durante el fan-out,
+al reiniciar publica exclusivamente los destinos todavía pendientes. Además,
+si una ejecución supera su vencimiento y el terminal no fue procesado, espera
+cinco segundos de gracia y encola localmente un fallo de respaldo. Así se da
+prioridad a un terminal ya presente en RabbitMQ sin dejar una ejecución activa
+indefinidamente.
+
+El fan-out alcanza la partición de InputBatcher elegida por el hash del
+`execution_id`, todas las colas de control de las etapas coordinadas y todas las
+particiones de agregadores, reducers y comparadores. Preprocessor queda fuera
+porque no posee estado durable por ejecución. Cada consumidor aplica la misma
+secuencia:
+
+1. persiste un tombstone antes de borrar;
+2. elimina estado en memoria y el directorio de ejecución con inbox, snapshot y
+   outbox;
+3. elimina recursos laterales, como el JSONL de candidatos de Q5;
+4. confirma la orden de cleanup.
+
+Si el proceso cae entre esos pasos, el arranque termina cualquier limpieza cuyo
+tombstone haya quedado incompleto antes de recuperar ejecuciones o drenar
+outboxes. Una orden duplicada no vuelve a producir efectos. Todo mensaje tardío
+consulta el tombstone antes de aplicar estado o republicar una salida: se
+confirma y descarta, impidiendo que una redelivery recree la ejecución cerrada.
+
+Los IDs nuevos codifican un límite temporal igual al deadline de Gateway más una
+hora. Un tombstone puede retirarse únicamente después de superar ese límite y
+su retención local. Antes de retirarlo se avanza un watermark durable; por eso
+los IDs anteriores al watermark siguen rechazándose incluso sin un archivo por
+ejecución. Los IDs históricos que no codifican vencimiento conservan la marca
+hasta que pueda verificarse el drenaje.
+
+Esta decisión agrega un fan-out de control proporcional a la cantidad de
+réplicas y una consulta local al cierre por cada mensaje. A cambio evita un
+coordinador distribuido adicional y permite limpieza idempotente aun con caídas
+durante el borrado. Los tombstones acotan el uso de disco para IDs nuevos; la
+ventana de retención debe ser mayor que el máximo tiempo en que RabbitMQ pueda
+mantener trabajo tardío. RabbitMQ y Gateway siguen fuera del conjunto de fallas,
+tal como se acordó para el hito.
+
+### 18.5 Estado de implementación y validación pendiente
 
 Al cierre del baseline, `execution_id` y `article_id` ya existían. El helper común
 que genera y deriva IDs canónicos `m1` y `r1` está implementado y probado. Gateway
@@ -1055,15 +1130,27 @@ salida comprometida antes de publicarse y un fan-out de Q5 confirmado solamente 
 uno de sus destinos. En todos los casos el reinicio drena la outbox sin volver a
 aplicar la entrada. El cliente prueba también la deduplicación por `result_id`.
 
-La suite completa pasa con 305 tests, y la configuración de Compose, lint, formato
-y `git diff --check` son válidos. La recuperación también se validó punta a punta:
+La suite completa pasa con 343 tests, y la configuración de Compose, lint, formato
+y `git diff --check` son válidos. Se validó la recuperación de datos punta a punta:
 durante una ejecución de 300 artículos se enviaron `SIGKILL` simultáneos a todas las
 réplicas del pipeline y a ResultSink, dejando Gateway y RabbitMQ activos. Después
 del reinicio manual, los cinco archivos coincidieron con la referencia y no quedaron
-mensajes ready ni unacked. Esto cierra la propagación y recuperación de datos, pero
-no el hito completo. Restan el plano de control de fallos —salud, FailureManagers,
-Bully y reinicio automático—, Chaos Monkey, cleanup distribuido y la medición de
-overhead.
+mensajes ready ni unacked. Esta prueba midió recuperación de datos con reinicio
+manual.
+
+El cleanup se validó también con una topología real: se publicaron artículos, se
+comprobó que InputBatcher hubiera persistido la ejecución y se cortó el socket del
+cliente sin enviar `INPUT_END`. Las 46 réplicas alcanzadas eliminaron el estado y
+persistieron su tombstone, desaparecieron la cola exclusiva de resultados y el
+buffer de Q5, y RabbitMQ quedó sin mensajes ready ni unacked.
+
+Chaos Monkey ya puede inyectar `SIGKILL` según un schedule reproducible
+derivado de la seed. Registra el schedule, los servicios seleccionados, los
+saltos y la confirmación de Compose. Excluye Gateway, RabbitMQ y el cliente. El
+runner compara Q1–Q5 con la referencia serial, aísla los volúmenes de cada corrida
+y audita estado, tombstones, buffers y colas antes de bajar Compose. La matriz y el
+barrido de intervalos quedan preparados, pero su validación con reposición
+automática depende todavía del plano de control del bloque 5.
 
 ---
 
@@ -1152,7 +1239,7 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 
 ### 22.2 Evidencia disponible al corte
 
-- La suite local completa pasa con 305 tests.
+- La suite local completa pasa con 343 tests.
 - Las pruebas de tolerancia reconstruyen estado durable de InputBatcher, QueryRouter,
   Q3WordAggregator, Q5AverageReducer y ResultSink; incluyen caída antes de publicar,
   barrera incompleta, fan-out parcialmente confirmado y redelivery al cliente.
@@ -1166,9 +1253,10 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
   quedaron activos. El reinicio fue manual para validar exclusivamente este bloque;
   su automatización corresponde a FailureManager.
 - Un primer intento con los 50.000 artículos evidenció que el snapshot con `fsync`
-  por cada entrada de InputBatcher tiene un costo demasiado alto para el smoke de
-  fallos. La corrección se conserva, pero el journal o batching de commits deberá
-  evaluarse en el benchmark de tolerancia antes de la entrega.
+  por cada entrada de InputBatcher tenía un costo demasiado alto para el smoke de
+  fallos. Se reemplazó esa reescritura creciente por un append incremental con
+  `fsync` y checkpoints por batch. La corrección se conserva y el beneficio debe
+  cuantificarse en el benchmark de tolerancia antes de la entrega.
 - Se conectaron doce clientes mínimos al Gateway con los InputBatcher detenidos. Sus 24 mensajes —un artículo y un final por ejecución— quedaron distribuidos entre `input_batcher.input.0`, `.1` y `.2` sin dividir una ejecución. Al iniciar las tres particiones, cada cola tuvo un único consumidor, las tres quedaron vacías y `preprocessor.input` recibió los 24 mensajes esperados.
 - Se validaron con RabbitMQ real tres réplicas de Preprocessor y tres de QueryRouter, con tres bindings exclusivos en cada exchange de control. Nueve batches produjeron nueve mensajes y un único final en cada una de las cuatro salidas posteriores a Until2020Filter y WordExtractor. Una segunda ejecución confirmó que ambos grupos reanudan el consumo después de sus barreras.
 - Se validaron tres réplicas de Until2020Filter con tres bindings exclusivos. Seis batches y tres finales de QueryRouter produjeron tres resultados Q1, ningún resultado Q2 y un único `QUERY_END` por consulta. Una segunda ejecución vacía sin reiniciar containers confirmó la reanudación y limpieza de las barreras.
@@ -1192,6 +1280,10 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 - Se verificó con RabbitMQ real la rama completa de Q5: dos históricos con conteos 0 y 2 produjeron promedio 1; un candidato que empataba fue omitido, otro con conteo 3 produjo el único resultado y después se publicó un único `QUERY_END`.
 - Se verificaron conjuntamente Q4 y Q5 bajo la topología de tres réplicas o particiones desde `word_extractor.input`: todas las colas intermedias quedaron vacías; Q4 produjo los conteos esperados y un único cierre; Q5 produjo el candidato superior al promedio y los finales de comparator `0`, `1` y `2` para la barrera de ResultSink.
 - Se comprobó que Q5Comparator eliminó el archivo JSONL de la ejecución después de drenar correctamente el CandidateBuffer.
+- Se ejecutó `make cleanup-smoke` con la topología completa: después de
+  persistir artículos se cortó el socket sin `INPUT_END`; las 46 réplicas
+  alcanzadas eliminaron el estado, conservaron sus tombstones, desaparecieron
+  la cola exclusiva y el buffer de Q5, y RabbitMQ quedó sin mensajes pendientes.
 - Se ejecutó el pipeline completo con 50.000 artículos. El cliente recibió los cinco `QUERY_END` y escribió 1.111 resultados de Q1, 9 de Q2, 6.902 de Q3, 20 de Q4 y 14.608 de Q5.
 - La comparación automática informó `Match` para `query1.jsonl` a `query5.jsonl`; no hubo registros faltantes, adicionales ni duplicados respecto de la referencia.
 - Después de deshabilitar los heartbeats de las conexiones bloqueantes no volvieron a registrarse cierres por `missed heartbeats` y todos los componentes funcionales permanecieron activos.
@@ -1297,7 +1389,31 @@ tamaño; el informe conserva los valores necesarios para la entrega. Al finaliza
 la implementación se repetirá el mismo procedimiento con tolerancia habilitada y
 sin fallas. El overhead temporal se calculará como
 `(tiempo_tolerante - tiempo_base) / tiempo_base * 100`; las corridas con Chaos se
-reportarán por separado porque miden recuperación, no costo estacionario.
+reportarán por separado para medir el costo de recuperación.
+
+### 22.4 Smoke de la instrumentación del benchmark
+
+Se ejecutaron tres corridas sin fallas sobre los primeros 1.200 artículos de
+`wikipedia_small_sample.parquet`, con un límite de batch de 1 MiB. El Parquet
+del smoke tiene SHA-256
+`22cb6e1b4d9760da7d0c704a5edcf6fc483dd6ec33e1c3d992acf2ab562d2e32`.
+El runner registró el commit `a47cfbf` con cambios locales de instrumentación.
+Las tres corridas coincidieron con la referencia serial. Q1–Q5 produjeron
+respectivamente 52, 0, 0, 20 y 590 registros.
+
+| Métrica | Corrida 1 | Corrida 2 | Corrida 3 | Mediana |
+|---|---:|---:|---:|---:|
+| Duración (s) | 11,00 | 9,28 | 7,00 | 9,28 |
+| Artículos por segundo | 109,07 | 129,33 | 171,39 | 129,33 |
+| Primer resultado persistido (s) | 0,741 | 0,855 | 0,745 | 0,745 |
+| Bytes lógicos de journals de InputBatcher | 7.759.806 | 7.759.806 | 7.759.806 | 7.759.806 |
+
+Se reconstruyó el tamaño de cada una de las nueve generaciones del journal a
+partir de los mensajes serializados. De los 1.200 artículos, 1.192 se
+escribieron en el journal y ocho dispararon un checkpoint de batch. La comparación de overhead
+requiere repetir las tres corridas con el dataset y la configuración del
+baseline de la sección 22.3. La matriz y el barrido de intervalos requieren
+evidencia de elección, reinicio y recuperación automática.
 
 ---
 
@@ -1316,6 +1432,22 @@ La demo final deberá ensayarse y ser reproducible. El recorrido previsto es:
 9. Demostrar igualdad de los cinco archivos.
 10. Enviar SIGTERM y mostrar el cierre ordenado.
 11. Explicar con los diagramas dónde se encuentra el estado y cómo se completan las barreras.
+
+Para ensayar tolerancia a fallos cuando esté integrado el bloque 5:
+
+1. Generar la referencia serial para el mismo Parquet y ejecutar el benchmark
+   con intervalos de cinco segundos, una seed fija y un proyecto Compose
+   dedicado. Ejecutar primero la matriz representativa.
+2. En otra terminal, seguir `run-01/chaos.jsonl` con
+   `uv run python -m scripts.chaos monitor --follow <ruta-al-log>`. Identificar el
+   servicio afectado y el instante de la inyección.
+3. En los logs de FailureManager, seguir la detección, la elección Bully cuando
+   corresponde, la decisión de reinicio y el retorno del servicio.
+4. Revisar en `run.json` la comparación Q1–Q5 y el resultado de cleanup.
+   Conservar `chaos.jsonl`, `client.log`, `compose.log`, `metrics.jsonl` y
+   `summary.json` junto a la configuración de la corrida.
+5. Ejecutar aparte la desconexión de un cliente y verificar el cierre de sus
+   recursos. Completar el barrido de intervalos y la comparación con el baseline.
 
 ---
 

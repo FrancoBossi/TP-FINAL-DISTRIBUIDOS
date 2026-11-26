@@ -5,12 +5,14 @@ from unittest.mock import Mock, patch
 
 from common.message_protocol.message import (
     ArticleBatchMessage,
+    ExecutionCleanupMessage,
     RoutedArticleMessage,
     RoutedInputEndMessage,
 )
 from common.persistence import AtomicJsonStore, DurableExecutionStore, PersistenceLayout
 from input_batcher.batcher import BatchAccumulator
 from input_batcher.controller import InputBatcherController
+from input_batcher.journal import ArticleJournal
 
 
 class InputBatcherFaultRecoveryTest(unittest.TestCase):
@@ -57,13 +59,38 @@ class InputBatcherFaultRecoveryTest(unittest.TestCase):
             AtomicJsonStore(self.layout.state_path(self.article.execution_id))
         )
 
+    def test_cleanup_discards_batch_and_late_article_after_restart(self):
+        controller, batcher, messaging = self._controller()
+        controller.process_message(self.article, Mock(), Mock())
+        execution_id = self.article.execution_id
+        path = self.layout.state_path(execution_id)
+        self.assertTrue(path.with_name("pending-0.jsonl").exists())
+
+        cleanup = ExecutionCleanupMessage(
+            execution_id, "cleanup", "client_disconnected"
+        )
+        ack, nack = Mock(), Mock()
+        controller.process_message(cleanup, ack, nack)
+        self.assertNotIn(execution_id, batcher.current_batch)
+        self.assertFalse(path.parent.exists())
+        messaging.publish.assert_not_called()
+
+        restarted, batcher, messaging = self._controller()
+        restarted.start()
+        restarted.process_message(self.article, ack, nack)
+        self.assertNotIn(execution_id, batcher.current_batch)
+        self.assertFalse(path.parent.exists())
+        self.assertEqual(ack.call_count, 2)
+        nack.assert_not_called()
+        messaging.publish.assert_not_called()
+
     def test_failure_before_commit_rolls_back_memory_and_retry_applies_once(self):
         controller, batcher, messaging = self._controller()
         ack, nack = Mock(), Mock()
 
         with patch.object(
-            AtomicJsonStore,
-            "save",
+            ArticleJournal,
+            "append",
             side_effect=OSError("disk unavailable"),
         ):
             with self.assertRaisesRegex(OSError, "disk unavailable"):
@@ -95,7 +122,7 @@ class InputBatcherFaultRecoveryTest(unittest.TestCase):
         persisted = self._durable_store()
         self.assertTrue(persisted.has_applied(self.input_end.message_id))
         self.assertEqual(2, len(persisted.pending_outputs))
-        self.assertEqual({}, persisted.state)
+        self.assertEqual({"journal_generation": 1}, persisted.state)
 
         recovered, batcher, recovered_messaging = self._controller()
         recovered.start()
@@ -153,36 +180,81 @@ class InputBatcherFaultRecoveryTest(unittest.TestCase):
         redelivery_ack.assert_called_once()
         redelivery_nack.assert_not_called()
 
-    def test_compaction_failure_after_ack_keeps_correct_recoverable_state(self):
+    def test_journal_appends_without_snapshot_and_recovers_after_lost_ack(self):
         controller, _, messaging = self._controller()
-        ack, nack = Mock(), Mock()
-
-        with (
-            patch.object(
-                DurableExecutionStore,
-                "compact_inbox",
-                side_effect=OSError("compaction unavailable"),
-            ),
-            self.assertLogs("input_batcher.controller", level="ERROR"),
+        ack = Mock(side_effect=RuntimeError("ack lost"))
+        with patch.object(
+            AtomicJsonStore, "save", side_effect=AssertionError("snapshot write")
         ):
-            controller.process_message(self.article, ack, nack)
+            with self.assertRaisesRegex(RuntimeError, "ack lost"):
+                controller.process_message(self.article, ack, Mock())
 
-        ack.assert_called_once()
-        nack.assert_not_called()
-        messaging.publish.assert_not_called()
-        persisted = self._durable_store()
-        self.assertTrue(persisted.has_applied(self.article.message_id))
-        self.assertEqual(
-            [self.article.message_id],
-            persisted.state["source_message_ids"],
-        )
+        path = self.layout.state_path(self.article.execution_id)
+        journal = path.with_name("pending-0.jsonl")
+        self.assertFalse(path.exists())
+        self.assertEqual(self.article.serialize() + b"\n", journal.read_bytes())
+        with journal.open("ab") as output:
+            output.write(b'{"incomplete":')
 
-        recovered, recovered_batcher, _ = self._controller()
+        recovered, batcher, _ = self._controller()
         recovered.start()
+        recovered.process_message(self.article, Mock(), Mock())
+        self.assertEqual(self.article.serialize() + b"\n", journal.read_bytes())
         self.assertEqual(
             [self.article.article],
-            recovered_batcher.current_batch[self.article.execution_id].articles,
+            batcher.current_batch[self.article.execution_id].articles,
         )
+        messaging.publish.assert_not_called()
+
+    def test_checkpoint_ignores_old_journal_left_after_rollover(self):
+        controller, _, messaging = self._controller(batcher=BatchAccumulator(230))
+        controller.process_message(self.article, Mock(), Mock())
+        second = RoutedArticleMessage(
+            {"name": "Another article"},
+            self.article.execution_id,
+            self.article.reply_queue,
+            "m1:article-2",
+        )
+        with patch.object(controller, "_remove_obsolete_journal"):
+            controller.process_message(second, Mock(), Mock())
+        messaging.publish.assert_called_once()
+
+        recovered, batcher, recovered_messaging = self._controller()
+        recovered.start()
+        recovered_messaging.publish.assert_not_called()
+        self.assertEqual(
+            [second.article], batcher.current_batch[second.execution_id].articles
+        )
+        self.assertFalse(
+            self.layout.state_path(second.execution_id)
+            .with_name("pending-0.jsonl")
+            .exists()
+        )
+
+    def test_restores_legacy_snapshot_and_journal_together(self):
+        batcher = BatchAccumulator(4096)
+        batcher.add_article(self.article)
+        legacy_store = self._durable_store()
+        legacy_store.apply(
+            self.article.message_id, batcher.export_state(self.article.execution_id), []
+        )
+        second = RoutedArticleMessage(
+            {"name": "After upgrade"},
+            self.article.execution_id,
+            self.article.reply_queue,
+            "m1:article-2",
+        )
+        controller, _, _ = self._controller()
+        controller.process_message(second, Mock(), Mock())
+
+        recovered, batcher, messaging = self._controller(batcher=BatchAccumulator(200))
+        recovered.start()
+        recovered.process_message(self.input_end, Mock(), Mock())
+        self.assertEqual(
+            [self.article.article, second.article],
+            messaging.publish.call_args_list[0].args[0].articles,
+        )
+        self.assertEqual({}, batcher.current_batch)
 
 
 if __name__ == "__main__":
