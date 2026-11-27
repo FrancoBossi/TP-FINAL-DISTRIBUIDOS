@@ -1189,6 +1189,17 @@ inferior demostrado. La variación de duración tampoco es estrictamente monóto
 se reporta junto con su dispersión y no se confunde con el overhead normal, que se
 medirá sin Chaos sobre el dataset del baseline.
 
+La cobertura por tipo se completó con una segunda matriz `--scope all` sobre 300
+artículos. Incluyó los 18 tipos funcionales alcanzados por el modelo de fallos, la
+caída simultánea de Preprocessor y QueryRouter, y un FailureManager. Los 20
+escenarios pasaron tres entornos limpios cada uno: 60/60 corridas coincidieron con
+Q1–Q5 de referencia y aprobaron cleanup, sin casos ausentes ni pendientes. En total
+se confirmaron 117 ciclos de caída. Cada tipo individual y FailureManager soportó
+dos ciclos por corrida; el caso simultáneo confirmó en cada repetición un ciclo con
+ambos workers derribados conjuntamente. De este modo la matriz aporta cobertura
+end-to-end de todos los tipos, mientras las pruebas dirigidas conservan la
+responsabilidad de ubicar fallas en ventanas internas exactas.
+
 ### 18.6 Supervisión, consenso y reposición automática
 
 El plano de control está formado por tres `FailureManager` con identificadores

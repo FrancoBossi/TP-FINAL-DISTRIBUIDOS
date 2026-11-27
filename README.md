@@ -46,14 +46,14 @@ El sistema debe resolver las siguientes consultas:
 | Atención concurrente de varios clientes | Implementada con una sesión por thread |
 | Graceful shutdown por SIGTERM/SIGINT | Implementado |
 | Estrategia de tolerancia a fallos y persistencia | Persistencia, inbox/outbox y recuperación propagadas y validadas con una caída simultánea real de todo el pipeline |
-| Detección de procesos caídos mediante comunicación | Pendiente |
-| Consenso implementado por el grupo | Pendiente |
-| Reinicio automático de procesos caídos | Implementado mediante FailureManagers y validado en la matriz representativa |
+| Detección de procesos caídos mediante comunicación | Implementada con `PING`/`PONG` directo desde el coordinador |
+| Consenso implementado por el grupo | Implementado con Bully para elegir el coordinador de los FailureManagers |
+| Reinicio automático de procesos caídos | Implementado mediante FailureManagers y validado en la matriz exhaustiva |
 | Recuperación e idempotencia después de reinicios | Implementada y validada punta a punta con detección y reinicio automáticos |
 | Entrega exactly-once hacia el cliente | Implementada y validada con reinicios reales de ResultSink; ACK perdido y redelivery cubiertos unitariamente |
-| Chaos Monkey y escenarios de fallos automatizados | Implementados; matriz representativa ejecutada con reinicio automático, comparación Q1-Q5 y auditoría de cleanup |
+| Chaos Monkey y escenarios de fallos automatizados | Implementados; matriz exhaustiva de 20 escenarios ejecutada con reinicio automático, comparación Q1-Q5 y auditoría de cleanup |
 | Comparación de performance contra el hito de escalabilidad | Pendiente |
-| Limpieza de recursos de ejecuciones resueltas o fallidas | Implementada y auditada en desconexión de cliente y en las 27 corridas de la matriz |
+| Limpieza de recursos de ejecuciones resueltas o fallidas | Implementada y auditada en desconexión de cliente y en las 60 corridas de la matriz exhaustiva |
 | Gateway dentro del modelo de fallos | Excluido por indicación de la cátedra; se asume disponible y debe mantenerse mínimo |
 
 ## Hito 3: tolerancia a fallos
@@ -807,7 +807,7 @@ La corrida del 24/11/2026 pasó sobre las 46 réplicas alcanzadas por el cleanup
 - [x] Automatizar la comparación de Q1–Q5 y la auditoría de cleanup antes de
   bajar Compose. Verificar ambas con caídas reales de InputBatcher y
   ResultSink y reinicio manual.
-- [x] Ejecutar la matriz representativa con reinicio automático: nueve casos,
+- [x] Ejecutar la matriz exhaustiva con reinicio automático: veinte casos,
   tres corridas por caso, resultados iguales a la referencia y cleanup completo.
 - [ ] Repetir benchmark sin fallas con tolerancia habilitada y calcular overhead contra el bloque 0.
 - [ ] Medir por separado el costo y tiempo de recuperación bajo fallas.
@@ -816,8 +816,8 @@ La corrida del 24/11/2026 pasó sobre las 46 réplicas alcanzadas por el cleanup
 
 **Pendiente**
 
-- [ ] Extender la matriz ya validada sobre casos representativos a todos los
-  tipos y completar los casos dirigidos que requieran una falla en un punto exacto.
+- [x] Extender la matriz representativa a todos los tipos de proceso.
+- [ ] Completar los casos dirigidos que requieran una falla en un punto exacto.
 - [x] Ejecutar el barrido desde cinco segundos y registrar el menor intervalo
   probado que completa varias corridas correctas: 1 segundo en el barrido mixto
   sobre 50.000 artículos.
@@ -878,6 +878,25 @@ al menos tres ciclos confirmados, por encima del mínimo de dos exigido por el
 barrido. La diferencia de medianas no es estrictamente monótona y debe leerse con
 su dispersión; este experimento caracteriza recuperación, no reemplaza el benchmark
 de overhead sin fallas.
+
+##### Matriz exhaustiva del 26/11/2026
+
+Después de validar los casos representativos se ejecutó `--scope all` sobre el
+dataset equilibrado de 300 artículos. La matriz cubrió individualmente
+ImageFetcher, InputBatcher, Preprocessor, Q1, Q2BiographyFilter,
+Q3WordAggregator, Q3WordProjector, Q4Q5WordProjector, Q4Top20Reducer,
+Q4WordCounter, Q5AverageReducer, Q5Comparator, Q5DateRouter, Q5StatsWorker,
+QueryRouter, ResultSink, Until2020Filter y WordExtractor. Agregó además una caída
+simultánea de Preprocessor y QueryRouter y la caída de un FailureManager.
+
+Los 20 escenarios pasaron sus tres corridas: 60/60 ejecuciones coincidieron con
+los cinco archivos de referencia y aprobaron cleanup, sin casos pendientes. Se
+confirmaron 117 ciclos de caída. Los 18 casos funcionales individuales y el de
+FailureManager confirmaron dos ciclos por corrida; el caso simultáneo confirmó en
+cada repetición un ciclo que derribó ambos workers a la vez. Esta matriz completa
+la cobertura por tipo. Las ventanas exactas entre persistencia, publicación y ACK
+continúan cubiertas por pruebas dirigidas y unitarias, no por temporización
+probabilística del Chaos Monkey.
 
 ### Matriz mínima de pruebas de fallos
 
@@ -1933,10 +1952,10 @@ El orden vigente es el del [plan de implementación de tolerancia a fallos](#pla
 
 ## Próximos pasos
 
-1. Ejecutar la matriz sobre todos los tipos de proceso, ahora que la cobertura
-   representativa pasó con reinicio automático.
-2. Medir en el benchmark final el costo del journal incremental y del `fsync` por
+1. Medir en el benchmark final el costo del journal incremental y del `fsync` por
    artículo frente al baseline previo a tolerancia.
+2. Completar los casos dirigidos de ventanas exactas que no dependen de la
+   temporización del Chaos Monkey.
 3. Actualizar los diagramas y ensayar el guion completo de la demo.
 
 La topología base mantiene tres instancias en los grupos coordinados y tres
