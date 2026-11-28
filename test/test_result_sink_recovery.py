@@ -10,6 +10,7 @@ from common.message_protocol.message import (
     ExecutionStartedMessage,
     QueryEndMessage,
     QueryPartitionEndMessage,
+    ResultMessage,
 )
 from common.persistence import PersistenceLayout
 from result_sink.controller import ResultSinkController
@@ -168,6 +169,27 @@ class TestResultSinkRecovery(unittest.TestCase):
             recovered_messaging.publish.call_args.args[0], QueryEndMessage
         )
         recovered_messaging.start_consuming.assert_called_once()
+
+    def test_results_use_broker_redelivery_instead_of_growing_durable_inbox(self):
+        messaging = Mock()
+        controller = self._controller(messaging)
+        result = ResultMessage(
+            query_id=3,
+            record={"word": "systems"},
+            execution_id="execution-1",
+            message_id="q3-result-message",
+            result_id="q3-result",
+        )
+
+        for _ in range(2):
+            controller.process_message(result, Mock(), Mock())
+
+        self.assertEqual(2, messaging.publish.call_count)
+        self.assertEqual(
+            ["q3-result", "q3-result"],
+            [call.args[0].result_id for call in messaging.publish.call_args_list],
+        )
+        self.assertFalse(self.layout.state_path("execution-1").exists())
 
 
 if __name__ == "__main__":

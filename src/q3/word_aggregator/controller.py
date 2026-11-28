@@ -222,7 +222,8 @@ class Q3WordAggregatorController:
         return store
 
     def _publish_pending(self, store: DurableExecutionStore) -> None:
-        for output in store.pending_outputs:
+        pending = store.pending_outputs
+        for output in pending:
             if output.destination != self._output_destination:
                 raise PersistenceCorruptionError("invalid Q3WordAggregator destination")
             message = output.deserialize_message()
@@ -231,7 +232,7 @@ class Q3WordAggregatorController:
             ):
                 raise PersistenceCorruptionError("invalid Q3WordAggregator outbox")
             self._messaging.publish(message)
-            store.confirm(output)
+        store.confirm_many(pending)
 
     def _clear_execution(self, execution_id: str) -> None:
         self._stores.pop(execution_id, None)

@@ -203,6 +203,20 @@ class DurableExecutionStoreTest(unittest.TestCase):
 
         self.assertEqual((second,), recovered.pending_outputs)
 
+    def test_confirm_many_removes_a_batch_with_one_snapshot_write(self):
+        first = self._output("branch-a.input")
+        second = self._output("branch-b.input")
+        third = self._output("branch-c.input")
+        self.store.apply("m1:input", {"count": 1}, [first, second, third])
+
+        with patch.object(
+            self.atomic_store, "save", wraps=self.atomic_store.save
+        ) as save:
+            self.assertTrue(self.store.confirm_many((first, second)))
+
+        self.assertEqual(1, save.call_count)
+        self.assertEqual((third,), self.store.pending_outputs)
+
     def test_unconfirmed_output_remains_pending_after_restart(self):
         output = self._output()
         self.store.apply("m1:input", {"count": 1}, [output])

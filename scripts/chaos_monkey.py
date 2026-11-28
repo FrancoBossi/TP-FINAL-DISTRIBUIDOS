@@ -117,7 +117,11 @@ def run_chaos(
         running = run_compose("ps", "--status", "running", "--services")
         if running.returncode:
             record("discovery_failed", cycle=cycle, stderr=running.stderr)
-            running.check_returncode()
+            # A FailureManager may replace a killed container while Compose is
+            # listing the project. Docker then reports the vanished container
+            # as an error even though this is the recovery we are exercising.
+            # The cycle remains unconfirmed and the finite schedule continues.
+            continue
         if stop is not None and stop.is_set():
             break
         targets, skipped = eligible_targets(planned, running.stdout.split())

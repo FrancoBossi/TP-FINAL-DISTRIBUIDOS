@@ -85,6 +85,31 @@ class ChaosMonkeyTest(unittest.TestCase):
 
         run.assert_called_once()
 
+    @patch("scripts.chaos_monkey.time.sleep")
+    @patch("scripts.chaos_monkey.subprocess.run")
+    def test_transient_discovery_failure_does_not_abort_schedule(self, run, _sleep):
+        run.side_effect = [
+            subprocess.CompletedProcess([], 0, "worker\n", ""),
+            subprocess.CompletedProcess([], 1, "", "No such container"),
+            subprocess.CompletedProcess([], 0, "worker\n", ""),
+            subprocess.CompletedProcess([], 0, "", ""),
+        ]
+        log = io.StringIO()
+
+        run_chaos(
+            ["docker", "compose"],
+            ["worker"],
+            seed=7,
+            interval=0.1,
+            max_failures=2,
+            batch_size=1,
+            log=log,
+        )
+
+        events = [json.loads(line) for line in log.getvalue().splitlines()]
+        self.assertIn("discovery_failed", [event["event"] for event in events])
+        self.assertEqual(events[-1]["event"], "injection_finished")
+
     @patch("scripts.chaos_monkey.subprocess.run")
     def test_rejects_protected_service_before_trying_to_kill(self, run):
         run.return_value = subprocess.CompletedProcess([], 0, "rabbitmq\n", "")

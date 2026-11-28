@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.run_benchmark import (
+    _health_name,
     count_injections,
     multiset_fingerprint,
     parse_io_bytes,
@@ -56,6 +57,13 @@ class MultisetFingerprintTest(unittest.TestCase):
 
 
 class BenchmarkHelpersTest(unittest.TestCase):
+    def test_health_name_is_read_from_container_environment(self):
+        container = {"Config": {"Env": ["LOG_LEVEL=INFO", "HEALTH_NAME=worker-2"]}}
+
+        self.assertEqual(_health_name(container), "worker-2")
+        self.assertIsNone(_health_name({"Config": {"Env": ["LOG_LEVEL=INFO"]}}))
+        self.assertIsNone(_health_name({"Config": {"Env": ["HEALTH_NAME="]}}))
+
     def test_stack_peaks_use_simultaneous_samples(self):
         samples = [
             ("t1", "a", "110%", "30MiB"),

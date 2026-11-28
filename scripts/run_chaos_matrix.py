@@ -130,7 +130,16 @@ def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             )
             report["results"][case] = {
                 "log": str(log),
-                **assess_interval(directory, exit_code, 3, set(targets)),
+                **assess_interval(
+                    directory,
+                    exit_code,
+                    3,
+                    set(targets),
+                    # Coverage proves that each service type survives a real
+                    # failure in every run. Repeated failures belong to the
+                    # interval sweep, whose default remains two cycles.
+                    minimum_confirmed_cycles=1,
+                ),
             }
             report_path.write_text(
                 json.dumps(report, indent=2) + "\n", encoding="utf-8"

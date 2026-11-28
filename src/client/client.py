@@ -114,8 +114,6 @@ class Client:
     ) -> int:
         line = json.dumps(message.record, ensure_ascii=False, allow_nan=False)
         output_file.write(line + "\n")
-        output_file.flush()
-        os.fsync(output_file.fileno())
         count += 1
         if count % LOG_BATCH_SIZE == 0:
             logger.info("Query %d: %d results written", message.query_id, count)
@@ -168,8 +166,9 @@ class Client:
                         )
                 seen_result_ids.add(message.result_id)
                 result_id_ledger.write(message.result_id + "\n")
-                result_id_ledger.flush()
-                os.fsync(result_id_ledger.fileno())
+                if isinstance(message, QueryEndMessage):
+                    result_id_ledger.flush()
+                    os.fsync(result_id_ledger.fileno())
                 if started_at is not None and isinstance(message, ResultMessage):
                     logger.info(
                         "First result persisted after %.6f seconds",

@@ -46,14 +46,14 @@ El sistema debe resolver las siguientes consultas:
 | Atención concurrente de varios clientes | Implementada con una sesión por thread |
 | Graceful shutdown por SIGTERM/SIGINT | Implementado |
 | Estrategia de tolerancia a fallos y persistencia | Persistencia, inbox/outbox y recuperación propagadas y validadas con una caída simultánea real de todo el pipeline |
-| Detección de procesos caídos mediante comunicación | Pendiente |
-| Consenso implementado por el grupo | Pendiente |
-| Reinicio automático de procesos caídos | Pendiente |
-| Recuperación e idempotencia después de reinicios | Implementada y validada punta a punta con reinicios reales; falta automatizar detección y reinicio |
-| Entrega exactly-once hacia el cliente | Implementada para redelivery durante la sesión; pendiente validación integral con ACK perdido |
-| Chaos Monkey y escenarios de fallos automatizados | Pendiente |
-| Comparación de performance contra el hito de escalabilidad | Pendiente |
-| Limpieza de recursos de ejecuciones resueltas o fallidas | Parcial; debe generalizarse y probarse |
+| Detección de procesos caídos mediante comunicación | Implementada con `PING`/`PONG` directo desde el coordinador |
+| Consenso implementado por el grupo | Implementado con Bully para elegir el coordinador de los FailureManagers |
+| Reinicio automático de procesos caídos | Implementado mediante FailureManagers y validado en la matriz exhaustiva |
+| Recuperación e idempotencia después de reinicios | Implementada y validada punta a punta con detección y reinicio automáticos |
+| Entrega exactly-once hacia el cliente | Implementada y validada con reinicios reales de ResultSink; ACK perdido y redelivery cubiertos unitariamente |
+| Chaos Monkey y escenarios de fallos automatizados | Implementados; matriz exhaustiva de 20 escenarios ejecutada con reinicio automático, comparación Q1-Q5 y auditoría de cleanup |
+| Comparación de performance contra el hito de escalabilidad | Completada con tres corridas válidas: +147,20 % de duración mediana |
+| Limpieza de recursos de ejecuciones resueltas o fallidas | Implementada y auditada en desconexión de cliente y en las 60 corridas de la matriz exhaustiva |
 | Gateway dentro del modelo de fallos | Excluido por indicación de la cátedra; se asume disponible y debe mantenerse mínimo |
 
 ## Hito 3: tolerancia a fallos
@@ -130,16 +130,16 @@ cliente conectado sigue siendo obligatoria.
 | Middleware | Las conexiones se crean al arrancar y las colas DATA compartidas sobreviven a la caída de un consumidor | Un worker reiniciado debe volver a declarar su topología y continuar consumiendo el trabajo pendiente |
 | Exchanges de control | Cada réplica usa una cola estable, no exclusiva ni autoeliminable | El control queda en RabbitMQ mientras la réplica se reinicia y la barrera interna se recupera desde su volumen |
 | InputBatcher | Confirma conjuntamente inbox, batch parcial y outbox en disco | Recupera entradas aplicadas y salidas pendientes sin perder el batch parcial |
-| Barreras replicadas | Finales observados, final emitido e inbox/outbox se confirman juntos | Falta comprobar la recuperación de cada grupo matando containers reales |
-| Agregadores y reducers | Q3, Q4 y Q5 persisten sus acumuladores, barreras e inbox/outbox | Falta la corrida integral con caídas y comparación contra la referencia |
-| Q5Comparator | Candidatos en JSONL; promedio, finales, completitud e inbox/outbox en snapshot atómico | La consistencia entre ambos archivos debe ejercitarse con caídas reales en todas las ventanas |
+| Barreras replicadas | Finales observados, final emitido e inbox/outbox se confirman juntos | Recuperación validada por tipo en la matriz exhaustiva y por ventana en pruebas dirigidas |
+| Agregadores y reducers | Q3, Q4 y Q5 persisten sus acumuladores, barreras e inbox/outbox | Recuperación validada punta a punta con comparación contra la referencia |
+| Q5Comparator | Candidatos en JSONL; promedio, finales, completitud e inbox/outbox en snapshot atómico | Consistencia validada con recuperación dirigida, reinicios reales y matriz exhaustiva |
 | Publicación y ACK | El estado y la outbox se persisten antes de publicar; cada salida se retira luego del confirm | Puede haber publicación física repetida, pero mantiene identidad estable y downstream la deduplica |
 | Mensajes | DATA, CONTROL, resultados y finales poseen IDs deterministas; las etapas durables usan inbox/outbox | Preprocessor permanece stateless y se apoya en la deduplicación de la etapa siguiente |
-| ResultSink | Persiste inbox, barreras y outbox de resultados/finales | Falta demostrar su reinicio dentro de una ejecución punta a punta |
+| ResultSink | Persiste controles, barreras y cierres propios; reenvía resultados con ID determinista | Reinicio validado dentro de ejecuciones punta a punta y con caídas repetidas |
 | Gateway | Instancia única, deliberadamente mínima; la cátedra permite asumir que no cae | No se diseña recuperación de su proceso; debe evitarse trasladar estado de negocio o coordinación hacia él |
-| Cliente | Durante la sesión escribe y sincroniza resultado e ID antes del ACK; una redelivery se confirma sin reescribir | La reanudación de un cliente caído queda fuera del modelo; se debe probar la liberación de sus recursos |
-| Ciclo de vida | Hay limpiezas locales al finalizar correctamente, pero no existe un protocolo global de aborto/cleanup | Una ejecución fallida puede dejar estado, archivos o colas indefinidamente |
-| Control de fallos | No hay detectores, supervisores, consenso ni reinicio automático | Cualquier proceso caído queda fuera hasta una intervención manual |
+| Cliente | Durante la sesión deduplica por ID y sincroniza salida y ledger al cerrar cada query | La reanudación queda fuera del modelo; la liberación de recursos ante desconexión está validada |
+| Ciclo de vida | Inicio, terminal, cleanup distribuido y tombstones durables | Cleanup validado ante éxito, desconexión, timeout y fallas inyectadas |
+| Control de fallos | Tres FailureManagers con salud, Bully, detección directa y reinicio estático | Recuperación automática validada con workers y FailureManagers caídos |
 
 ### Arquitectura confirmada como punto de partida
 
@@ -598,7 +598,7 @@ después del ACK conserva información redundante, pero no pierde ni reaplica es
 - [x] Mantener las colas DATA disponibles cuando cae su consumidor.
 - [x] Convertir el control a colas nombradas por réplica, no exclusivas ni
   autoeliminables.
-- [ ] Verificar que un proceso reiniciado redeclare la topología y consuma DATA y
+- [x] Verificar que un proceso reiniciado redeclare la topología y consuma DATA y
   controles pendientes.
 - [x] No agregar volumen ni recuperación de RabbitMQ: el broker no cae en el modelo.
 
@@ -658,12 +658,17 @@ presencia por idioma y la marca `emitted`; Q4 conserva conteos, tops parciales y
 top global; Q5 conserva suma/cantidad, promedio, candidatos, finales y resultados.
 El fan-out del promedio se registra por destino, de modo que una caída entre dos
 comparadores no obliga a repetir los destinos confirmados. ResultSink persiste sus
-barreras y toda salida hacia `results.<execution_id>` antes de publicarla.
+barreras y los `QUERY_END` que crea, pero reenvía los resultados directamente: si
+cae entre publicación y ACK, RabbitMQ redelivera el mismo `result_id` y el cliente
+lo deduplica. Así el sink no mantiene un inbox creciente con cientos de miles de
+filas finales.
 
-El cliente sincroniza cada línea y registra su `result_id` antes de responder el
-ACK. Dentro de la sesión, una redelivery con el mismo ID se confirma sin volver a
-escribir. No se promete reanudar un cliente caído: ese caso está fuera del modelo
-de recuperación y se valida por liberación de recursos.
+El cliente escribe cada línea y registra su `result_id` en memoria y en un ledger.
+Sincroniza ambos archivos al cerrar cada consulta, antes de confirmar su
+`QUERY_END`, en lugar de ejecutar dos `fsync` por resultado. Dentro de la sesión,
+una redelivery con el mismo ID se confirma sin volver a escribir. No se promete
+reanudar un cliente caído: ese caso está fuera del modelo de recuperación y se
+valida por liberación de recursos.
 
 Las pruebas unitarias de recuperación cubren una barrera incompleta, caída antes de
 publicar, fan-out parcialmente confirmado y redelivery al cliente. La validación
@@ -685,8 +690,8 @@ cierra un batch a `pending-<generation>.jsonl` y lo sincroniza antes del ACK. S�
 al cerrar un batch crea un checkpoint atómico con la nueva generación, el siguiente
 batch parcial y la outbox; luego elimina el journal anterior. Así el volumen escrito
 por artículo pasa de crecer con el batch parcial a ser proporcional al artículo.
-El benchmark final debe medir la mejora y el costo que todavía conserva el `fsync`
-por entrada.
+El benchmark final confirmó que el `fsync` por entrada del journal continúa siendo
+un costo relevante, pero acotado y lineal.
 
 #### Bloque 5 - Supervisión, consenso y reinicio
 
@@ -718,9 +723,9 @@ La prueba terminó con los 56 servicios activos y sin errores de supervisión.
 - [x] Persistir en el cliente los `result_id` aplicados y escribir cada resultado
   de forma recuperable antes de enviar ACK.
 - [x] Mantener Gateway como relay sin RecoveryStore ni estado de negocio nuevo.
-- [ ] Probar con procesos reales la caída de cliente y ResultSink. La pérdida del
-  ACK después de escribir y la redelivery duplicada ya están cubiertas unitariamente.
-  No inyectar caídas del Gateway.
+- [x] Probar con procesos reales la caída de cliente y ResultSink. La pérdida del
+  ACK después de escribir y la redelivery duplicada también están cubiertas
+  unitariamente. No se inyectan caídas del Gateway.
 
 #### Bloque 7 - Fallo terminal y cleanup distribuido
 
@@ -807,22 +812,143 @@ La corrida del 24/11/2026 pasó sobre las 46 réplicas alcanzadas por el cleanup
 - [x] Automatizar la comparación de Q1–Q5 y la auditoría de cleanup antes de
   bajar Compose. Verificar ambas con caídas reales de InputBatcher y
   ResultSink y reinicio manual.
-- [ ] Repetir benchmark sin fallas con tolerancia habilitada y calcular overhead contra el bloque 0.
-- [ ] Medir por separado el costo y tiempo de recuperación bajo fallas.
-- [ ] Actualizar `INFORME.md` y diagramas de robustez, despliegue, actividades, paquetes, secuencia y DAG.
+- [x] Ejecutar la matriz exhaustiva con reinicio automático: veinte casos,
+  tres corridas por caso, resultados iguales a la referencia y cleanup completo.
+- [x] Repetir benchmark sin fallas con tolerancia habilitada y calcular overhead contra el bloque 0.
+- [x] Medir por separado el costo y tiempo de recuperación bajo fallas.
+- [x] Actualizar `INFORME.md` con arquitectura, trade-offs y evidencia final.
+- [ ] Actualizar diagramas de robustez, despliegue, actividades, paquetes, secuencia y DAG.
 - [ ] Ensayar la demo completa con fallas periódicas y conservar logs de evidencia.
 
 **Pendiente**
 
-- [ ] Ejecutar la matriz de caídas con reinicio automático, primero sobre
-  casos representativos y luego sobre todos los tipos. Completar los casos
-  dirigidos de la matriz que requieran una falla en un punto exacto.
-- [ ] Ejecutar el barrido desde cinco segundos y registrar el menor intervalo
-  probado que completa varias corridas correctas.
-- [ ] Medir el overhead a escala con al menos tres corridas válidas por
+- [x] Extender la matriz representativa a todos los tipos de proceso.
+- [x] Completar los casos dirigidos que requieren una falla en un punto exacto;
+  están cubiertos por pruebas deterministas de commit, publicación, ACK, barreras y
+  recuperación, sin depender del timing del Chaos Monkey.
+- [x] Ejecutar el barrido desde cinco segundos y registrar el menor intervalo
+  probado que completa varias corridas correctas: 1 segundo en el barrido mixto
+  sobre 50.000 artículos.
+- [x] Medir el overhead a escala con al menos tres corridas válidas por
   versión, sin fallas y con la misma configuración. Recuperar el Parquet
   original de 612.475 artículos o volver a medir ambas versiones sobre la
   reconstrucción, cuyo SHA-256 difiere del histórico.
+
+##### Validación representativa del 26/11/2026
+
+La primera ejecución de la matriz descubrió una carrera del entorno de prueba.
+`docker compose up --wait` sólo esperaba el healthcheck de RabbitMQ; los demás
+containers se consideraban disponibles apenas estaban `running`. El cliente podía
+publicar los finales antes de que todas las réplicas hubieran declarado y enlazado
+sus colas de control. Los datos quedaban en las colas normales, pero un control
+publicado a un exchange sin su binding todavía creado podía perderse y dejar Q4 o
+Q5 esperando indefinidamente.
+
+El runner ahora consulta el endpoint de salud interno de cada proceso supervisado
+y exige `OK` antes de iniciar cliente y Chaos Monkey. Ese estado se alcanza después
+de construir las conexiones y bindings de RabbitMQ; en la prueba aislada fueron 54
+componentes listos en 3,67 segundos. Con esta espera, ResultSink soportó dos
+`SIGKILL`, fue repuesto automáticamente y entregó Q1=7, Q2=0, Q3=86, Q4=20 y
+Q5=62, iguales a la referencia y sin recursos pendientes.
+
+La matriz representativa cubrió `preprocessor`, `input-batcher`, `query-router`,
+`q3-word-aggregator`, `q4-top20-reducer`, `q5-comparator`, `result-sink`, una caída
+simultánea de Preprocessor y QueryRouter, y un FailureManager. Fueron 27 corridas:
+todas terminaron, coincidieron con la referencia y pasaron la auditoría de cleanup.
+Cada corrida confirmó al menos una caída real; 23 confirmaron dos, mientras que los
+tres casos simultáneos confirmaron un ciclo con ambos workers y una corrida corta
+de Q3 finalizó después del primer ciclo. Por eso la matriz exige una caída por
+corrida, mientras el barrido de frecuencia conserva el requisito más estricto de
+al menos dos ciclos.
+
+##### Barrido de frecuencia del 26/11/2026
+
+El barrido usó `wikipedia_sample.parquet` (50.000 artículos, SHA-256
+`6e403dcd4e26b8551518cd9422dc661220505dbefb809f433fa033eda46552fb`) y la
+referencia de 22.650 resultados ya validada. El calendario mezcló
+`input-batcher-0`, `query-router-0`, `result-sink` y `failure-manager-2`, con una
+caída por ciclo y seed 42. Así se ejercitaron estado parcial, barreras, entrega
+externa y elecciones Bully sin usar el dataset de performance de 612.475 artículos
+para nueve corridas largas.
+
+| Intervalo | Corridas | Caídas confirmadas | Mediana | Desvío muestral | Primer resultado mediano |
+|---:|---:|---:|---:|---:|---:|
+| 5 s | 3/3 | 6, 6, 7 | 696,60 s | 63,43 s | 18,40 s |
+| 2,5 s | 3/3 | 5, 5, 5 | 730,49 s | 15,60 s | 23,08 s |
+| 1 s | 3/3 | 3, 3, 3 | 732,81 s | 22,05 s | 20,62 s |
+
+Las nueve ejecuciones coincidieron con Q1–Q5 de referencia y pasaron la auditoría
+de cleanup. El menor intervalo **probado** y aprobado fue un segundo; no se afirma
+que sea el límite absoluto porque no se ensayaron intervalos menores. A menor
+intervalo hubo menos caídas efectivamente confirmadas: varios intentos encontraron
+el target todavía detenido o reiniciándose y fueron omitidos. Cada corrida conservó
+al menos tres ciclos confirmados, por encima del mínimo de dos exigido por el
+barrido. La diferencia de medianas no es estrictamente monótona y debe leerse con
+su dispersión; este experimento caracteriza recuperación, no reemplaza el benchmark
+de overhead sin fallas.
+
+##### Matriz exhaustiva del 26/11/2026
+
+Después de validar los casos representativos se ejecutó `--scope all` sobre el
+dataset equilibrado de 300 artículos. La matriz cubrió individualmente
+ImageFetcher, InputBatcher, Preprocessor, Q1, Q2BiographyFilter,
+Q3WordAggregator, Q3WordProjector, Q4Q5WordProjector, Q4Top20Reducer,
+Q4WordCounter, Q5AverageReducer, Q5Comparator, Q5DateRouter, Q5StatsWorker,
+QueryRouter, ResultSink, Until2020Filter y WordExtractor. Agregó además una caída
+simultánea de Preprocessor y QueryRouter y la caída de un FailureManager.
+
+Los 20 escenarios pasaron sus tres corridas: 60/60 ejecuciones coincidieron con
+los cinco archivos de referencia y aprobaron cleanup, sin casos pendientes. Se
+confirmaron 117 ciclos de caída. Los 18 casos funcionales individuales y el de
+FailureManager confirmaron dos ciclos por corrida; el caso simultáneo confirmó en
+cada repetición un ciclo que derribó ambos workers a la vez. Esta matriz completa
+la cobertura por tipo. Las ventanas exactas entre persistencia, publicación y ACK
+continúan cubiertas por pruebas dirigidas y unitarias, no por temporización
+probabilística del Chaos Monkey.
+
+##### Benchmark final sin fallas del 27/11/2026
+
+La medición final reutilizó el mismo archivo de 612.475 artículos, SHA-256
+`47a250453b588c2c39354f92657af3ec522f09a61e17561c37c58c7aaee0ac70`, la misma
+topología de 56 servicios, el mismo host y la referencia del baseline de
+escalabilidad. No se ejecutó Chaos Monkey. Antes de medir se retiraron tres cuellos
+de botella que no aportaban una garantía adicional dentro del modelo:
+
+- ResultSink dejó de reescribir un inbox/outbox creciente por cada resultado y
+  conserva durablemente sólo barreras, ciclo de vida y cierres que él genera;
+- Q3WordAggregator y Q5Comparator publican el lote pendiente y retiran todas las
+  salidas confirmadas con un único snapshot. Una caída intermedia puede repetir
+  publicaciones con el mismo ID, que los consumidores deduplican;
+- el cliente sincroniza salida y ledger en cada límite de query, no dos veces por
+  fila. Como un cliente caído no se reanuda, esto no debilita el modelo acordado.
+
+Tres corridas válidas coincidieron exactamente con Q1=24.764, Q2=637,
+Q3=137.673, Q4=20 y Q5=235.306:
+
+| Corrida válida | Duración | Throughput | Primer resultado |
+|---:|---:|---:|---:|
+| 1 | 1.365,00 s | 448,70 artículos/s | 188,80 s |
+| 2 | 1.358,39 s | 450,88 artículos/s | 216,93 s |
+| 3 | 1.595,40 s | 383,90 artículos/s | 213,81 s |
+
+La mediana fue **1.365,00 s (22:45)**, con desvío muestral de 134,97 s. El
+throughput mediano fue 448,70 artículos/s y el primer resultado mediano apareció a
+213,81 s. La CPU agregada media mediana fue 337,16 %, el pico 823,40 %, la memoria
+pico 3,58 GiB, la red recibida 26,27 GB, la transmitida 23,97 GB y los journals de
+InputBatcher escribieron 2.979.148.205 bytes lógicos por corrida.
+
+La línea base tiene mediana de 552,18 s y 1.109,19 artículos/s. Por lo tanto, el
+overhead estable de tolerancia es **+147,20 %** en duración y **-59,55 %** en
+throughput. El costo incluye persistencia local, publisher confirms, supervisión y
+los `fsync` del journal; no incluye caídas. Una cuarta muestra de 1.797,55 s se
+excluyó porque Wikimedia agotó reintentos HTTP 429 para 14 imágenes y Q2 produjo
+623 registros. Q1, Q3, Q4 y Q5 sí coincidieron; la muestra queda como evidencia de
+la dependencia externa y no se mezcló con el overhead interno.
+
+Artefactos locales:
+
+- `benchmarks/results/tolerance-no-fault-612k-optimized/20261127-073114-fd3a44ec89b0/`
+- `benchmarks/results/tolerance-no-fault-612k-extra/20261127-115640-fd3a44ec89b0/`
 
 ### Matriz mínima de pruebas de fallos
 
@@ -1878,11 +2004,9 @@ El orden vigente es el del [plan de implementación de tolerancia a fallos](#pla
 
 ## Próximos pasos
 
-1. Implementar supervisión, Bully y reinicio automático mediante FailureManagers.
-2. Medir en el benchmark final el costo del journal incremental y del `fsync` por
-   artículo frente al baseline previo a tolerancia.
-3. Automatizar Chaos Monkey, la comparación Q1-Q5 y la verificación final de
-   recursos liberados.
+1. Actualizar los diagramas para reflejar persistencia, supervisión, Bully,
+   reinicio, cleanup y exactly-once observable.
+2. Ensayar el guion completo de la demo y conservar sus logs de evidencia.
 
 La topología base mantiene tres instancias en los grupos coordinados y tres
 particiones de InputBatcher. La comparación de performance del último hito debe

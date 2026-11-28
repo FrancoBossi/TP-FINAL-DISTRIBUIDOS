@@ -276,11 +276,18 @@ class DurableExecutionStore:
 
     def confirm(self, output: PendingOutput) -> bool:
         """Durably remove one broker-confirmed output from the outbox."""
+        return self.confirm_many((output,))
+
+    def confirm_many(self, outputs: Iterable[PendingOutput]) -> bool:
+        """Durably remove broker-confirmed outputs with a single snapshot write."""
+        confirmed = {output.key for output in outputs}
+        if not confirmed:
+            return False
         records = self._document["outbox"]
         remaining = [
             record
             for record in records
-            if PendingOutput.from_record(record).key != output.key
+            if PendingOutput.from_record(record).key not in confirmed
         ]
         if len(remaining) == len(records):
             return False
