@@ -130,16 +130,16 @@ cliente conectado sigue siendo obligatoria.
 | Middleware | Las conexiones se crean al arrancar y las colas DATA compartidas sobreviven a la caída de un consumidor | Un worker reiniciado debe volver a declarar su topología y continuar consumiendo el trabajo pendiente |
 | Exchanges de control | Cada réplica usa una cola estable, no exclusiva ni autoeliminable | El control queda en RabbitMQ mientras la réplica se reinicia y la barrera interna se recupera desde su volumen |
 | InputBatcher | Confirma conjuntamente inbox, batch parcial y outbox en disco | Recupera entradas aplicadas y salidas pendientes sin perder el batch parcial |
-| Barreras replicadas | Finales observados, final emitido e inbox/outbox se confirman juntos | Falta comprobar la recuperación de cada grupo matando containers reales |
-| Agregadores y reducers | Q3, Q4 y Q5 persisten sus acumuladores, barreras e inbox/outbox | Falta la corrida integral con caídas y comparación contra la referencia |
-| Q5Comparator | Candidatos en JSONL; promedio, finales, completitud e inbox/outbox en snapshot atómico | La consistencia entre ambos archivos debe ejercitarse con caídas reales en todas las ventanas |
+| Barreras replicadas | Finales observados, final emitido e inbox/outbox se confirman juntos | Recuperación validada por tipo en la matriz exhaustiva y por ventana en pruebas dirigidas |
+| Agregadores y reducers | Q3, Q4 y Q5 persisten sus acumuladores, barreras e inbox/outbox | Recuperación validada punta a punta con comparación contra la referencia |
+| Q5Comparator | Candidatos en JSONL; promedio, finales, completitud e inbox/outbox en snapshot atómico | Consistencia validada con recuperación dirigida, reinicios reales y matriz exhaustiva |
 | Publicación y ACK | El estado y la outbox se persisten antes de publicar; cada salida se retira luego del confirm | Puede haber publicación física repetida, pero mantiene identidad estable y downstream la deduplica |
 | Mensajes | DATA, CONTROL, resultados y finales poseen IDs deterministas; las etapas durables usan inbox/outbox | Preprocessor permanece stateless y se apoya en la deduplicación de la etapa siguiente |
-| ResultSink | Persiste inbox, barreras y outbox de resultados/finales | Falta demostrar su reinicio dentro de una ejecución punta a punta |
+| ResultSink | Persiste controles, barreras y cierres propios; reenvía resultados con ID determinista | Reinicio validado dentro de ejecuciones punta a punta y con caídas repetidas |
 | Gateway | Instancia única, deliberadamente mínima; la cátedra permite asumir que no cae | No se diseña recuperación de su proceso; debe evitarse trasladar estado de negocio o coordinación hacia él |
-| Cliente | Durante la sesión escribe y sincroniza resultado e ID antes del ACK; una redelivery se confirma sin reescribir | La reanudación de un cliente caído queda fuera del modelo; se debe probar la liberación de sus recursos |
-| Ciclo de vida | Hay limpiezas locales al finalizar correctamente, pero no existe un protocolo global de aborto/cleanup | Una ejecución fallida puede dejar estado, archivos o colas indefinidamente |
-| Control de fallos | No hay detectores, supervisores, consenso ni reinicio automático | Cualquier proceso caído queda fuera hasta una intervención manual |
+| Cliente | Durante la sesión deduplica por ID y sincroniza salida y ledger al cerrar cada query | La reanudación queda fuera del modelo; la liberación de recursos ante desconexión está validada |
+| Ciclo de vida | Inicio, terminal, cleanup distribuido y tombstones durables | Cleanup validado ante éxito, desconexión, timeout y fallas inyectadas |
+| Control de fallos | Tres FailureManagers con salud, Bully, detección directa y reinicio estático | Recuperación automática validada con workers y FailureManagers caídos |
 
 ### Arquitectura confirmada como punto de partida
 
@@ -598,7 +598,7 @@ después del ACK conserva información redundante, pero no pierde ni reaplica es
 - [x] Mantener las colas DATA disponibles cuando cae su consumidor.
 - [x] Convertir el control a colas nombradas por réplica, no exclusivas ni
   autoeliminables.
-- [ ] Verificar que un proceso reiniciado redeclare la topología y consuma DATA y
+- [x] Verificar que un proceso reiniciado redeclare la topología y consuma DATA y
   controles pendientes.
 - [x] No agregar volumen ni recuperación de RabbitMQ: el broker no cae en el modelo.
 
@@ -816,13 +816,16 @@ La corrida del 24/11/2026 pasó sobre las 46 réplicas alcanzadas por el cleanup
   tres corridas por caso, resultados iguales a la referencia y cleanup completo.
 - [x] Repetir benchmark sin fallas con tolerancia habilitada y calcular overhead contra el bloque 0.
 - [x] Medir por separado el costo y tiempo de recuperación bajo fallas.
-- [ ] Actualizar `INFORME.md` y diagramas de robustez, despliegue, actividades, paquetes, secuencia y DAG.
+- [x] Actualizar `INFORME.md` con arquitectura, trade-offs y evidencia final.
+- [ ] Actualizar diagramas de robustez, despliegue, actividades, paquetes, secuencia y DAG.
 - [ ] Ensayar la demo completa con fallas periódicas y conservar logs de evidencia.
 
 **Pendiente**
 
 - [x] Extender la matriz representativa a todos los tipos de proceso.
-- [ ] Completar los casos dirigidos que requieran una falla en un punto exacto.
+- [x] Completar los casos dirigidos que requieren una falla en un punto exacto;
+  están cubiertos por pruebas deterministas de commit, publicación, ACK, barreras y
+  recuperación, sin depender del timing del Chaos Monkey.
 - [x] Ejecutar el barrido desde cinco segundos y registrar el menor intervalo
   probado que completa varias corridas correctas: 1 segundo en el barrido mixto
   sobre 50.000 artículos.
@@ -2001,9 +2004,9 @@ El orden vigente es el del [plan de implementación de tolerancia a fallos](#pla
 
 ## Próximos pasos
 
-1. Completar los casos dirigidos de ventanas exactas que no dependen de la
-   temporización del Chaos Monkey.
-2. Actualizar los diagramas y ensayar el guion completo de la demo.
+1. Actualizar los diagramas para reflejar persistencia, supervisión, Bully,
+   reinicio, cleanup y exactly-once observable.
+2. Ensayar el guion completo de la demo y conservar sus logs de evidencia.
 
 La topología base mantiene tres instancias en los grupos coordinados y tres
 particiones de InputBatcher. La comparación de performance del último hito debe
