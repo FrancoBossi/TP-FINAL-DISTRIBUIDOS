@@ -559,7 +559,9 @@ Antes del promedio persiste candidatos; después del promedio compara directamen
 
 ## 11. ResultSink y entrega al cliente
 
-La implementación actual de ResultSink consume `result_sink.input` y reenvía cada `ResultMessage` a `results.<execution_id>` sin acumular el contenido de los resultados. Para el cierre mantiene una barrera durable por `(execution_id, query_id)`: cada `QueryPartitionEndMessage` agrega un `partition_id` al snapshot de la ejecución y, al alcanzar la cantidad configurada para esa query, agrega exactamente un `QueryEndMessage` a la outbox. Los duplicados no vuelven a modificar la barrera. Q1, Q2, Q3 y Q5 utilizan esta barrera; Q4 publica un `QueryEndMessage` directo porque todos los parciales de una ejecución convergen en un único reducer lógico. Inbox, barreras y outbox se confirman en un reemplazo atómico antes de publicar. ResultSink utiliza enrutamiento obligatorio y publisher confirms; recién después de que el broker confirma la salida la retira de la outbox y ejecuta el ACK de la entrada.
+La implementación actual de ResultSink consume `result_sink.input` y reenvía cada `ResultMessage` a `results.<execution_id>` sin acumular el contenido de los resultados. Para el cierre mantiene una barrera durable por `(execution_id, query_id)`: cada `QueryPartitionEndMessage` agrega un `partition_id` al snapshot de la ejecución y, al alcanzar la cantidad configurada para esa query, agrega exactamente un `QueryEndMessage` a la outbox. Los duplicados no vuelven a modificar la barrera. Q1, Q2, Q3 y Q5 utilizan esta barrera; Q4 publica un `QueryEndMessage` directo porque todos los parciales de una ejecución convergen en un único reducer lógico. Inbox, barreras y outbox de control se confirman en un reemplazo atómico antes de publicar.
+
+Los `ResultMessage` y `QueryEndMessage` recibidos no ingresan en ese store creciente: ResultSink los valida, publica con publisher confirm y recién entonces confirma la entrada. Una caída entre ambas confirmaciones permite que RabbitMQ reentregue físicamente el mensaje, pero conserva el mismo `result_id`; Gateway lo reenvía y el cliente lo deduplica. Persistir cada fila final no cerraba una ventana adicional y obligaba a reescribir un inbox con cientos de miles de IDs, por lo que se descartó después de medir su crecimiento cuadrático.
 
 ResultSink no declara las colas de salida. Cada cola `results.<execution_id>` es exclusiva, temporal y pertenece a la conexión de Gateway que inició la ejecución. El publicador dinámico solamente la utiliza como destino. Si la cola no existe porque el cliente se desconectó, la publicación obligatoria produce un error de mensaje no enrutable: ResultSink registra el descarte y confirma la entrada. Los demás errores de publicación continúan produciendo NACK.
 
@@ -582,7 +584,7 @@ RabbitMQ entrega resultado
 
 Esta secuencia evita confirmar un resultado antes de entregarlo al cliente. Para que una redelivery no duplique el efecto final, cada `RESULT` y `QUERY_END` lleva además un `result_id` determinista.
 
-El cliente escribe la línea, ejecuta `flush` y `fsync`, registra y sincroniza el `result_id`, y recién entonces responde ACK. Si ese ACK se pierde y RabbitMQ vuelve a entregar el mismo resultado durante la sesión, el cliente reconoce el ID, responde nuevamente y no agrega otra línea. La reanudación de un cliente caído está fuera del modelo acordado; ese escenario debe demostrar liberación de recursos, no continuación de la ejecución.
+El cliente escribe la línea y registra el `result_id` en memoria y en un ledger. En cada `QUERY_END` sincroniza el archivo de esa query y el ledger antes de responder ACK. Si un ACK de resultado se pierde y RabbitMQ vuelve a entregar el mismo ID durante la sesión, el cliente responde nuevamente y no agrega otra línea. La reanudación de un cliente caído está fuera del modelo acordado; por eso no se fuerza un `fsync` por fila y ese escenario demuestra liberación de recursos, no continuación de la ejecución.
 
 ---
 
@@ -967,6 +969,13 @@ particiones. Un publisher confirm permite retirar solamente esa salida. Si el
 proceso reinicia antes, la salida se recupera y se publica nuevamente con la misma
 identidad.
 
+Cuando una transición genera muchas salidas —Q3WordAggregator y Q5Comparator son
+los casos relevantes— se publican todas las entradas pendientes y se retiran del
+outbox con un único reemplazo atómico. Una caída a mitad de ese drenaje conserva el
+lote completo y puede repetir las publicaciones ya confirmadas, pero sus IDs son
+deterministas y el siguiente consumidor descarta el efecto duplicado. Esta decisión
+evita una reescritura y dos `fsync` por salida sin debilitar la garantía observable.
+
 InputBatcher combina la capa de snapshots con un journal incremental por ejecución.
 Los artículos que todavía pertenecen al batch abierto se agregan como registros
 JSONL completos a `pending-<generation>.jsonl`; cada append se sincroniza antes del
@@ -1030,10 +1039,11 @@ cantidad; Q5AverageReducer guarda los parciales y una copia del promedio por col
 de Comparator; Q5Comparator combina su buffer JSONL de candidatos con un snapshot
 que contiene promedio, finales, completitud e inbox/outbox.
 
-ResultSink utiliza el mismo store para su inbox, las barreras de Q1-Q5 y la outbox
-hacia `results.<execution_id>`. Una cola de cliente ya eliminada es un destino
-terminal: la salida se descarta explícitamente y se confirma para liberar la
-ejecución. Un error transitorio conserva la salida pendiente y produce NACK. Todos
+ResultSink utiliza el store para su inbox de controles, las barreras de Q1-Q5 y la
+outbox de los cierres que genera. Los resultados finales se reenvían con publisher
+confirm sin incorporarlos al snapshot: una redelivery conserva `result_id` y se
+deduplica en el cliente. Una cola de cliente ya eliminada es un destino terminal:
+la salida se descarta explícitamente y se confirma para liberar la ejecución. Todos
 estos procesos montan volúmenes nombrados independientes en `/state`.
 
 ### 18.3 Exactly-once observable
@@ -1044,12 +1054,13 @@ implementada es que cada efecto lógico se aplica una vez y que los archivos del
 cliente contienen una sola línea por `result_id`, aunque haya publicaciones o
 entregas físicas repetidas.
 
-ResultSink persiste la identidad de cada entrada aplicada, sus barreras y las
-salidas serializadas. El cliente escribe y sincroniza el resultado, registra y
-sincroniza su `result_id` y recién después responde ACK. Si ese ACK se pierde, el
-mismo resultado puede reenviarse, pero durante la sesión el cliente no lo vuelve a
-escribir. Una prueba entrega dos veces el mismo ID y verifica una sola línea y dos
-ACK.
+ResultSink persiste la identidad de cada control aplicado, sus barreras y los
+cierres que genera. Los resultados conservan identidad determinista a través de
+una posible redelivery. El cliente escribe resultado y ledger, deduplica en memoria
+y sincroniza ambos archivos al cerrar cada query. Si un ACK se pierde, el mismo
+resultado puede reenviarse, pero durante la sesión el cliente no lo vuelve a
+escribir. Las pruebas cubren la redelivery con el mismo ID y verifican que la
+cantidad de `fsync` depende de los cinco cierres, no de la cantidad de filas.
 
 Las colas `results.<execution_id>` continúan siendo temporales, exclusivas y
 propiedad de la sesión Gateway. Recuperar una sesión después de la caída del
@@ -1340,7 +1351,7 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 
 ### 22.2 Evidencia disponible al corte
 
-- La suite local completa pasa con 463 tests.
+- La suite local completa pasa con 466 tests.
 - Las pruebas de tolerancia reconstruyen estado durable de InputBatcher, QueryRouter,
   Q3WordAggregator, Q5AverageReducer y ResultSink; incluyen caída antes de publicar,
   barrera incompleta, fan-out parcialmente confirmado y redelivery al cliente.
@@ -1356,8 +1367,8 @@ Se descartó mantener JSON en ambos tramos porque eso obligaba al cliente a cons
 - Un primer intento con los 50.000 artículos evidenció que el snapshot con `fsync`
   por cada entrada de InputBatcher tenía un costo demasiado alto para el smoke de
   fallos. Se reemplazó esa reescritura creciente por un append incremental con
-  `fsync` y checkpoints por batch. La corrección se conserva y el beneficio debe
-  cuantificarse en el benchmark de tolerancia antes de la entrega.
+  `fsync` y checkpoints por batch. La corrección se conserva y el benchmark final
+  de la sección 22.5 cuantifica el costo restante.
 - Se conectaron doce clientes mínimos al Gateway con los InputBatcher detenidos. Sus 24 mensajes —un artículo y un final por ejecución— quedaron distribuidos entre `input_batcher.input.0`, `.1` y `.2` sin dividir una ejecución. Al iniciar las tres particiones, cada cola tuvo un único consumidor, las tres quedaron vacías y `preprocessor.input` recibió los 24 mensajes esperados.
 - Se validaron con RabbitMQ real tres réplicas de Preprocessor y tres de QueryRouter, con tres bindings exclusivos en cada exchange de control. Nueve batches produjeron nueve mensajes y un único final en cada una de las cuatro salidas posteriores a Until2020Filter y WordExtractor. Una segunda ejecución confirmó que ambos grupos reanudan el consumo después de sus barreras.
 - Se validaron tres réplicas de Until2020Filter con tres bindings exclusivos. Seis batches y tres finales de QueryRouter produjeron tres resultados Q1, ningún resultado Q2 y un único `QUERY_END` por consulta. Una segunda ejecución vacía sin reiniciar containers confirmó la reanudación y limpieza de las barreras.
@@ -1515,6 +1526,68 @@ escribieron en el journal y ocho dispararon un checkpoint de batch. La comparaci
 requiere repetir las tres corridas con el dataset y la configuración del
 baseline de la sección 22.3. La matriz y el barrido de intervalos requieren
 evidencia de elección, reinicio y recuperación automática.
+
+### 22.5 Benchmark final con tolerancia habilitada y sin fallas
+
+La medición final usó el mismo host, topología, dataset y referencia de la sección
+22.3, sin Chaos Monkey. El repositorio contenía cambios locales porque las
+optimizaciones y esta documentación todavía no estaban versionadas; los artefactos
+registran el commit base `fd3a44ec89b0` y `dirty: true`.
+
+#### Optimización previa a la medición
+
+El primer intento reveló dos costos accidentales que no cerraban una ventana de
+fallo adicional. ResultSink persistía cada resultado en un JSON cuyo inbox crecía
+durante toda la ejecución; cada aplicación y confirmación reescribía el documento.
+Además, Q3WordAggregator y Q5Comparator retiraban una por una miles de salidas de
+sus outboxes, con un reemplazo atómico por confirmación. El cliente sumaba dos
+`fsync` por resultado, aunque una sesión caída no se reanuda en el modelo acordado.
+
+Se mantuvo persistencia durable para barreras, ciclo de vida, estado de negocio y
+salidas todavía necesarias para reconstruir una transición. Los resultados finales
+se reenvían con publisher confirms e IDs deterministas; una caída intermedia puede
+repetirlos y el cliente los deduplica. Los outboxes masivos se confirman por lote
+con un único snapshot, y el cliente sincroniza archivo y ledger al recibir cada
+`QUERY_END`. Una prueba de 50.000 artículos pasó de 333,56 s a 80,40 s después de
+agrupar las confirmaciones, con los cinco fingerprints intactos.
+
+#### Resultados válidos
+
+Las tres corridas aceptadas produjeron exactamente Q1=24.764, Q2=637,
+Q3=137.673, Q4=20 y Q5=235.306, sin timeouts:
+
+| Corrida | Duración | Throughput | Primer resultado | CPU media | CPU pico | Memoria pico |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 1.365,00 s | 448,70 art/s | 188,80 s | 330,60 % | 865,18 % | 3,63 GiB |
+| 2 | 1.358,39 s | 450,88 art/s | 216,93 s | 338,13 % | 813,31 % | 3,58 GiB |
+| 3 | 1.595,40 s | 383,90 art/s | 213,81 s | 337,16 % | 823,40 % | 3,51 GiB |
+
+La mediana de duración fue 1.365,00 s —22 minutos y 45 segundos— y el desvío
+estándar muestral 134,97 s. El throughput mediano fue 448,70 artículos/s, con
+desvío de 38,06; el primer resultado mediano apareció a 213,81 s, con desvío de
+15,42 s. Las medianas de CPU agregada media y pico fueron 337,16 % y 823,40 %; la
+memoria pico mediana fue 3,58 GiB. La red agregada mediana fue 26,27 GB recibidos y
+23,97 GB transmitidos. InputBatcher registró 2.979.148.205 bytes lógicos de journal
+en cada corrida.
+
+La mediana comparable del baseline fue 552,18 s y 1.109,19 artículos/s. Aplicando
+la fórmula definida en la sección 22.3, la tolerancia habilitada introduce un
+overhead temporal de **147,20 %** y reduce el throughput en **59,55 %**. La
+diferencia mediana es 812,82 s. Este costo incluye snapshots, journals, `fsync`,
+publisher confirms, healthchecks y FailureManagers, pero no recuperación de
+caídas; ese costo se caracteriza por separado con el barrido de frecuencia.
+
+Una cuarta ejecución terminó en 1.797,55 s, pero se excluyó de la comparación:
+Wikimedia respondió HTTP 429 y 14 imágenes agotaron sus cinco reintentos, por lo
+que Q2 produjo 623 registros. Q1, Q3, Q4 y Q5 sí coincidieron exactamente. La
+muestra demuestra que Q2 continúa siendo una dependencia externa variable y evita
+atribuir su rate limiting al overhead interno. Las otras tres corridas descargaron
+los 637 resultados de Q2 y fueron aceptadas.
+
+Los artefactos quedaron en:
+
+- `benchmarks/results/tolerance-no-fault-612k-optimized/20261127-073114-fd3a44ec89b0/`;
+- `benchmarks/results/tolerance-no-fault-612k-extra/20261127-115640-fd3a44ec89b0/`.
 
 ---
 

@@ -52,7 +52,7 @@ El sistema debe resolver las siguientes consultas:
 | Recuperación e idempotencia después de reinicios | Implementada y validada punta a punta con detección y reinicio automáticos |
 | Entrega exactly-once hacia el cliente | Implementada y validada con reinicios reales de ResultSink; ACK perdido y redelivery cubiertos unitariamente |
 | Chaos Monkey y escenarios de fallos automatizados | Implementados; matriz exhaustiva de 20 escenarios ejecutada con reinicio automático, comparación Q1-Q5 y auditoría de cleanup |
-| Comparación de performance contra el hito de escalabilidad | Pendiente |
+| Comparación de performance contra el hito de escalabilidad | Completada con tres corridas válidas: +147,20 % de duración mediana |
 | Limpieza de recursos de ejecuciones resueltas o fallidas | Implementada y auditada en desconexión de cliente y en las 60 corridas de la matriz exhaustiva |
 | Gateway dentro del modelo de fallos | Excluido por indicación de la cátedra; se asume disponible y debe mantenerse mínimo |
 
@@ -658,12 +658,17 @@ presencia por idioma y la marca `emitted`; Q4 conserva conteos, tops parciales y
 top global; Q5 conserva suma/cantidad, promedio, candidatos, finales y resultados.
 El fan-out del promedio se registra por destino, de modo que una caída entre dos
 comparadores no obliga a repetir los destinos confirmados. ResultSink persiste sus
-barreras y toda salida hacia `results.<execution_id>` antes de publicarla.
+barreras y los `QUERY_END` que crea, pero reenvía los resultados directamente: si
+cae entre publicación y ACK, RabbitMQ redelivera el mismo `result_id` y el cliente
+lo deduplica. Así el sink no mantiene un inbox creciente con cientos de miles de
+filas finales.
 
-El cliente sincroniza cada línea y registra su `result_id` antes de responder el
-ACK. Dentro de la sesión, una redelivery con el mismo ID se confirma sin volver a
-escribir. No se promete reanudar un cliente caído: ese caso está fuera del modelo
-de recuperación y se valida por liberación de recursos.
+El cliente escribe cada línea y registra su `result_id` en memoria y en un ledger.
+Sincroniza ambos archivos al cerrar cada consulta, antes de confirmar su
+`QUERY_END`, en lugar de ejecutar dos `fsync` por resultado. Dentro de la sesión,
+una redelivery con el mismo ID se confirma sin volver a escribir. No se promete
+reanudar un cliente caído: ese caso está fuera del modelo de recuperación y se
+valida por liberación de recursos.
 
 Las pruebas unitarias de recuperación cubren una barrera incompleta, caída antes de
 publicar, fan-out parcialmente confirmado y redelivery al cliente. La validación
@@ -685,8 +690,8 @@ cierra un batch a `pending-<generation>.jsonl` y lo sincroniza antes del ACK. S�
 al cerrar un batch crea un checkpoint atómico con la nueva generación, el siguiente
 batch parcial y la outbox; luego elimina el journal anterior. Así el volumen escrito
 por artículo pasa de crecer con el batch parcial a ser proporcional al artículo.
-El benchmark final debe medir la mejora y el costo que todavía conserva el `fsync`
-por entrada.
+El benchmark final confirmó que el `fsync` por entrada del journal continúa siendo
+un costo relevante, pero acotado y lineal.
 
 #### Bloque 5 - Supervisión, consenso y reinicio
 
@@ -809,8 +814,8 @@ La corrida del 24/11/2026 pasó sobre las 46 réplicas alcanzadas por el cleanup
   ResultSink y reinicio manual.
 - [x] Ejecutar la matriz exhaustiva con reinicio automático: veinte casos,
   tres corridas por caso, resultados iguales a la referencia y cleanup completo.
-- [ ] Repetir benchmark sin fallas con tolerancia habilitada y calcular overhead contra el bloque 0.
-- [ ] Medir por separado el costo y tiempo de recuperación bajo fallas.
+- [x] Repetir benchmark sin fallas con tolerancia habilitada y calcular overhead contra el bloque 0.
+- [x] Medir por separado el costo y tiempo de recuperación bajo fallas.
 - [ ] Actualizar `INFORME.md` y diagramas de robustez, despliegue, actividades, paquetes, secuencia y DAG.
 - [ ] Ensayar la demo completa con fallas periódicas y conservar logs de evidencia.
 
@@ -821,7 +826,7 @@ La corrida del 24/11/2026 pasó sobre las 46 réplicas alcanzadas por el cleanup
 - [x] Ejecutar el barrido desde cinco segundos y registrar el menor intervalo
   probado que completa varias corridas correctas: 1 segundo en el barrido mixto
   sobre 50.000 artículos.
-- [ ] Medir el overhead a escala con al menos tres corridas válidas por
+- [x] Medir el overhead a escala con al menos tres corridas válidas por
   versión, sin fallas y con la misma configuración. Recuperar el Parquet
   original de 612.475 artículos o volver a medir ambas versiones sobre la
   reconstrucción, cuyo SHA-256 difiere del histórico.
@@ -897,6 +902,50 @@ cada repetición un ciclo que derribó ambos workers a la vez. Esta matriz compl
 la cobertura por tipo. Las ventanas exactas entre persistencia, publicación y ACK
 continúan cubiertas por pruebas dirigidas y unitarias, no por temporización
 probabilística del Chaos Monkey.
+
+##### Benchmark final sin fallas del 27/11/2026
+
+La medición final reutilizó el mismo archivo de 612.475 artículos, SHA-256
+`47a250453b588c2c39354f92657af3ec522f09a61e17561c37c58c7aaee0ac70`, la misma
+topología de 56 servicios, el mismo host y la referencia del baseline de
+escalabilidad. No se ejecutó Chaos Monkey. Antes de medir se retiraron tres cuellos
+de botella que no aportaban una garantía adicional dentro del modelo:
+
+- ResultSink dejó de reescribir un inbox/outbox creciente por cada resultado y
+  conserva durablemente sólo barreras, ciclo de vida y cierres que él genera;
+- Q3WordAggregator y Q5Comparator publican el lote pendiente y retiran todas las
+  salidas confirmadas con un único snapshot. Una caída intermedia puede repetir
+  publicaciones con el mismo ID, que los consumidores deduplican;
+- el cliente sincroniza salida y ledger en cada límite de query, no dos veces por
+  fila. Como un cliente caído no se reanuda, esto no debilita el modelo acordado.
+
+Tres corridas válidas coincidieron exactamente con Q1=24.764, Q2=637,
+Q3=137.673, Q4=20 y Q5=235.306:
+
+| Corrida válida | Duración | Throughput | Primer resultado |
+|---:|---:|---:|---:|
+| 1 | 1.365,00 s | 448,70 artículos/s | 188,80 s |
+| 2 | 1.358,39 s | 450,88 artículos/s | 216,93 s |
+| 3 | 1.595,40 s | 383,90 artículos/s | 213,81 s |
+
+La mediana fue **1.365,00 s (22:45)**, con desvío muestral de 134,97 s. El
+throughput mediano fue 448,70 artículos/s y el primer resultado mediano apareció a
+213,81 s. La CPU agregada media mediana fue 337,16 %, el pico 823,40 %, la memoria
+pico 3,58 GiB, la red recibida 26,27 GB, la transmitida 23,97 GB y los journals de
+InputBatcher escribieron 2.979.148.205 bytes lógicos por corrida.
+
+La línea base tiene mediana de 552,18 s y 1.109,19 artículos/s. Por lo tanto, el
+overhead estable de tolerancia es **+147,20 %** en duración y **-59,55 %** en
+throughput. El costo incluye persistencia local, publisher confirms, supervisión y
+los `fsync` del journal; no incluye caídas. Una cuarta muestra de 1.797,55 s se
+excluyó porque Wikimedia agotó reintentos HTTP 429 para 14 imágenes y Q2 produjo
+623 registros. Q1, Q3, Q4 y Q5 sí coincidieron; la muestra queda como evidencia de
+la dependencia externa y no se mezcló con el overhead interno.
+
+Artefactos locales:
+
+- `benchmarks/results/tolerance-no-fault-612k-optimized/20261127-073114-fd3a44ec89b0/`
+- `benchmarks/results/tolerance-no-fault-612k-extra/20261127-115640-fd3a44ec89b0/`
 
 ### Matriz mínima de pruebas de fallos
 
@@ -1952,11 +2001,9 @@ El orden vigente es el del [plan de implementación de tolerancia a fallos](#pla
 
 ## Próximos pasos
 
-1. Medir en el benchmark final el costo del journal incremental y del `fsync` por
-   artículo frente al baseline previo a tolerancia.
-2. Completar los casos dirigidos de ventanas exactas que no dependen de la
+1. Completar los casos dirigidos de ventanas exactas que no dependen de la
    temporización del Chaos Monkey.
-3. Actualizar los diagramas y ensayar el guion completo de la demo.
+2. Actualizar los diagramas y ensayar el guion completo de la demo.
 
 La topología base mantiene tres instancias en los grupos coordinados y tres
 particiones de InputBatcher. La comparación de performance del último hito debe

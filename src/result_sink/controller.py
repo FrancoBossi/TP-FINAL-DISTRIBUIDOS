@@ -121,6 +121,15 @@ class ResultSinkController:
                 return
             if isinstance(message, (ResultMessage, QueryEndMessage)):
                 validate_result(message, set())
+                try:
+                    self._messaging.publish(message)
+                except MessageMiddlewareUnroutableError:
+                    logger.warning(
+                        "Discarding result for execution %s: destination is gone",
+                        message.execution_id,
+                    )
+                ack()
+                return
             store = self._store_for(message.execution_id)
             if store.has_applied(message.message_id):
                 self._publish_pending(store)

@@ -373,6 +373,37 @@ class TestClientGateway(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "publish failed"):
                 Client("unused", 0).send_articles(Mock(), [])
 
+    def test_client_syncs_results_at_query_boundaries_not_per_row(self):
+        messages = [
+            ResultMessage(
+                query_id=1,
+                record={"url": f"https://example.com/{index}"},
+                execution_id="execution-1",
+                message_id=f"message-{index}",
+                result_id=f"result-{index}",
+            )
+            for index in range(3)
+        ]
+        messages.extend(
+            QueryEndMessage(
+                query_id=query_id,
+                execution_id="execution-1",
+                message_id=f"end-message-{query_id}",
+                result_id=f"end-result-{query_id}",
+            )
+            for query_id in range(1, 6)
+        )
+
+        with (
+            TemporaryDirectory() as output_dir,
+            patch.object(Client, "_receive", side_effect=messages),
+            patch("client.client.send_msg"),
+            patch("client.client.os.fsync") as fsync,
+        ):
+            Client("unused", 0).receive_results(Mock(), output_dir)
+
+        self.assertEqual(10, fsync.call_count)
+
     def test_gateway_does_not_ack_failed_publication(self):
         messaging = Mock()
         messaging.publish.side_effect = RuntimeError("middleware unavailable")

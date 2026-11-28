@@ -247,14 +247,15 @@ class Q5ComparatorController:
         return self._stores[execution_id]
 
     def _publish_pending(self, store):
-        for output in store.pending_outputs:
+        pending = store.pending_outputs
+        for output in pending:
             if output.destination != self._output_destination:
                 raise PersistenceCorruptionError("invalid Q5Comparator destination")
             message = output.deserialize_message()
             if not isinstance(message, (ResultMessage, QueryPartitionEndMessage)):
                 raise PersistenceCorruptionError("invalid Q5Comparator outbox")
             self._messaging.publish(message)
-            store.confirm(output)
+        store.confirm_many(pending)
 
     def _clear_execution(self, execution_id: str) -> None:
         self._stores.pop(execution_id, None)
